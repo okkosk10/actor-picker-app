@@ -1,23 +1,17 @@
-import { app, BrowserWindow } from 'electron'
-import { fileURLToPath } from 'url'
-import path from 'path'
-
-// "type": "module" 환경에서는 __dirname이 없으므로 import.meta.url로 대체
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+const { app, BrowserWindow } = require('electron')
+const path = require('path')
 
 function createWindow() {
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   })
 
-  // 패키징 여부로 개발/빌드 모드 구분
   if (app.isPackaged) {
     win.loadFile(path.join(__dirname, '../dist/index.html'))
   } else {
