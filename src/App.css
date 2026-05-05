@@ -93,3 +93,164 @@
   color: var(--text-muted);
   font-size: 13px;
 }
+
+.result-section--filled {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 20px 24px;
+  gap: 20px;
+  overflow-y: auto;
+  border-style: solid;
+}
+
+/* ───── Action buttons ───── */
+.btn-secondary {
+  flex-shrink: 0;
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--accent-bg, rgba(99,102,241,0.08));
+}
+
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ───── Error ───── */
+.error-msg {
+  font-size: 13px;
+  color: #ef4444;
+  padding: 10px 16px;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: 8px;
+}
+
+/* ───── Stats ───── */
+.stats-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.stat-item strong {
+  color: var(--text-h);
+  font-weight: 700;
+}
+
+.stat-sep {
+  color: var(--text-muted);
+}
+
+/* ───── Search box ───── */
+.search-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.search-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.search-box-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.btn-copy {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn-copy:hover {
+  opacity: 0.85;
+}
+
+.search-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-h);
+  resize: vertical;
+}
+
+/* ───── Picked list ───── */
+.picked-list-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.picked-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.picked-table th {
+  text-align: left;
+  padding: 6px 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.picked-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-h);
+}
+
+.picked-table tr:last-child td {
+  border-bottom: none;
+}
+
+.picked-table code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.td-filename {
+  color: var(--text);
+  word-break: break-all;
+}
