@@ -82,12 +82,11 @@ function createWindow() {
 
   if (isDev) {
     win.loadURL('http://localhost:5173')
+    win.webContents.openDevTools() // 개발 환경에서만 열기
   } else {
     const indexPath = path.join(__dirname, '..', 'dist', 'index.html')
     win.loadFile(indexPath)
   }
-
-  win.webContents.openDevTools()
 }
 
 ipcMain.handle('select-folder', async () => {
