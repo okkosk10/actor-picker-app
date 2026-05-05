@@ -1,5 +1,5 @@
-const { contextBridge } = require('electron')
+const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // 필요한 IPC 메서드를 여기에 추가
+  selectFolder: () => ipcRenderer.invoke('select-folder'),
 })

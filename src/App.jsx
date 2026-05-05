@@ -6,6 +6,16 @@ import './App.css'
 
 function App() {
   const [count, setCount] = useState(0)
+  const [folderPath, setFolderPath] = useState(null)
+
+  const handleSelectFolder = async () => {
+    const selected = await window.electronAPI.selectFolder()
+    if (selected === null) {
+      setFolderPath((prev) => (prev === null ? '선택 취소됨' : prev))
+    } else {
+      setFolderPath(selected)
+    }
+  }
 
   return (
     <>
@@ -28,6 +38,15 @@ function App() {
         >
           Count is {count}
         </button>
+
+        <button type="button" onClick={handleSelectFolder}>
+          폴더 선택
+        </button>
+        {folderPath && (
+          <p style={{ marginTop: '8px', wordBreak: 'break-all' }}>
+            {folderPath}
+          </p>
+        )}
       </section>
 
       <div className="ticks"></div>
