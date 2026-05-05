@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+
+dist
+release
+win-unpacked
+package-lock.json
+builder-debug.yml
+builder-effective-config.yaml
