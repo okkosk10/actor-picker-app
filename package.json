@@ -3,8 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
+    "electron": "wait-on http://localhost:5173 && electron .",
+    "start": "concurrently \"yarn dev\" \"yarn electron\"",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
