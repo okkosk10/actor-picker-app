@@ -78,11 +78,16 @@ function createWindow() {
     },
   })
 
-  if (app.isPackaged) {
-    win.loadFile(path.join(__dirname, '../dist/index.html'))
-  } else {
+  const isDev = !app.isPackaged
+
+  if (isDev) {
     win.loadURL('http://localhost:5173')
+  } else {
+    const indexPath = path.join(__dirname, '..', 'dist', 'index.html')
+    win.loadFile(indexPath)
   }
+
+  win.webContents.openDevTools()
 }
 
 ipcMain.handle('select-folder', async () => {
