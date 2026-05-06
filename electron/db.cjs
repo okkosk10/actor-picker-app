@@ -58,16 +58,36 @@ function initSchema() {
       tags        TEXT    DEFAULT '',
       rating      INTEGER DEFAULT 0,
       status      TEXT    DEFAULT 'normal',
+      recommended INTEGER DEFAULT 0,
 
       created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
       updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
     );
 
     -- 검색 성능을 위한 인덱스
-    CREATE INDEX IF NOT EXISTS idx_videos_actor ON videos (actor_name);
-    CREATE INDEX IF NOT EXISTS idx_videos_code  ON videos (code);
-    CREATE INDEX IF NOT EXISTS idx_videos_status ON videos (status);
+    CREATE INDEX IF NOT EXISTS idx_videos_actor       ON videos (actor_name);
+    CREATE INDEX IF NOT EXISTS idx_videos_code        ON videos (code);
+    CREATE INDEX IF NOT EXISTS idx_videos_status      ON videos (status);
+    CREATE INDEX IF NOT EXISTS idx_videos_recommended ON videos (recommended);
+    CREATE INDEX IF NOT EXISTS idx_videos_rating      ON videos (rating);
   `)
+
+  // ── 기존 DB 마이그레이션: 새 컬럼 추가 ────────────────────────
+  // better-sqlite3 는 ALTER TABLE ... IF NOT EXISTS 미지원이므로
+  // PRAGMA table_info 로 컬럼 존재 여부를 먼저 확인한다.
+  migrateSchema()
+}
+
+/**
+ * 스키마 마이그레이션: 기존 DB에 없는 컬럼을 안전하게 추가한다.
+ */
+function migrateSchema() {
+  const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+
+  if (!cols.includes('recommended')) {
+    db.exec('ALTER TABLE videos ADD COLUMN recommended INTEGER DEFAULT 0')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_videos_recommended ON videos (recommended)')
+  }
 }
 
 /**

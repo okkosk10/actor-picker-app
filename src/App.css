@@ -735,3 +735,173 @@
   word-break: break-all;
 }
 
+/* ════════════════════════════════════════════════════════════
+   Phase 2 — 추가 스타일
+   ════════════════════════════════════════════════════════════ */
+
+/* ── tag-badge ─────────────────────────────────────────────── */
+.tag-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 99px;
+  line-height: 1.6;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.tag-badge--recommended {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+.tag-badge--missing {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.tag-badge--watched {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+.tag-badge--favorite {
+  background: #fef3c7;
+  color: #78350f;
+  border: 1px solid #fcd34d;
+}
+.tag-badge--later {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+}
+.tag-badge--tag {
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* ── 추천 토글 버튼 ──────────────────────────────────────── */
+.btn-recommended {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1.5px solid var(--border);
+  border-radius: 99px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.btn-recommended:hover {
+  border-color: #f59e0b;
+  color: #b45309;
+}
+.btn-recommended--on {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+/* ── 정렬 선택 ───────────────────────────────────────────── */
+.sort-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.sort-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.sort-select {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+}
+.sort-select:focus { border-color: var(--accent); }
+
+/* ── 숨김 필터 토글 ──────────────────────────────────────── */
+.hide-missing-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+.hide-missing-toggle input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* ── VideoItem 뱃지 행 ────────────────────────────────────── */
+.vi-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+/* ── VideoItem 메모 미리보기 ─────────────────────────────── */
+.vi-memo-preview {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 태그 미리보기 (DetailPanel) ─────────────────────────── */
+.tag-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* ── 랜덤 추천 표에서 추천 행 강조 ────────────────────────── */
+.picked-row--recommended td {
+  background: #fef9ec !important;
+}
+
+/* ── 별점 크기 변형 ──────────────────────────────────────── */
+.star-rating--sm .star { font-size: 12px; padding: 0 1px; }
+.star-rating--md .star { font-size: 18px; }
+
+/* ── detail-panel-wrap (detail-panel -> detail-panel-wrap) ── */
+.detail-panel-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 스캔 결과 알림 ──────────────────────────────────────── */
+.scan-info {
+  padding: 8px 20px;
+  background: #d1fae5;
+  color: #065f46;
+  font-size: 13px;
+  border-bottom: 1px solid #a7f3d0;
+  flex-shrink: 0;
+}
+.scan-info__missing {
+  color: #991b1b;
+  font-weight: 600;
+}
+
+
