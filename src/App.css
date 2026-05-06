@@ -778,16 +778,16 @@
   border-radius: 6px;
   cursor: pointer;
   transition: opacity 0.15s;
-  align-self: flex-start;
+  margin-left: auto;
 }
 .btn-save:hover    { opacity: 0.88; }
 .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ── 파일/폴더 열기 버튼 ─────────────────────────────────── */
-.detail-actions {
+/* ── 파일 열기 / 폴더 열기 / 저장 한 줄 버튼 영역 ──────── */
+.detail-save-row {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   padding-top: 4px;
   border-top: 1px solid var(--border);
 }

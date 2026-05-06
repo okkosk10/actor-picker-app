@@ -221,35 +221,33 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
           />
         </div>
 
-        {/* 저장 버튼 (별점/태그/메모) */}
-        <button
-          className="btn-save"
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-        >
-          {saving ? '저장 중…' : saved ? '✓ 저장됨' : '저장'}
-        </button>
-      </div>
-
-      {/* ── 파일/폴더 열기 버튼 ─────────────────────────────────── */}
-      <div className="detail-actions">
-        <button
-          className="btn-action"
-          type="button"
-          onClick={() => onOpenVideo(video.file_path)}
-          disabled={video.status === 'missing'}
-          title={video.status === 'missing' ? '파일이 존재하지 않습니다' : '기본 플레이어로 열기'}
-        >
-          ▶ 파일 열기
-        </button>
-        <button
-          className="btn-action btn-action--secondary"
-          type="button"
-          onClick={() => onOpenFolder(video.folder_path)}
-        >
-          📁 폴더 열기
-        </button>
+        {/* 저장 버튼 + 파일/폴더 열기 — 한 줄 */}
+        <div className="detail-save-row">
+          <button
+            className="btn-action"
+            type="button"
+            onClick={() => onOpenVideo(video.file_path)}
+            disabled={video.status === 'missing'}
+            title={video.status === 'missing' ? '파일이 존재하지 않습니다' : '기본 플레이어로 열기'}
+          >
+            ▶ 파일 열기
+          </button>
+          <button
+            className="btn-action btn-action--secondary"
+            type="button"
+            onClick={() => onOpenFolder(video.folder_path)}
+          >
+            📁 폴더 열기
+          </button>
+          <button
+            className="btn-save"
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+          >
+            {saving ? '저장 중…' : saved ? '✓ 저장됨' : '저장'}
+          </button>
+        </div>
       </div>
     </div>
   )
