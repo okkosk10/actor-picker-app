@@ -113,11 +113,25 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── Shell 폴더 선택 + 직접 복사 (MTP 장치 포함) ─────────────
   // BrowseForFolder 대화상자(이 PC 루트)에서 사용자가 대상 폴더를 선택하면
-  // Shell.Application.CopyHere 로 직접 복사한다.
-  // 클립보드 방식이 MTP 폴더에 동작하지 않을 때 사용한다.
+  // Shell.Application.CopyHere 로 1개씩 순차 전송한다.
+  // 진행 상황은 device-copy-progress IPC 이벤트로 수신한다.
   // @param filePaths {string[]} - 복사할 파일의 절대 경로 배열
-  // 반환: { success, action: 'copied'|'cancelled'|'error', count, error? }
+  // 반환: { success, action: 'copied'|'partial'|'failed'|'cancelled'|'error', doneCount, failedCount, failedFiles }
   copyFilesToDevice: (filePaths) =>
     ipcRenderer.invoke('copy-files-to-device', filePaths),
+
+  // ── MTP 전송 진행 이벤트 구독 ────────────────────────────────
+  // callback: (payload) => void
+  //   payload: { status, currentIndex, total, currentFileName, doneCount, failedCount, failedFiles, message }
+  // 반환: unsubscribe 함수
+  onDeviceCopyProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('device-copy-progress', listener)
+    return () => ipcRenderer.removeListener('device-copy-progress', listener)
+  },
+
+  removeDeviceCopyProgress: () => {
+    ipcRenderer.removeAllListeners('device-copy-progress')
+  },
 })
 

@@ -15,7 +15,7 @@
  *   open-folder                : 탐색기로 폴더 열기
  *   random-pick                : DB 기반 배우별 랜덤 추천
  *   copy-files-to-clipboard    : Windows CF_HDROP 파일 클립보드 복사
- *   copy-files-to-device       : Shell 폴더 선택 + CopyHere 직접 복사 (MTP 지원)
+ *   copy-files-to-device       : MTP 전송 큐 (1개씩 순차, 진행률 IPC 이벤트)
  *
  * 보안:
  *   - Renderer에서 직접 fs/DB 접근 불가
@@ -27,7 +27,7 @@ const fs   = require('fs')
 const { ipcMain, dialog, shell, BrowserWindow } = require('electron')
 const { getDb }               = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
-const { copyFilesToClipboard, copyFilesToDevice } = require('./clipboardHelper.cjs')
+const { copyFilesToClipboard, createMtpSession } = require('./clipboardHelper.cjs')
 
 // ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
 // 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
@@ -850,36 +850,95 @@ function registerIpcHandlers() {
     }
   })
 
-  // ── Shell 폴더 선택 + 직접 복사 (MTP 장치 지원) ──────────────
-  ipcMain.handle('copy-files-to-device', async (_event, filePaths) => {
+  // ── MTP 전송 큐 (1개씩 순차 전송, 진행률 IPC 이벤트) ─────────
+  ipcMain.handle('copy-files-to-device', async (event, filePaths) => {
+    // ── 입력 검증 ──────────────────────────────────────────────
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
-      return { success: false, error: '파일 경로가 없습니다.', action: 'none', count: 0 }
+      return { success: false, error: '파일 경로가 없습니다.', action: 'none' }
     }
 
     const validPaths = []
     for (const fp of filePaths) {
       if (typeof fp !== 'string' || !path.isAbsolute(fp)) continue
-      try {
-        if (fs.statSync(fp).isFile()) validPaths.push(fp)
-      } catch { /* 존재하지 않는 파일 무시 */ }
+      try { if (fs.statSync(fp).isFile()) validPaths.push(fp) } catch { /* 무시 */ }
     }
-
     if (validPaths.length === 0) {
-      return { success: false, error: '존재하는 파일이 없습니다.', action: 'none', count: 0 }
+      return { success: false, error: '존재하는 파일이 없습니다.', action: 'none' }
     }
 
-    // Electron 창 HWND 를 BrowseForFolder 부모로 전달
-    // → 대화상자가 앱 위에 표시되고 MTP 장치(휴대폰) 폴더도 목록에 포함됨
+    // ── progress 전송 헬퍼 ────────────────────────────────────
+    const total        = validPaths.length
+    const failedFiles  = []
+    let   doneCount    = 0
+    let   failedCount  = 0
+
+    const sendProgress = (status, currentIndex, currentFileName, message = '') => {
+      try {
+        event.sender.send('device-copy-progress', {
+          status, currentIndex, total, currentFileName,
+          doneCount, failedCount, failedFiles: [...failedFiles], message,
+        })
+      } catch { /* renderer 가 닫혔을 경우 무시 */ }
+    }
+
+    // ── HWND 취득 ─────────────────────────────────────────────
     const mainWin    = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
     const hwndBuffer = mainWin?.getNativeWindowHandle()
     const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
 
+    // ── MTP 세션 시작 (BrowseForFolder 1회) ───────────────────
+    sendProgress('selecting', 0, '', '폴더를 선택해 주세요…')
+    let session
     try {
-      const result = await copyFilesToDevice(validPaths, hwnd, { timeoutMinutes: 360, staleMinutes: 10 })
-      return { success: true, ...result }
+      session = await createMtpSession(hwnd)
     } catch (err) {
-      return { success: false, error: err.message, action: 'error', count: 0 }
+      sendProgress('cancelled', 0, '', err.message)
+      return { success: false, error: err.message, action: 'error' }
     }
+
+    if (!session) {
+      sendProgress('cancelled', 0, '', '폴더 선택이 취소되었습니다.')
+      return { success: false, action: 'cancelled' }
+    }
+
+    // ── 파일 1개씩 순차 전송 ──────────────────────────────────
+    for (let i = 0; i < validPaths.length; i++) {
+      const fp       = validPaths[i]
+      const fileName = path.basename(fp)
+
+      sendProgress('copying', i, fileName, `전송 중… (${i + 1}/${total})`)
+
+      let result
+      try {
+        result = await session.sendFile(fp)
+      } catch {
+        result = 'error'
+      }
+
+      if (result === 'ok') {
+        doneCount++
+        sendProgress('completed', i, fileName, `완료 (${doneCount}/${total})`)
+      } else if (result === 'timeout') {
+        failedCount++
+        failedFiles.push(fileName)
+        sendProgress('timeout', i, fileName, `시간 초과 — 다음 파일로 이동`)
+      } else {
+        failedCount++
+        failedFiles.push(fileName)
+        sendProgress('failed', i, fileName, `전송 실패 — 다음 파일로 이동`)
+      }
+
+      // 파일 간 안정화 딜레이 (마지막 파일 제외)
+      if (i < validPaths.length - 1) {
+        await new Promise((r) => setTimeout(r, 3000))
+      }
+    }
+
+    session.close()
+
+    const action = failedCount === 0 ? 'copied' : failedCount === total ? 'failed' : 'partial'
+    sendProgress('done', total - 1, '', `전체 완료 — 성공 ${doneCount}개, 실패 ${failedCount}개`)
+    return { success: true, action, doneCount, failedCount, failedFiles: [...failedFiles] }
   })
 }
 

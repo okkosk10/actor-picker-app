@@ -112,122 +112,143 @@ async function copyFilesToClipboard(filePaths) {
 }
 
 /**
- * Shell.Application 기반 직접 복사 (BrowseForFolder + CopyHere)
+ * Shell.Application 기반 MTP 순차 전송 세션
  *
  * 동작:
- *   - Electron 창의 HWND 를 BrowseForFolder 의 부모로 전달한다.
- *     → 대화상자가 앱 창 위에 정상 표시되며 MTP 장치(휴대폰 폴더)도 포함된다.
- *   - 대상 폴더 선택 후 문자열 경로를 직접 CopyHere 에 전달한다.
- *     → MTP Shell 핸들러가 로컬 파일을 직접 읽어 전송한다.
- *   - CopyHere 는 비동기이므로 PowerShell 프로세스(COM 아파트)를 유지하면서 폴링한다.
- *   - 완료 판단: 받은 파일 수 = 대상 폴더 Items() 수. MTP에서는 참고용으로만 사용.
- *   - 진행 없음 감지: staleMinutes(10분)동안 변화 없으면 TIMEOUT_PENDING 반환.
- *   - timeoutMinutes: 전체 쭜대 대기 시간 (기본 360분 = 6시간).
- *     TIMEOUT_PENDING 시에도 Windows Shell이 백그라운드에서 계속 전송 중일 수 있음.
+ *   - PowerShell STA 프로세스 1개를 장기 실행 상태로 유지한다.
+ *   - BrowseForFolder 는 스크립트 시작 즉시(c7783d4 방식) 실행한다.
+ *     → windowsHide:true 상태에서도 BrowseForFolder 다이얼로그가 정상 표시됨.
+ *   - BrowseForFolder 선택 결과(READY/CANCEL)를 stdout 으로 출력한다.
+ *   - 이후 stdin 으로 SEND:<path> 명령을 받아 파일을 1개씩 순차 전송한다.
+ *   - windowsHide:true 로 PowerShell 콘솔 창은 사용자에게 노출되지 않는다.
  *
- * @param {string[]} filePaths      - 복사할 파일의 절대 경로 배열
- * @param {number}   hwnd           - Electron BrowserWindow 의 native HWND (정수)
- * @param {object}   [opts]
- * @param {number}   [opts.timeoutMinutes=360]  - 전체 쭜대 대기 분 (기본 6시간)
- * @param {number}   [opts.staleMinutes=10]     - 진행 없음 감지 기준 분 (기본 10분)
- * @returns {Promise<{ action: 'copied'|'cancelled'|'timeout_pending', count: number }>}
+ * 프로토콜 (stdout 먼저):
+ *   (시작)            → READY  (폴더 선택 성공)
+ *                     → CANCEL (폴더 선택 취소)
+ *                     → ERR:<msg>
+ *   SEND:<filePath>   → OK     (전송 확인)
+ *                     → TIMEOUT
+ *                     → ERR:<msg>
+ *   QUIT              → (프로세스 종료)
  */
-async function copyFilesToDevice(filePaths, hwnd, opts = {}) {
-  const timeoutMinutes = Number.isFinite(opts.timeoutMinutes) ? opts.timeoutMinutes : 360
-  const staleMinutes   = Number.isFinite(opts.staleMinutes)   ? opts.staleMinutes   : 10
 
-  if (!Array.isArray(filePaths) || filePaths.length === 0) {
-    throw new Error('복사할 파일이 없습니다.')
+// HWND 플레이스홀더를 스크립트 빌드 시 숫자 리터럴로 치환한다 (c7783d4 방식)
+const MTP_SESSION_SCRIPT_TPL = `
+$ErrorActionPreference = 'Continue'
+$shell = New-Object -ComObject Shell.Application
+
+function Poll-Item {
+  param($name, $timeoutSec, $staleSec)
+  $deadline  = [DateTime]::Now.AddSeconds($timeoutSec)
+  $lastTick  = [DateTime]::Now
+  $staleSpan = [TimeSpan]::FromSeconds($staleSec)
+  while ([DateTime]::Now -lt $deadline) {
+    Start-Sleep -Seconds 3
+    try {
+      $items = @($dest.Items() | ForEach-Object { $_.Name })
+      if ($items -contains $name) {
+        Start-Sleep -Seconds 3
+        return 'OK'
+      } else {
+        if (([DateTime]::Now - $lastTick) -gt $staleSpan) { return 'TIMEOUT' }
+      }
+    } catch {}
   }
-
-  const tmpFileName = `acp-dev-${crypto.randomBytes(8).toString('hex')}.txt`
-  const tmpFile     = path.join(os.tmpdir(), tmpFileName)
-  const bom         = Buffer.from([0xEF, 0xBB, 0xBF])
-  fs.writeFileSync(
-    tmpFile,
-    Buffer.concat([bom, Buffer.from(filePaths.join('\n'), 'utf8')]),
-  )
-
-  const tmpSafe = tmpFile.replace(/'/g, "''")
-  // HWND 는 정수 리터럴로 스크립트에 직접 삽입 (인젝션 불가 - 숫자만)
-  const hwndVal      = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
-  const psTimeout    = Math.max(1, Math.ceil(timeoutMinutes))   // 분, 정수
-  const psStale      = Math.max(1, Math.ceil(staleMinutes))     // 분, 정수
-  const psLines = [
-    `$ErrorActionPreference = 'Stop'`,
-    `$paths = @(Get-Content -LiteralPath '${tmpSafe}' |`,
-    `  ForEach-Object { $_.Trim() } |`,
-    `  Where-Object { $_ -ne '' })`,
-    `Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue`,
-    `if ($paths.Count -eq 0) { Write-Output 'ERR:파일 없음'; exit 1 }`,
-    `$shell = New-Object -ComObject Shell.Application`,
-    // Electron 창 HWND 를 부모로 지정 → 대화상자가 앱 앞에 표시됨
-    // rootFolder=17(ssfDRIVES) → "이 PC" 루트, MTP 장치 포함
-    `$dest = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)`,
-    `if (-not $dest) { Write-Output 'CANCEL'; exit 0 }`,
-    // 문자열 경로 직접 전달 → 로컬↔MTP 네임스페이스 불일치 없음, MTP Shell 핸들러가 직접 읽어 전송
-    // flags=0: Windows 표준 복사 진행 창 표시
-    `foreach ($p in $paths) { $dest.CopyHere($p, 0) }`,
-    // MTP 의 CopyHere 는 비동기 → PowerShell 프로세스(COM 아파트)가 살아있어야 전송 유지
-    // 완료 판단: 대상 Items() 수가 전송 파일 수에 도달하면 copied
-    //            staleMinutes 동안 변화 없으면 timeout_pending (Windows Shell 은 계속 전송 중일 수 있음)
-    //            timeoutMinutes 초과 시 timeout_pending
-    `$names    = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
-    `$total    = $names.Count`,
-    `$done     = 0`,
-    `$lastTick = [DateTime]::Now`,
-    `$dlTotal  = [DateTime]::Now.AddMinutes(${psTimeout})`,
-    `$staleTs  = [TimeSpan]::FromMinutes(${psStale})`,
-    `while ($done -lt $total -and [DateTime]::Now -lt $dlTotal) {`,
-    `  Start-Sleep -Seconds 10`,
-    `  try {`,
-    `    $have    = @($dest.Items() | ForEach-Object { $_.Name })`,
-    `    $newDone = @($names | Where-Object { $have -contains $_ }).Count`,
-    `    if ($newDone -gt $done) { $done = $newDone; $lastTick = [DateTime]::Now }`,
-    `    elseif (([DateTime]::Now - $lastTick) -gt $staleTs) { break }`,
-    `  } catch { if (([DateTime]::Now - $lastTick) -gt $staleTs) { break } }`,
-    `}`,
-    `if ($done -ge $total) { Write-Output "OK:$done" }`,
-    `else                  { Write-Output "TIMEOUT_PENDING:$done/$total" }`,
-  ]
-  const psScript = psLines.join('\r\n')
-  const encoded  = Buffer.from(psScript, 'utf16le').toString('base64')
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn(
-      'powershell.exe',
-      ['-STA', '-NoProfile', '-EncodedCommand', encoded],
-      { windowsHide: true },
-    )
-
-    let stdout = ''
-    let stderr = ''
-
-    proc.stdout.on('data', (d) => { stdout += d.toString('utf8') })
-    proc.stderr.on('data', (d) => { stderr += d.toString('utf8') })
-
-    proc.on('close', (code) => {
-      try { fs.unlinkSync(tmpFile) } catch { /* 이미 삭제됨 */ }
-
-      const out = stdout.trim()
-      if (out === 'CANCEL') return resolve({ action: 'cancelled', count: 0 })
-      const okMatch = out.match(/OK:(\d+)/)
-      if (code === 0 && okMatch) return resolve({ action: 'copied', count: parseInt(okMatch[1], 10) })
-      const pendMatch = out.match(/TIMEOUT_PENDING:(\d+)\/(\d+)/)
-      if (pendMatch) return resolve({
-        action:  'timeout_pending',
-        count:   parseInt(pendMatch[1], 10),
-        total:   parseInt(pendMatch[2], 10),
-        message: '복사는 Windows Shell에서 계속 진행 중일 수 있습니다.',
-      })
-      reject(new Error(stderr.trim() || `PowerShell 실패 (종료 코드: ${code})\n${out}`))
-    })
-
-    proc.on('error', (err) => {
-      try { fs.unlinkSync(tmpFile) } catch { /* 무시 */ }
-      reject(new Error(`PowerShell 실행 실패: ${err.message}`))
-    })
-  })
+  return 'TIMEOUT'
 }
 
-module.exports = { copyFilesToClipboard, copyFilesToDevice }
+# BrowseForFolder 스크립트 시작 즉시 실행 (c7783d4 동일 방식)
+$dest = $shell.BrowseForFolder(HWND_PLACEHOLDER, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)
+if (-not $dest) { [Console]::WriteLine('CANCEL'); exit 0 }
+[Console]::WriteLine('READY')
+
+$stdinReader = [System.Console]::In
+while ($true) {
+  $line = $stdinReader.ReadLine()
+  if ($null -eq $line) { break }
+  $line = $line.Trim()
+  if ($line -eq 'QUIT') { break }
+
+  if ($line -match '^SEND:(.+)$') {
+    $filePath = $Matches[1]
+    try {
+      $dest.CopyHere($filePath, 0)
+      $name   = [System.IO.Path]::GetFileName($filePath)
+      $result = Poll-Item -name $name -timeoutSec 1800 -staleSec 120
+      [Console]::WriteLine($result)
+    } catch { [Console]::WriteLine("ERR:$_") }
+  }
+}
+`.trim()
+
+/**
+ * MTP 전송 세션 생성
+ * PowerShell 프로세스를 시작하고 BrowseForFolder 결과를 기다린다.
+ *
+ * @param {number} hwnd - Electron BrowserWindow 의 native HWND
+ * @returns {Promise<MtpSession|null>}  null = 취소
+ */
+async function createMtpSession(hwnd) {
+  // HWND 를 스크립트에 리터럴로 삽입 (c7783d4 와 동일한 방식, 인젝션 불가 - 숫자만 허용)
+  const hwndVal  = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
+  const script   = MTP_SESSION_SCRIPT_TPL.replace('HWND_PLACEHOLDER', hwndVal.toString())
+  const encoded  = Buffer.from(script, 'utf16le').toString('base64')
+
+  // c7783d4 와 동일: windowsHide:true, -WindowStyle Hidden 없음
+  const proc    = spawn(
+    'powershell.exe',
+    ['-STA', '-NoProfile', '-EncodedCommand', encoded],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+  )
+
+  let stdoutBuf = ''
+  let closed    = false
+
+  proc.on('close', () => { closed = true })
+  proc.stderr.on('data', () => {})
+  proc.stdout.on('data', (d) => { stdoutBuf += d.toString('utf8') })
+
+  const readLine = () => new Promise((resolve, reject) => {
+    const check = () => {
+      if (closed && !stdoutBuf.includes('\n')) return reject(new Error('프로세스 종료'))
+      const idx = stdoutBuf.indexOf('\n')
+      if (idx !== -1) {
+        const line = stdoutBuf.slice(0, idx).trim()
+        stdoutBuf  = stdoutBuf.slice(idx + 1)
+        return resolve(line)
+      }
+      setTimeout(check, 50)
+    }
+    check()
+  })
+
+  const send = (cmd) => { proc.stdin.write(cmd + '\n') }
+
+  // BrowseForFolder 는 스크립트 시작과 동시에 실행 → 결과를 기다리기만 한다
+  const browseResult = await readLine()
+
+  if (browseResult === 'CANCEL') {
+    send('QUIT')
+    return null
+  }
+  if (browseResult !== 'READY') {
+    send('QUIT')
+    throw new Error(`폴더 선택 오류: ${browseResult}`)
+  }
+
+  return {
+    sendFile: async (filePath) => {
+      send(`SEND:${filePath}`)
+      const result = await readLine()
+      if (result === 'OK')      return 'ok'
+      if (result === 'TIMEOUT') return 'timeout'
+      return 'error'
+    },
+    close: () => {
+      try { send('QUIT') } catch { /* 무시 */ }
+      try { proc.stdin.end() } catch { /* 무시 */ }
+    },
+  }
+}
+
+module.exports = { copyFilesToClipboard, createMtpSession }
