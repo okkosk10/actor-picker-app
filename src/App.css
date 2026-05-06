@@ -1705,6 +1705,13 @@
 .btn-file-copy-bulk:hover:not(:disabled) { opacity: 0.88; }
 .btn-file-copy-bulk:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* 안정 모드 전송 완료 버튼 */
+.btn-mtp-done {
+  background: #16a34a;
+  margin-top: 10px;
+}
+.btn-mtp-done:hover { background: #15803d; }
+
 /* ── MTP 모드 탭 ─────────────────────────────────────────── */
 .mtp-mode-tabs {
   display: flex;

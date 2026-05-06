@@ -110,6 +110,8 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
       const result = await api.copyFilesToDeviceBulk(paths)
       if (result.action === 'cancelled') {
         setBulkStatus('cancelled')
+      } else if (result.action === 'bulk-started' && result.success) {
+        // running 상태 유지 → 사용자가 "전송 완료" 버튼을 눌러야 done 으로 전환
       } else if (result.success) {
         setBulkStatus('done')
       } else {
@@ -296,6 +298,23 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                         onClick={() => { setBulkStatus(null) }}
                       >
                         다시 시도
+                      </button>
+                    </div>
+                  ) : bulkStatus === 'running' ? (
+                    <div className="mtp-stable-result">
+                      <div className="mtp-stable-desc">
+                        ⏳ Windows 복사 창에서 전송이 진행 중입니다.<br />
+                        전송이 완료되면 아래 버튼을 눌러 주세요.
+                      </div>
+                      <button
+                        className="btn-file-copy-bulk btn-mtp-done"
+                        type="button"
+                        onClick={() => {
+                          ;(window.electronAPI ?? window.api)?.sendBulkCopyClose?.()
+                          setBulkStatus('done')
+                        }}
+                      >
+                        ✅ 전송 완료
                       </button>
                     </div>
                   ) : (

@@ -261,14 +261,13 @@ async function createMtpSession(hwnd) {
 }
 
 /**
- * MTP 안정 모드(일괄 전송) — c7783d4 copyFilesToDevice 패턴 그대로 사용
- *
- * temp 파일에 경로를 기록 → Get-Content 로 읽기 → foreach CopyHere →
- * 폴링 루프로 프로세스 유지(COM 아파트 유지) → 완료/timeout 반환
+ * MTP 안정 모드(일괄 전송) 세션.
+ * CopyHere 호출 후 stdin ReadLine 으로 COM 아파트를 유지한다.
+ * Node.js 가 stdin 에 줄바꿈을 보내면 PS 가 종료된다.
  *
  * @param {number}   hwnd
  * @param {string[]} filePaths
- * @returns {Promise<{action:'copied'|'cancelled'|'timeout', count:number}|null>}
+ * @returns {Promise<{close():void}|null>}  null = 취소
  */
 async function createMtpBulkSession(hwnd, filePaths) {
   if (!Array.isArray(filePaths) || filePaths.length === 0) return null
@@ -279,9 +278,12 @@ async function createMtpBulkSession(hwnd, filePaths) {
   const bom         = Buffer.from([0xEF, 0xBB, 0xBF])
   fs.writeFileSync(tmpFile, Buffer.concat([bom, Buffer.from(filePaths.join('\n'), 'utf8')]))
 
-  const tmpSafe = tmpFile.replace(/'/g, "''")
+  // 신호 파일: Node 가 close() 호출 시 생성 → PS 루프가 감지하고 종료
+  const sigFileName = `acp-bulk-sig-${crypto.randomBytes(8).toString('hex')}.txt`
+  const sigFile     = path.join(os.tmpdir(), sigFileName)
+  const tmpSafe     = tmpFile.replace(/'/g, "''")
+  const sigSafe     = sigFile.replace(/'/g, "''")
 
-  // c7783d4의 copyFilesToDevice 와 동일한 PS 스크립트 구조
   const psLines = [
     `$ErrorActionPreference = 'Stop'`,
     `$paths = @(Get-Content -LiteralPath '${tmpSafe}' |`,
@@ -292,51 +294,55 @@ async function createMtpBulkSession(hwnd, filePaths) {
     `$shell = New-Object -ComObject Shell.Application`,
     `$dest = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)`,
     `if (-not $dest) { Write-Output 'CANCEL'; exit 0 }`,
-    // flags=0: Windows 표준 복사 진행 창 표시
+    // 각 파일 CopyHere → Windows 복사 창 표시
     `foreach ($p in $paths) { $dest.CopyHere($p, 0) }`,
-    // CopyHere 는 비동기 → 폴링 루프로 프로세스(COM 아파트) 유지 (완료될 때까지 무한 대기)
-    `$names = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
-    `$left  = $names`,
-    `while ($left.Count -gt 0) {`,
-    `  Start-Sleep -Seconds 3`,
-    `  try {`,
-    `    $have = @($dest.Items() | ForEach-Object { $_.Name })`,
-    `    $left = @($names | Where-Object { $have -notcontains $_ })`,
-    `  } catch {}`,
-    `}`,
-    `Write-Output "OK:$($names.Count)"`,
+    `Write-Output 'STARTED'`,
+    // Start-Sleep 루프로 COM 아파트(STA) 메시지 펌프 유지
+    // ReadLine 으로 막으면 STA 메시지 펌프가 멈춰 CopyHere 가 동작하지 않음
+    `while (-not (Test-Path -LiteralPath '${sigSafe}')) { Start-Sleep -Milliseconds 500 }`,
+    `Remove-Item -LiteralPath '${sigSafe}' -ErrorAction SilentlyContinue`,
   ]
-  const psScript = psLines.join('\r\n')
-  const encoded  = Buffer.from(psScript, 'utf16le').toString('base64')
+  const encoded = Buffer.from(psLines.join('\r\n'), 'utf16le').toString('base64')
 
-  return new Promise((resolve, reject) => {
-    const proc = spawn(
-      'powershell.exe',
-      ['-STA', '-NoProfile', '-EncodedCommand', encoded],
-      { windowsHide: true },
-    )
+  const proc = spawn(
+    'powershell.exe',
+    ['-STA', '-NoProfile', '-EncodedCommand', encoded],
+    { windowsHide: true },
+  )
 
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', (d) => { stdout += d.toString('utf8') })
-    proc.stderr.on('data', (d) => { stderr += d.toString('utf8') })
+  let stdoutBuf = ''
+  let closed    = false
+  proc.on('close', () => { closed = true })
+  proc.stderr?.on('data', () => {})
+  proc.stdout.on('data', (d) => { stdoutBuf += d.toString('utf8') })
 
-    proc.on('close', (code) => {
-      try { fs.unlinkSync(tmpFile) } catch { /* 이미 삭제됨 */ }
-      const out = stdout.trim()
-      if (out === 'CANCEL') return resolve({ action: 'cancelled', count: 0 })
-      const okMatch = out.match(/OK:(\d+)/)
-      if (code === 0 && okMatch) return resolve({ action: 'copied', count: parseInt(okMatch[1], 10) })
-      const toMatch = out.match(/TIMEOUT:(\d+)\/\d+/)
-      if (toMatch) return resolve({ action: 'timeout', count: parseInt(toMatch[1], 10) })
-      reject(new Error(stderr.trim() || `PowerShell 실패 (종료 코드: ${code})\n${out}`))
-    })
-
-    proc.on('error', (err) => {
-      try { fs.unlinkSync(tmpFile) } catch { /* 무시 */ }
-      reject(new Error(`PowerShell 실행 실패: ${err.message}`))
-    })
+  // BrowseForFolder 완료 대기 (CANCEL 또는 STARTED)
+  const firstLine = await new Promise((resolve, reject) => {
+    const check = () => {
+      const idx = stdoutBuf.indexOf('\n')
+      if (idx !== -1) {
+        resolve(stdoutBuf.slice(0, idx).trim())
+        stdoutBuf = stdoutBuf.slice(idx + 1)
+        return
+      }
+      if (closed) return reject(new Error('프로세스가 응답 없이 종료됨'))
+      setTimeout(check, 50)
+    }
+    check()
   })
+
+  try { fs.unlinkSync(tmpFile) } catch { /* 이미 삭제됨 */ }
+
+  if (firstLine === 'CANCEL') {
+    try { fs.writeFileSync(sigFile, '') } catch { /* 무시 */ }
+    return null
+  }
+
+  return {
+    close() {
+      try { fs.writeFileSync(sigFile, '') } catch { /* 무시 */ }
+    },
+  }
 }
 
 module.exports = { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec }

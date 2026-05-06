@@ -37,6 +37,9 @@ const dispatchAction = (action) => {
   if (_resolveAction) { _resolveAction(action); _resolveAction = null }
 }
 
+// ── MTP 안정 모드 세션 참조 (사용자 완료 버튼으로 종료) ─────────
+let _bulkSession = null
+
 // ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
 // 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
 const GRADE_CASE = `CASE grade
@@ -1028,7 +1031,6 @@ function registerIpcHandlers() {
       return { success: false, error: '파일 경로가 없습니다.', action: 'none' }
     }
 
-    // ── 입력 검증 + 파일 크기 수집 ─────────────────────────────
     const validInfos = []
     for (const fp of filePaths) {
       if (typeof fp !== 'string' || !path.isAbsolute(fp)) continue
@@ -1041,19 +1043,16 @@ function registerIpcHandlers() {
       return { success: false, error: '존재하는 파일이 없습니다.', action: 'none' }
     }
 
-    // ── 로그 헬퍼 ────────────────────────────────────────────
     const logPath = path.join(app.getPath('userData'), 'mtp-transfer.log')
     const mtpLog  = (msg) => {
       const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
       try { fs.appendFileSync(logPath, `[${ts}] ${msg}\n`, 'utf8') } catch { /* 무시 */ }
     }
 
-    const totalSize   = validInfos.reduce((s, f) => s + f.size, 0)
-    const totalSizeGB = (totalSize / (1024 ** 3)).toFixed(2)
+    const totalSizeGB = (validInfos.reduce((s, f) => s + f.size, 0) / (1024 ** 3)).toFixed(2)
     mtpLog(`STABLE_SESSION_START | files: ${validInfos.length} | totalSize: ${totalSizeGB}GB`)
     validInfos.forEach((f, i) => {
-      const sizeGB = (f.size / (1024 ** 3)).toFixed(2)
-      mtpLog(`  [${i + 1}/${validInfos.length}] ${path.basename(f.path)} | ${sizeGB}GB`)
+      mtpLog(`  [${i + 1}/${validInfos.length}] ${path.basename(f.path)} | ${(f.size / (1024 ** 3)).toFixed(2)}GB`)
     })
     mtpLog(`STABLE_COPYHEREALL_CALL | ${new Date().toISOString()}`)
 
@@ -1061,21 +1060,35 @@ function registerIpcHandlers() {
     const hwndBuffer = mainWin?.getNativeWindowHandle()
     const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
 
-    let result
-    try {
-      result = await createMtpBulkSession(hwnd, validInfos.map(f => f.path))
-    } catch (err) {
+    // 이전 세션 정리
+    if (_bulkSession) { try { _bulkSession.close() } catch { /* 무시 */ }; _bulkSession = null }
+
+    let session
+    try { session = await createMtpBulkSession(hwnd, validInfos.map(f => f.path)) }
+    catch (err) {
       mtpLog(`STABLE_SESSION_ERR | ${err.message}`)
       return { success: false, error: err.message, action: 'error' }
     }
 
-    if (!result || result.action === 'cancelled') {
+    if (!session) {
       mtpLog('STABLE_SESSION_CANCEL')
       return { success: false, action: 'cancelled' }
     }
 
-    mtpLog(`STABLE_DONE | count: ${result.count}`)
-    return { success: true, action: 'copied', count: result.count }
+    _bulkSession = session
+    mtpLog(`STABLE_STARTED | CopyHere 호출 완료. COM 아파트 유지 중 (사용자 완료 버튼 대기)`)
+    return { success: true, action: 'bulk-started', count: validInfos.length }
+  })
+
+  // ── MTP 안정 모드 완료 신호 (UI 완료 버튼) ────────────────────
+  ipcMain.on('bulk-copy-close', (_ev) => {
+    if (_bulkSession) {
+      _bulkSession.close()
+      _bulkSession = null
+      const logPath = path.join(app.getPath('userData'), 'mtp-transfer.log')
+      const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
+      try { fs.appendFileSync(logPath, `[${ts}] STABLE_USER_DONE\n`, 'utf8') } catch { /* 무시 */ }
+    }
   })
 }
 

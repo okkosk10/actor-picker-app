@@ -146,5 +146,10 @@ contextBridge.exposeInMainWorld('api', {
   // action: 'continue' | 'retry' | 'skip' | 'abort'
   sendDeviceCopyAction: (action) =>
     ipcRenderer.send('device-copy-action', action),
+
+  // ── MTP 안정 모드 완료 신호 ───────────────────────────────────
+  // 사용자가 Windows 복사 창 완료 후 클릭하면 PS 프로세스를 종료한다.
+  sendBulkCopyClose: () =>
+    ipcRenderer.send('bulk-copy-close'),
 })
 
