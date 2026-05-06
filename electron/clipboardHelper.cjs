@@ -156,20 +156,24 @@ async function copyFilesToDevice(filePaths, hwnd) {
     // 문자열 경로 직접 전달 → 로컬↔MTP 네임스페이스 불일치 없음, MTP Shell 핸들러가 직접 읽어 전송
     // flags=0: Windows 표준 복사 진행 창 표시
     `foreach ($p in $paths) { $dest.CopyHere($p, 0) }`,
-    // MTP 의 CopyHere 는 비동기 → PowerShell 프로세스가 살아있어야 COM 아파트 유지
-    // 대상 폴더에 파일이 나타날 때까지 폴링하여 프로세스를 유지한다 (최대 30분)
-    `$names = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
-    `$left  = $names`,
-    `$dl    = [DateTime]::Now.AddMinutes(30)`,
-    `while ($left.Count -gt 0 -and [DateTime]::Now -lt $dl) {`,
-    `  Start-Sleep -Seconds 3`,
+    // MTP 의 CopyHere 는 비동기 → PowerShell 프로세스(COM 아파트)가 살아있어야 전송 유지
+    // 시간 기반 타임아웃 대신 "진행 없음" 감지: 마지막 파일 도착 후 5분간 변화 없으면 종료
+    // → 300GB 이상 대용량도 처리 가능
+    `$names     = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
+    `$total     = $names.Count`,
+    `$done      = 0`,
+    `$lastTick  = [DateTime]::Now`,
+    `$stale     = [TimeSpan]::FromMinutes(5)`,
+    `while ($done -lt $total) {`,
+    `  Start-Sleep -Seconds 5`,
     `  try {`,
-    `    $have = @($dest.Items() | ForEach-Object { $_.Name })`,
-    `    $left = @($names | Where-Object { $have -notcontains $_ })`,
-    `  } catch {}`,
+    `    $have    = @($dest.Items() | ForEach-Object { $_.Name })`,
+    `    $newDone = @($names | Where-Object { $have -contains $_ }).Count`,
+    `    if ($newDone -gt $done) { $done = $newDone; $lastTick = [DateTime]::Now }`,
+    `    elseif (([DateTime]::Now - $lastTick) -gt $stale) { break }`,
+    `  } catch { if (([DateTime]::Now - $lastTick) -gt $stale) { break } }`,
     `}`,
-    `if ($left.Count -eq 0) { Write-Output "OK:$($names.Count)" }`,
-    `else { Write-Output "TIMEOUT:$($names.Count - $left.Count)/$($names.Count)" }`,
+    `Write-Output "OK:$done"`,
   ]
   const psScript = psLines.join('\r\n')
   const encoded  = Buffer.from(psScript, 'utf16le').toString('base64')
@@ -194,8 +198,6 @@ async function copyFilesToDevice(filePaths, hwnd) {
       if (out === 'CANCEL') return resolve({ action: 'cancelled', count: 0 })
       const okMatch = out.match(/OK:(\d+)/)
       if (code === 0 && okMatch) return resolve({ action: 'copied', count: parseInt(okMatch[1], 10) })
-      const toMatch = out.match(/TIMEOUT:(\d+)\/\d+/)
-      if (toMatch) return resolve({ action: 'timeout', count: parseInt(toMatch[1], 10) })
       reject(new Error(stderr.trim() || `PowerShell 실패 (종료 코드: ${code})\n${out}`))
     })
 

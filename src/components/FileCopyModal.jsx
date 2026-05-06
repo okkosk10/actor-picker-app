@@ -93,10 +93,6 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
         message.error(result.error || '직접 복사 실패')
         return
       }
-      if (result.action === 'timeout') {
-        message.warning('복사를 시작했지만 완료 확인이 초과되었습니다. 휴대폰에서 파일을 확인하세요.')
-        return
-      }
       message.success(`✅ ${result.count}개 파일이 휴대폰에 복사되었습니다.`)
     } catch (err) {
       message.error('직접 복사 오류: ' + err.message)
@@ -170,6 +166,9 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
               <p className="file-copy-hint file-copy-hint--mtp">
                 클립보드 붙여넣기가 휴대폰 폴더에서 안 될 때는 아래 버튼을 사용하세요.
                 폴더 선택 창이 열리면 <strong>이 PC &gt; 휴대폰 폴더</strong>를 선택하면 됩니다.
+                <br />
+                <strong>대용량(수백 GB)도 지원</strong>하며, 전송이 완료될 때까지 버튼이 비활성화 상태로 유지됩니다.
+                Windows 복사 진행 창에서 진행 상황을 확인하세요.
               </p>
               <button
                 className="btn-file-copy-direct"
