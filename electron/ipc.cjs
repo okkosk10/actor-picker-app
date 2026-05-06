@@ -875,7 +875,7 @@ function registerIpcHandlers() {
     const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
 
     try {
-      const result = await copyFilesToDevice(validPaths, hwnd)
+      const result = await copyFilesToDevice(validPaths, hwnd, { timeoutMinutes: 360, staleMinutes: 10 })
       return { success: true, ...result }
     } catch (err) {
       return { success: false, error: err.message, action: 'error', count: 0 }

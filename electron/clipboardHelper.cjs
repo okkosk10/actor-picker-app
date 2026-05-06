@@ -117,15 +117,25 @@ async function copyFilesToClipboard(filePaths) {
  * 동작:
  *   - Electron 창의 HWND 를 BrowseForFolder 의 부모로 전달한다.
  *     → 대화상자가 앱 창 위에 정상 표시되며 MTP 장치(휴대폰 폴더)도 포함된다.
- *   - 사용자가 대상 폴더를 선택하면 Shell Folder COM 객체로 CopyHere 를 호출한다.
- *     → Shell.NameSpace(문자열 경로) 방식과 달리 MTP 경로도 직접 처리된다.
- *   - CopyHere flags=0: Windows 표준 복사 진행창 표시, 완료까지 블로킹
+ *   - 대상 폴더 선택 후 문자열 경로를 직접 CopyHere 에 전달한다.
+ *     → MTP Shell 핸들러가 로컬 파일을 직접 읽어 전송한다.
+ *   - CopyHere 는 비동기이므로 PowerShell 프로세스(COM 아파트)를 유지하면서 폴링한다.
+ *   - 완료 판단: 받은 파일 수 = 대상 폴더 Items() 수. MTP에서는 참고용으로만 사용.
+ *   - 진행 없음 감지: staleMinutes(10분)동안 변화 없으면 TIMEOUT_PENDING 반환.
+ *   - timeoutMinutes: 전체 쭜대 대기 시간 (기본 360분 = 6시간).
+ *     TIMEOUT_PENDING 시에도 Windows Shell이 백그라운드에서 계속 전송 중일 수 있음.
  *
- * @param {string[]} filePaths - 복사할 파일의 절대 경로 배열
- * @param {number}   hwnd      - Electron BrowserWindow 의 native HWND (정수)
- * @returns {Promise<{ action: 'copied'|'cancelled', count: number }>}
+ * @param {string[]} filePaths      - 복사할 파일의 절대 경로 배열
+ * @param {number}   hwnd           - Electron BrowserWindow 의 native HWND (정수)
+ * @param {object}   [opts]
+ * @param {number}   [opts.timeoutMinutes=360]  - 전체 쭜대 대기 분 (기본 6시간)
+ * @param {number}   [opts.staleMinutes=10]     - 진행 없음 감지 기준 분 (기본 10분)
+ * @returns {Promise<{ action: 'copied'|'cancelled'|'timeout_pending', count: number }>}
  */
-async function copyFilesToDevice(filePaths, hwnd) {
+async function copyFilesToDevice(filePaths, hwnd, opts = {}) {
+  const timeoutMinutes = Number.isFinite(opts.timeoutMinutes) ? opts.timeoutMinutes : 360
+  const staleMinutes   = Number.isFinite(opts.staleMinutes)   ? opts.staleMinutes   : 10
+
   if (!Array.isArray(filePaths) || filePaths.length === 0) {
     throw new Error('복사할 파일이 없습니다.')
   }
@@ -140,7 +150,9 @@ async function copyFilesToDevice(filePaths, hwnd) {
 
   const tmpSafe = tmpFile.replace(/'/g, "''")
   // HWND 는 정수 리터럴로 스크립트에 직접 삽입 (인젝션 불가 - 숫자만)
-  const hwndVal = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
+  const hwndVal      = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
+  const psTimeout    = Math.max(1, Math.ceil(timeoutMinutes))   // 분, 정수
+  const psStale      = Math.max(1, Math.ceil(staleMinutes))     // 분, 정수
   const psLines = [
     `$ErrorActionPreference = 'Stop'`,
     `$paths = @(Get-Content -LiteralPath '${tmpSafe}' |`,
@@ -157,23 +169,26 @@ async function copyFilesToDevice(filePaths, hwnd) {
     // flags=0: Windows 표준 복사 진행 창 표시
     `foreach ($p in $paths) { $dest.CopyHere($p, 0) }`,
     // MTP 의 CopyHere 는 비동기 → PowerShell 프로세스(COM 아파트)가 살아있어야 전송 유지
-    // 시간 기반 타임아웃 대신 "진행 없음" 감지: 마지막 파일 도착 후 5분간 변화 없으면 종료
-    // → 300GB 이상 대용량도 처리 가능
-    `$names     = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
-    `$total     = $names.Count`,
-    `$done      = 0`,
-    `$lastTick  = [DateTime]::Now`,
-    `$stale     = [TimeSpan]::FromMinutes(5)`,
-    `while ($done -lt $total) {`,
-    `  Start-Sleep -Seconds 5`,
+    // 완료 판단: 대상 Items() 수가 전송 파일 수에 도달하면 copied
+    //            staleMinutes 동안 변화 없으면 timeout_pending (Windows Shell 은 계속 전송 중일 수 있음)
+    //            timeoutMinutes 초과 시 timeout_pending
+    `$names    = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
+    `$total    = $names.Count`,
+    `$done     = 0`,
+    `$lastTick = [DateTime]::Now`,
+    `$dlTotal  = [DateTime]::Now.AddMinutes(${psTimeout})`,
+    `$staleTs  = [TimeSpan]::FromMinutes(${psStale})`,
+    `while ($done -lt $total -and [DateTime]::Now -lt $dlTotal) {`,
+    `  Start-Sleep -Seconds 10`,
     `  try {`,
     `    $have    = @($dest.Items() | ForEach-Object { $_.Name })`,
     `    $newDone = @($names | Where-Object { $have -contains $_ }).Count`,
     `    if ($newDone -gt $done) { $done = $newDone; $lastTick = [DateTime]::Now }`,
-    `    elseif (([DateTime]::Now - $lastTick) -gt $stale) { break }`,
-    `  } catch { if (([DateTime]::Now - $lastTick) -gt $stale) { break } }`,
+    `    elseif (([DateTime]::Now - $lastTick) -gt $staleTs) { break }`,
+    `  } catch { if (([DateTime]::Now - $lastTick) -gt $staleTs) { break } }`,
     `}`,
-    `Write-Output "OK:$done"`,
+    `if ($done -ge $total) { Write-Output "OK:$done" }`,
+    `else                  { Write-Output "TIMEOUT_PENDING:$done/$total" }`,
   ]
   const psScript = psLines.join('\r\n')
   const encoded  = Buffer.from(psScript, 'utf16le').toString('base64')
@@ -198,6 +213,13 @@ async function copyFilesToDevice(filePaths, hwnd) {
       if (out === 'CANCEL') return resolve({ action: 'cancelled', count: 0 })
       const okMatch = out.match(/OK:(\d+)/)
       if (code === 0 && okMatch) return resolve({ action: 'copied', count: parseInt(okMatch[1], 10) })
+      const pendMatch = out.match(/TIMEOUT_PENDING:(\d+)\/(\d+)/)
+      if (pendMatch) return resolve({
+        action:  'timeout_pending',
+        count:   parseInt(pendMatch[1], 10),
+        total:   parseInt(pendMatch[2], 10),
+        message: '복사는 Windows Shell에서 계속 진행 중일 수 있습니다.',
+      })
       reject(new Error(stderr.trim() || `PowerShell 실패 (종료 코드: ${code})\n${out}`))
     })
 

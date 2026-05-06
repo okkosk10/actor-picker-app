@@ -93,6 +93,13 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
         message.error(result.error || '직접 복사 실패')
         return
       }
+      if (result.action === 'timeout_pending') {
+        message.warning(
+          `대용량 복사라 완료 확인이 지연되었습니다. Windows 복사 창을 확인하세요. (확인된 파일: ${result.count}/${result.total ?? '?'}개)`,
+          6,
+        )
+        return
+      }
       message.success(`✅ ${result.count}개 파일이 휴대폰에 복사되었습니다.`)
     } catch (err) {
       message.error('직접 복사 오류: ' + err.message)
