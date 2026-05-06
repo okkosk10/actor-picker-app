@@ -325,6 +325,18 @@
   flex: 1;
 }
 
+.view-indicator-scanning {
+  font-size: 11px;
+  color: var(--accent);
+  white-space: nowrap;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
 /* ── 메인 콘텐츠 (폴더패널 + 목록 + 상세) ───────────────── */
 .app-content {
   display: flex;

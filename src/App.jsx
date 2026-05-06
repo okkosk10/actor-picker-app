@@ -7,7 +7,7 @@
  *   → app-content[ FolderPanel | VideoList | DetailPanel ]
  *   RandomPanel 모달, ActorPickPanel 모달, DeleteCleanupModal 모달
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Alert } from 'antd'
 import './App.css'
 
@@ -53,6 +53,10 @@ export default function App() {
   const [folderRefreshKey, setFolderRefreshKey] = useState(0)
   // NEW 탭 배지 숫자 (is_new=1 파일 수)
   const [newCount,         setNewCount]         = useState(0)
+  // 앱 시작 시 자동 스캔 상태
+  const [isAutoScanning,   setIsAutoScanning]   = useState(false)
+  // 자동 스캔 중복 실행 방지
+  const hasAutoScannedRef = useRef(false)
 
   /**
    * NEW 카운트를 DB에서 갱신한다.
@@ -69,6 +73,40 @@ export default function App() {
 
   // 앱 시작 시 NEW 카운트 초기 조회
   useEffect(() => { refreshNewCount() }, [refreshNewCount])
+
+  // ── 앱 시작 시 등록된 폴더 자동 스캔 ─────────────────────────
+  useEffect(() => {
+    if (hasAutoScannedRef.current) return
+    hasAutoScannedRef.current = true
+
+    const autoScanRegisteredFolders = async () => {
+      try {
+        setIsAutoScanning(true)
+        const { folders } = await window.api.getFolderList()
+        if (!folders || folders.length === 0) return
+
+        for (const folder of folders) {
+          const scanPath = folder.root_path || folder.path
+          if (!scanPath) continue
+          try {
+            await window.api.scanFolder(scanPath)
+          } catch (err) {
+            console.error('자동 스캔 실패:', scanPath, err)
+          }
+        }
+
+        await refresh()
+        await refreshNewCount()
+        setFolderRefreshKey((k) => k + 1)
+      } catch (err) {
+        console.error('앱 시작 자동 스캔 실패:', err)
+      } finally {
+        setIsAutoScanning(false)
+      }
+    }
+
+    autoScanRegisteredFolders()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 폴더 선택 ─────────────────────────────────────────────────
   const handleSelectFolder = async () => {
@@ -157,11 +195,30 @@ export default function App() {
     ? currentFolder
     : '전체 라이브러리'
 
-  // ── 전체 라이브러리 새로고침 (SearchBar 검색 버튼 트리거용) ────
-  // 검색 버튼(🔍) 클릭 시 현재 조건 그대로 DB 재조회
-  const handleRefreshSearch = () => {
-    refresh()
-    refreshNewCount()
+  // ── 전체 라이브러리 새로고침 (등록된 폴더 전체 재스캔 + 목록 갱신) ──
+  const handleRefreshSearch = async () => {
+    try {
+      setIsAutoScanning(true)
+      const { folders } = await window.api.getFolderList()
+      if (folders && folders.length > 0) {
+        for (const folder of folders) {
+          const scanPath = folder.root_path || folder.path
+          if (!scanPath) continue
+          try {
+            await window.api.scanFolder(scanPath)
+          } catch (err) {
+            console.error('새로고침 스캔 실패:', scanPath, err)
+          }
+        }
+      }
+      await refresh()
+      await refreshNewCount()
+      setFolderRefreshKey((k) => k + 1)
+    } catch (err) {
+      setError('새로고침 실패: ' + err.message)
+    } finally {
+      setIsAutoScanning(false)
+    }
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -184,7 +241,7 @@ export default function App() {
             className="btn-secondary"
             type="button"
             onClick={handleScan}
-            disabled={!folderPath || scanning}
+            disabled={!folderPath || scanning || isAutoScanning}
           >
             {scanning ? '스캔 중…' : '스캔'}
           </button>
@@ -251,6 +308,9 @@ export default function App() {
       <div className="view-indicator">
         <span className="view-indicator-label">현재 보기</span>
         <span className="view-indicator-path" title={viewLabel}>{viewLabel}</span>
+        {isAutoScanning && (
+          <span className="view-indicator-scanning">라이브러리 확인 중…</span>
+        )}
       </div>
 
       {/* 스캔 결과 알림 — closable Alert (X 닫기 + 신규 스캔 시 재표시) */}
