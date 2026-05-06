@@ -9,6 +9,8 @@
  *   scan-folder       : 폴더 재귀 스캔 + DB upsert + 삭제 파일 감지
  *   search-videos     : 동영상 검색 (키워드 + 정렬 + 숨김 필터)
  *   update-video-meta : 메모/태그/별점/상태/추천 업데이트
+ *   update-recommended: 추천 여부 단독 토글
+ *   update-grade      : 등급 단독 변경
  *   open-video        : OS 기본 플레이어로 파일 열기
  *   open-folder       : 탐색기로 폴더 열기
  *   random-pick       : DB 기반 배우별 랜덤 추천
@@ -24,6 +26,18 @@ const { ipcMain, dialog, shell } = require('electron')
 const { getDb }      = require('./db.cjs')
 const { scanFolder } = require('./scanner.cjs')
 
+// ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
+// 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
+const GRADE_CASE = `CASE grade
+  WHEN '영구소장'    THEN 1
+  WHEN '재시청 추천' THEN 2
+  WHEN '만족'        THEN 3
+  WHEN '보관'        THEN 4
+  WHEN '애매'        THEN 5
+  WHEN '삭제요망'    THEN 6
+  ELSE 7
+END`
+
 // ── 정렬 조건 화이트리스트 ─────────────────────────────────────
 // SQL Injection 방지: ORDER BY 절에 직접 사용할 값을 사전 정의된 맵으로만 허용
 const SORT_CLAUSES = {
@@ -35,6 +49,10 @@ const SORT_CLAUSES = {
   actor_asc:     `COALESCE(actor_name,'') ASC, COALESCE(code,'') ASC`,
   code_asc:      `COALESCE(code,'') ASC`,
   random:        `RANDOM()`,
+  // 등급 우선: 등급 순위 ASC 후 별점 DESC
+  grade_asc:     `${GRADE_CASE} ASC, rating DESC`,
+  // 추천 + 등급: 추천작 먼저, 그 다음 등급 순위
+  rec_grade:     `recommended DESC, ${GRADE_CASE} ASC, rating DESC`,
 }
 /** 허용되지 않은 정렬 키가 들어오면 기본값 반환 */
 function getSortClause(key) {
@@ -184,7 +202,7 @@ function registerIpcHandlers() {
   // ══════════════════════════════════════════════════════════════
   // 동영상 메타 업데이트 (사용자 입력 데이터)
   //
-  // 수정 가능 필드: memo, tags, rating, status, recommended
+  // 수정 가능 필드: memo, tags, rating, status, recommended, grade
   // 파일 시스템 정보(file_name, size 등)는 변경 불가
   //
   // 반환: 업데이트된 Video 레코드
@@ -197,6 +215,7 @@ function registerIpcHandlers() {
       rating      = 0,
       status      = 'normal',
       recommended = 0,
+      grade       = '보관',
     } = data
 
     db.prepare(`
@@ -207,9 +226,10 @@ function registerIpcHandlers() {
         rating      = ?,
         status      = ?,
         recommended = ?,
+        grade       = ?,
         updated_at  = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(memo, tags, rating, status, recommended ? 1 : 0, id)
+    `).run(memo, tags, rating, status, recommended ? 1 : 0, grade, id)
 
     return db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id)
   })
@@ -232,6 +252,32 @@ function registerIpcHandlers() {
           updated_at  = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(recommended ? 1 : 0, id)
+
+    return db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 등급(grade) 단독 변경
+  //
+  // update-video-meta 와 달리 grade 컬럼만 변경한다.
+  // DetailPanel Select 변경 즉시 반영을 위해 별도 채널로 분리.
+  //
+  // @param id    {number} - 동영상 ID
+  // @param grade {string} - 등급값 (영구소장/재시청 추천/만족/보관/애매/삭제요망)
+  // 반환: 업데이트된 Video 레코드
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('update-grade', async (_event, id, grade) => {
+    const db = getDb()
+    // 허용된 등급값 화이트리스트 검증 (SQL Injection 방지)
+    const ALLOWED_GRADES = ['영구소장', '재시청 추천', '만족', '보관', '애매', '삭제요망']
+    const safeGrade = ALLOWED_GRADES.includes(grade) ? grade : '보관'
+
+    db.prepare(`
+      UPDATE videos
+      SET grade      = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(safeGrade, id)
 
     return db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id)
   })

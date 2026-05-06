@@ -18,31 +18,46 @@ export function formatDate(isoStr) {
   return new Date(isoStr).toLocaleDateString('ko-KR')
 }
 
-// ── 상태 레이블 / 스타일 ───────────────────────────────────────
+// ── status: 시스템 관리용 (UI 최소 노출) ──────────────────────
+// normal  : 정상
+// hidden  : 숨김 (향후 확장용)
+// missing : 파일 없음 (시스템 자동 설정)
 export const STATUS_LABELS = {
-  normal:   '일반',
-  watched:  '시청완료',
-  favorite: '즐겨찾기',
-  later:    '나중에',
-  missing:  '삭제됨',
+  normal:  '정상',
+  hidden:  '숨김',
+  missing: '삭제됨',
 }
 
-/** status 값 → badge variant 매핑 */
-export const STATUS_VARIANTS = {
-  watched:  'watched',
-  favorite: 'favorite',
-  later:    'later',
-  missing:  'missing',
+// ── grade: 사용자 평가 등급 ────────────────────────────────────
+export const GRADES = [
+  '영구소장',
+  '재시청 추천',
+  '만족',
+  '보관',
+  '애매',
+  '삭제요망',
+]
+
+/** grade 값 → Ant Design Tag color 매핑 */
+export const GRADE_COLORS = {
+  '영구소장':   'gold',
+  '재시청 추천': 'magenta',
+  '만족':      'blue',
+  '보관':      'cyan',
+  '애매':      'default',
+  '삭제요망':   'red',
 }
 
 // ── 정렬 옵션 목록 ────────────────────────────────────────────
 export const SORT_OPTIONS = [
-  { value: 'created_desc', label: '최신 추가순' },
-  { value: 'updated_desc', label: '최근 수정순' },
-  { value: 'rating_desc',  label: '별점 높은순' },
-  { value: 'rating_asc',   label: '별점 낮은순' },
-  { value: 'recommended',  label: '추천작 우선' },
-  { value: 'actor_asc',    label: '배우명순'   },
-  { value: 'code_asc',     label: '품번순'     },
-  { value: 'random',       label: '랜덤순'     },
+  { value: 'created_desc', label: '최신 추가순'    },
+  { value: 'updated_desc', label: '최근 수정순'    },
+  { value: 'rating_desc',  label: '별점 높은순'    },
+  { value: 'rating_asc',   label: '별점 낮은순'    },
+  { value: 'recommended',  label: '추천작 우선'    },
+  { value: 'grade_asc',    label: '등급 우선'      },
+  { value: 'rec_grade',    label: '추천 + 등급 우선' },
+  { value: 'actor_asc',    label: '배우명순'       },
+  { value: 'code_asc',     label: '품번순'        },
+  { value: 'random',       label: '랜덤순'        },
 ]

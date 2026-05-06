@@ -7,6 +7,7 @@
  *   RandomPanel 모달 (필요 시)
  */
 import { useState } from 'react'
+import { Alert } from 'antd'
 import './App.css'
 
 import { useVideoSearch } from './hooks/useVideoSearch.js'
@@ -125,25 +126,37 @@ export default function App() {
         count={videos.length}
       />
 
-      {/* 스캔 결과 알림 */}
+      {/* 스캔 결과 알림 — closable Alert (X 닫기 + 신규 스캔 시 재표시) */}
       {scanInfo && (
-        <div className="scan-info">
-          ✓ 스캔 완료 —&nbsp;
-          <strong>{scanInfo.totalFiles}</strong>개 처리
-          {scanInfo.missingCount > 0 && (
-            <span className="scan-info__missing">
-              &nbsp;· 삭제됨 <strong>{scanInfo.missingCount}</strong>개 감지
-            </span>
-          )}
-        </div>
+        <Alert
+          type="success"
+          showIcon
+          closable
+          onClose={() => setScanInfo(null)}
+          style={{ borderRadius: 0, flexShrink: 0 }}
+          message={
+            <>
+              스캔 완료 — <strong>{scanInfo.totalFiles}</strong>개 처리
+              {scanInfo.missingCount > 0 && (
+                <span style={{ color: '#ef4444', marginLeft: 8 }}>
+                  · 삭제됨 <strong>{scanInfo.missingCount}</strong>개 감지
+                </span>
+              )}
+            </>
+          }
+        />
       )}
 
-      {/* 에러 메시지 */}
+      {/* 에러 메시지 — closable Alert */}
       {error && (
-        <div className="error-msg">
-          {error}
-          <button className="error-close" type="button" onClick={() => setError(null)}>✕</button>
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setError(null)}
+          message={error}
+          style={{ borderRadius: 0, flexShrink: 0 }}
+        />
       )}
 
       {/* 메인 콘텐츠 (2컬럼) */}

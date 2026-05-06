@@ -45,6 +45,14 @@ contextBridge.exposeInMainWorld('api', {
   updateRecommended: (id, recommended) =>
     ipcRenderer.invoke('update-recommended', id, recommended),
 
+  // ── 등급 단독 변경 ────────────────────────────────────────────
+  // grade 컬럼만 변경하는 가벼운 API (Select 즉시 반영용)
+  // @param id    {number} - 동영상 ID
+  // @param grade {string} - 등급값 (영구소장/재시청 추천/만족/보관/애매/삭제요망)
+  // 반환: 업데이트된 Video 레코드
+  updateGrade: (id, grade) =>
+    ipcRenderer.invoke('update-grade', id, grade),
+
   // ── 파일 열기 (OS 기본 플레이어) ─────────────────────────────
   openVideo: (filePath) =>
     ipcRenderer.invoke('open-video', filePath),

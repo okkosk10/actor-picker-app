@@ -1,4 +1,4 @@
-/**
+﻿/**
  * src/components/DetailPanel.jsx
  * 선택된 동영상의 상세 정보 표시 및 메타데이터 편집 패널
  *
@@ -8,44 +8,54 @@
  *   onOpenVideo  {Function} - 파일 열기 콜백 (filePath)
  *   onOpenFolder {Function} - 폴더 열기 콜백 (folderPath)
  *
- * 편집 가능 필드:
- *   recommended, rating, status, tags, memo
+ * 편집 가능 필드 (즉시 저장):
+ *   recommended  : Switch 토글 → updateRecommended API
+ *   grade        : Select 변경 → updateGrade API
+ *
+ * 편집 가능 필드 (저장 버튼):
+ *   rating, tags, memo
+ *
+ * status 는 시스템 관리용 — UI에서 직접 편집 불가 (missing 표시만)
  */
 import { useState, useEffect } from 'react'
-import { Switch, Tag, message } from 'antd'
+import { Switch, Tag, Select, message } from 'antd'
 import StarRating from './StarRating.jsx'
-import { useVideoMeta }   from '../hooks/useVideoMeta.js'
-import { formatFileSize, formatDate, STATUS_LABELS } from '../utils/format.js'
+import { useVideoMeta } from '../hooks/useVideoMeta.js'
+import { formatFileSize, formatDate, GRADES, GRADE_COLORS, STATUS_LABELS } from '../utils/format.js'
+
+const { Option } = Select
 
 export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder }) {
-  // ── 편집 필드 로컬 상태 ────────────────────────────────────────
+  // ── 즉시 저장 필드 상태 ───────────────────────────────────────
   const [recommended, setRecommended] = useState(Boolean(video.recommended))
-  const [recLoading,  setRecLoading]  = useState(false) // Switch 로딩 상태
-  const [rating,      setRating]      = useState(video.rating      || 0)
-  const [status,      setStatus]      = useState(video.status      || 'normal')
-  const [tags,        setTags]        = useState(video.tags        || '')
-  const [memo,        setMemo]        = useState(video.memo        || '')
+  const [recLoading,  setRecLoading]  = useState(false)
+  const [grade,       setGrade]       = useState(video.grade || '보관')
+  const [gradeLoading, setGradeLoading] = useState(false)
+
+  // ── 저장 버튼 필드 상태 ───────────────────────────────────────
+  const [rating, setRating] = useState(video.rating || 0)
+  const [tags,   setTags]   = useState(video.tags   || '')
+  const [memo,   setMemo]   = useState(video.memo   || '')
 
   const { saving, saved, saveVideo, resetSaved } = useVideoMeta()
 
   // 다른 동영상 선택 시 편집 상태 초기화
   useEffect(() => {
     setRecommended(Boolean(video.recommended))
-    setRating(video.rating      || 0)
-    setStatus(video.status      || 'normal')
-    setTags(video.tags          || '')
-    setMemo(video.memo          || '')
+    setGrade(video.grade || '보관')
+    setRating(video.rating || 0)
+    setTags(video.tags   || '')
+    setMemo(video.memo   || '')
     resetSaved()
   }, [video.id, resetSaved])
 
-  // ── 추천 즉시 토글 (updateRecommended API) ─────────────────────
-  // Switch 변경 즉시 DB에 반영 — 저장 버튼 불필요
+  // ── 추천 즉시 토글 ─────────────────────────────────────────────
   const handleRecommendedToggle = async (checked) => {
     setRecLoading(true)
     try {
       const updated = await window.api.updateRecommended(video.id, checked ? 1 : 0)
       setRecommended(checked)
-      onUpdate(updated) // 부모(목록) 동기화
+      onUpdate(updated)
       message.success(checked ? '추천작으로 등록했습니다.' : '추천 해제했습니다.')
     } catch (e) {
       message.error('추천 변경 실패: ' + e.message)
@@ -54,17 +64,35 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
     }
   }
 
-  // ── 저장 처리 ─────────────────────────────────────────────────
+  // ── 등급 즉시 변경 ─────────────────────────────────────────────
+  const handleGradeChange = async (newGrade) => {
+    setGradeLoading(true)
+    try {
+      const updated = await window.api.updateGrade(video.id, newGrade)
+      setGrade(newGrade)
+      onUpdate(updated)
+      message.success(`등급을 "${newGrade}"(으)로 변경했습니다.`)
+    } catch (e) {
+      message.error('등급 변경 실패: ' + e.message)
+    } finally {
+      setGradeLoading(false)
+    }
+  }
+
+  // ── 저장 버튼 처리 (rating, tags, memo) ─────────────────────
   const handleSave = async () => {
     try {
+      // recommended / grade 는 이미 즉시 저장됨 → 현재 상태 그대로 전달
       const updated = await saveVideo(video.id, {
         recommended: recommended ? 1 : 0,
+        grade,
         rating,
-        status,
         tags,
         memo,
+        // status 는 시스템 관리용 — 사용자 편집 불가, 현재 값 보존
+        status: video.status,
       })
-      onUpdate(updated) // 부모 상태 동기화
+      onUpdate(updated)
     } catch (e) {
       alert('저장 실패: ' + e.message)
     }
@@ -110,12 +138,19 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
           <span className="meta-label">추가일</span>
           <span className="meta-value">{formatDate(video.created_at)}</span>
         </div>
+        {/* missing 상태일 때만 경고 표시 */}
+        {video.status === 'missing' && (
+          <div className="meta-row">
+            <span className="meta-label">상태</span>
+            <Tag color="red">⚠ 파일 없음</Tag>
+          </div>
+        )}
       </div>
 
       {/* ── 편집 섹션 ───────────────────────────────────────────── */}
       <div className="detail-edit">
 
-        {/* 추천작 토글 — Ant Design Switch */}
+        {/* 추천작 토글 — 즉시 저장 */}
         <div className="edit-field edit-field--inline">
           <span className="edit-label">추천작</span>
           <Switch
@@ -128,28 +163,28 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
           />
         </div>
 
+        {/* 등급 Select — 즉시 저장 */}
+        <div className="edit-field edit-field--inline">
+          <span className="edit-label">등급</span>
+          <Select
+            value={grade}
+            onChange={handleGradeChange}
+            loading={gradeLoading}
+            size="small"
+            style={{ minWidth: 130 }}
+          >
+            {GRADES.map((g) => (
+              <Option key={g} value={g}>
+                <Tag color={GRADE_COLORS[g]} style={{ margin: 0 }}>{g}</Tag>
+              </Option>
+            ))}
+          </Select>
+        </div>
+
         {/* 별점 */}
         <div className="edit-field">
           <span className="edit-label">별점</span>
           <StarRating value={rating} onChange={setRating} />
-        </div>
-
-        {/* 상태 */}
-        <div className="edit-field">
-          <label className="edit-label" htmlFor="dp-status">상태</label>
-          <select
-            id="dp-status"
-            className="edit-select"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="normal">일반</option>
-            <option value="watched">시청완료</option>
-            <option value="favorite">즐겨찾기</option>
-            <option value="later">나중에</option>
-            {/* missing 은 시스템이 자동 설정 — 사용자가 직접 해제할 수는 없으므로 표시만 */}
-            {status === 'missing' && <option value="missing">삭제됨 (자동)</option>}
-          </select>
         </div>
 
         {/* 태그 */}
@@ -163,7 +198,7 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
             onChange={(e) => setTags(e.target.value)}
             placeholder="쉼표로 구분 (예: 4K, 자막, HD)"
           />
-          {/* 태그 미리보기 — Ant Design Tag */}
+          {/* 태그 미리보기 */}
           {tagList.length > 0 && (
             <div className="tag-preview">
               {tagList.map((t) => (
@@ -186,7 +221,7 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
           />
         </div>
 
-        {/* 저장 버튼 */}
+        {/* 저장 버튼 (별점/태그/메모) */}
         <button
           className="btn-save"
           type="button"
@@ -219,3 +254,4 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
     </div>
   )
 }
+

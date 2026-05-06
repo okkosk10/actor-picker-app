@@ -57,8 +57,11 @@ function initSchema() {
       memo        TEXT    DEFAULT '',
       tags        TEXT    DEFAULT '',
       rating      INTEGER DEFAULT 0,
+      -- status: 시스템 관리용 (normal / hidden / missing)
       status      TEXT    DEFAULT 'normal',
       recommended INTEGER DEFAULT 0,
+      -- grade: 사용자 평가 등급 (영구소장/재시청 추천/만족/보관/애매/삭제요망)
+      grade       TEXT    DEFAULT '보관',
 
       created_at  TEXT    DEFAULT CURRENT_TIMESTAMP,
       updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
@@ -70,6 +73,7 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_videos_status      ON videos (status);
     CREATE INDEX IF NOT EXISTS idx_videos_recommended ON videos (recommended);
     CREATE INDEX IF NOT EXISTS idx_videos_rating      ON videos (rating);
+    CREATE INDEX IF NOT EXISTS idx_videos_grade       ON videos (grade);
   `)
 
   // ── 기존 DB 마이그레이션: 새 컬럼 추가 ────────────────────────
@@ -84,9 +88,16 @@ function initSchema() {
 function migrateSchema() {
   const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
 
+  // recommended 컬럼 마이그레이션
   if (!cols.includes('recommended')) {
     db.exec('ALTER TABLE videos ADD COLUMN recommended INTEGER DEFAULT 0')
     db.exec('CREATE INDEX IF NOT EXISTS idx_videos_recommended ON videos (recommended)')
+  }
+
+  // grade 컬럼 마이그레이션
+  if (!cols.includes('grade')) {
+    db.exec("ALTER TABLE videos ADD COLUMN grade TEXT DEFAULT '보관'")
+    db.exec('CREATE INDEX IF NOT EXISTS idx_videos_grade ON videos (grade)')
   }
 }
 
