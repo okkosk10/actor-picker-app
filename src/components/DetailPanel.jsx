@@ -25,6 +25,18 @@ import { formatFileSize, formatDate, GRADES, GRADE_COLORS, STATUS_LABELS, RATING
 
 const { Option } = Select
 
+/**
+ * 신규 영상(is_new=1)이고 rating이 미설정(0)인 경우에만
+ * grade 매핑으로 초기 별점을 결정한다.
+ * 기존 데이터(is_new=0)나 이미 별점이 있는 경우는 원본 값을 그대로 반환한다.
+ */
+function getInitialRating(v) {
+  if (v.is_new === 1 && !v.rating) {
+    return RATING_BY_GRADE[v.grade || '보관'] ?? 0
+  }
+  return v.rating || 0
+}
+
 export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder }) {
   // ── 즉시 저장 필드 상태 ───────────────────────────────────────
   const [recommended, setRecommended] = useState(Boolean(video.recommended))
@@ -33,7 +45,7 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
   const [gradeLoading, setGradeLoading] = useState(false)
 
   // ── 저장 버튼 필드 상태 ───────────────────────────────────────
-  const [rating, setRating] = useState(video.rating || 0)
+  const [rating, setRating] = useState(getInitialRating(video))
   const [tags,   setTags]   = useState(video.tags   || '')
   const [memo,   setMemo]   = useState(video.memo   || '')
 
@@ -43,7 +55,7 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
   useEffect(() => {
     setRecommended(Boolean(video.recommended))
     setGrade(video.grade || '보관')
-    setRating(video.rating || 0)
+    setRating(getInitialRating(video))
     setTags(video.tags   || '')
     setMemo(video.memo   || '')
     resetSaved()
