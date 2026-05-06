@@ -21,7 +21,7 @@ import { useState, useEffect } from 'react'
 import { Switch, Tag, Select, message } from 'antd'
 import StarRating from './StarRating.jsx'
 import { useVideoMeta } from '../hooks/useVideoMeta.js'
-import { formatFileSize, formatDate, GRADES, GRADE_COLORS, STATUS_LABELS } from '../utils/format.js'
+import { formatFileSize, formatDate, GRADES, GRADE_COLORS, STATUS_LABELS, RATING_BY_GRADE, GRADE_BY_RATING } from '../utils/format.js'
 
 const { Option } = Select
 
@@ -64,12 +64,21 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
     }
   }
 
-  // ── 등급 즉시 변경 ─────────────────────────────────────────────
+  // ── 등급 즉시 변경 (rating·recommended 자동 연동) ────────────
   const handleGradeChange = async (newGrade) => {
     setGradeLoading(true)
     try {
-      const updated = await window.api.updateGrade(video.id, newGrade)
+      const newRating      = RATING_BY_GRADE[newGrade] ?? rating
+      // 영구소장이면 추천작 자동 true, 그 외는 현재 값 유지
+      const newRecommended = newGrade === '영구소장' ? true : recommended
+      const updated = await window.api.updateGrade(video.id, {
+        grade:       newGrade,
+        rating:      newRating,
+        recommended: newRecommended ? 1 : 0,
+      })
       setGrade(newGrade)
+      setRating(newRating)
+      if (newGrade === '영구소장') setRecommended(true)
       onUpdate(updated)
       message.success(`등급을 "${newGrade}"(으)로 변경했습니다.`)
     } catch (e) {
@@ -77,6 +86,15 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
     } finally {
       setGradeLoading(false)
     }
+  }
+
+  // ── 별점 변경 (grade·recommended 자동 연동, 로컬 상태만 반영) ─
+  // 저장은 기존과 동일하게 저장 버튼 클릭 시 handleSave 에서 처리됨
+  const handleRatingChange = (newRating) => {
+    const newGrade = GRADE_BY_RATING[newRating] ?? grade
+    setRating(newRating)
+    setGrade(newGrade)
+    if (newRating === 5) setRecommended(true)
   }
 
   // ── 저장 버튼 처리 (rating, tags, memo) ─────────────────────
@@ -184,7 +202,7 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
         {/* 별점 */}
         <div className="edit-field">
           <span className="edit-label">별점</span>
-          <StarRating value={rating} onChange={setRating} />
+          <StarRating value={rating} onChange={handleRatingChange} />
         </div>
 
         {/* 태그 */}

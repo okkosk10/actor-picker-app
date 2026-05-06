@@ -472,29 +472,37 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
-  // 등급(grade) 단독 변경
+  // 등급(grade) 즉시 변경 + 별점·추천작 자동 연동
   //
-  // update-video-meta 와 달리 grade 컬럼만 변경한다.
-  // DetailPanel Select 변경 즉시 반영을 위해 별도 채널로 분리.
+  // grade, rating, recommended 를 함께 업데이트한다.
+  // 등급 ↔ 별점 자동 연동 정책을 DB까지 일관되게 반영하기 위해
+  // 세 컬럼을 하나의 트랜잭션으로 처리한다.
   //
-  // @param id    {number} - 동영상 ID
-  // @param grade {string} - 등급값 (영구소장/재시청 추천/만족/보관/애매/삭제요망)
+  // @param id        {number} - 동영상 ID
+  // @param gradeData {object} - { grade, rating, recommended }
+  //   grade       : 등급값 (영구소장/재시청 추천/만족/보관/애매/삭제요망)
+  //   rating      : 별점 (0~5)
+  //   recommended : 추천 여부 (0|1)
   // 반환: 업데이트된 Video 레코드
   // ══════════════════════════════════════════════════════════════
-  ipcMain.handle('update-grade', async (_event, id, grade) => {
+  ipcMain.handle('update-grade', async (_event, id, gradeData) => {
     const db = getDb()
     // 허용된 등급값 화이트리스트 검증 (SQL Injection 방지)
     const ALLOWED_GRADES = ['영구소장', '재시청 추천', '만족', '보관', '애매', '삭제요망']
-    const safeGrade = ALLOWED_GRADES.includes(grade) ? grade : '보관'
 
-    // 등급 변경 시 is_new = 0 으로 해제 (사용자가 등급을 설정한 것으로 판단)
+    const grade       = ALLOWED_GRADES.includes(gradeData.grade) ? gradeData.grade : '보관'
+    const rating      = typeof gradeData.rating === 'number' ? Math.max(0, Math.min(5, Math.floor(gradeData.rating))) : 0
+    const recommended = gradeData.recommended ? 1 : 0
+
     db.prepare(`
       UPDATE videos
-      SET grade      = ?,
-          is_new     = 0,
-          updated_at = CURRENT_TIMESTAMP
+      SET grade       = ?,
+          rating      = ?,
+          recommended = ?,
+          is_new      = 0,
+          updated_at  = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(safeGrade, id)
+    `).run(grade, rating, recommended, id)
 
     return db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id)
   })
