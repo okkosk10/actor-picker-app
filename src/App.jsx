@@ -123,18 +123,69 @@ export default function App() {
   }
 
   // ── 폴더 스캔 ─────────────────────────────────────────────────
+  // - folderPath 선택 시: 해당 폴더만 스캔 (기존 동작)
+  // - folderPath 미선택 시: 등록된 모든 폴더 전체 스캔
   const handleScan = async () => {
-    if (!folderPath) { setError('먼저 폴더를 선택해주세요.'); return }
     setError(null)
+    setScanInfo(null)
     setScanning(true)
+
+    // 전체 라이브러리 스캔 (폴더 미선택 시)
+    if (!folderPath) {
+      try {
+        const { folders } = await window.api.getFolderList()
+        if (!folders || folders.length === 0) {
+          setError('등록된 폴더가 없습니다. 먼저 폴더를 선택하고 스캔해주세요.')
+          return
+        }
+
+        const { count: prevNew } = await window.api.getNewCount()
+        let totalFiles = 0
+        let missingCount = 0
+
+        for (const folder of folders) {
+          const scanPath = folder.root_path || folder.path
+          if (!scanPath) continue
+          try {
+            const result = await window.api.scanFolder(scanPath)
+            totalFiles   += result.totalFiles
+            missingCount += result.missingCount
+          } catch (err) {
+            console.error('전체 스캔 실패:', scanPath, err)
+          }
+        }
+
+        await refresh()
+        const { count: nextNew } = await window.api.getNewCount()
+        setNewCount(nextNew)
+        setFolderRefreshKey((k) => k + 1)
+        setScanInfo({
+          totalFiles,
+          missingCount,
+          scannedFolder: '전체 라이브러리',
+          newAdded: Math.max(0, nextNew - prevNew),
+        })
+      } catch (e) {
+        setError('전체 스캔 중 오류: ' + e.message)
+      } finally {
+        setScanning(false)
+      }
+      return
+    }
+
+    // 선택된 폴더 스캔 (기존 동작)
     try {
+      const { count: prevNew } = await window.api.getNewCount()
       const result = await window.api.scanFolder(folderPath)
-      setScanInfo(result)
-      // 스캔 완료: 해당 폴더 보기로 전환 + 폴더 패널 새로고침
-      changeFolder(result.scannedFolder)
+      await refresh()
+      const { count: nextNew } = await window.api.getNewCount()
+      setNewCount(nextNew)
       setFolderRefreshKey((k) => k + 1)
-      // 신규 파일 발생 가능 → NEW 카운트 갱신
-      refreshNewCount()
+      changeFolder(result.scannedFolder)
+      setScanInfo({
+        ...result,
+        newAdded: Math.max(0, nextNew - prevNew),
+      })
     } catch (e) {
       setError('스캔 중 오류: ' + e.message)
     } finally {
@@ -241,9 +292,9 @@ export default function App() {
             className="btn-secondary"
             type="button"
             onClick={handleScan}
-            disabled={!folderPath || scanning || isAutoScanning}
+            disabled={scanning || isAutoScanning}
           >
-            {scanning ? '스캔 중…' : '스캔'}
+            {scanning ? '스캔 중…' : (folderPath ? '스캔' : '전체 스캔')}
           </button>
           <button
             className="btn-random"
@@ -323,7 +374,18 @@ export default function App() {
           style={{ borderRadius: 0, flexShrink: 0 }}
           message={
             <>
-              스캔 완료 — <strong>{scanInfo.totalFiles}</strong>개 처리
+              {scanInfo.scannedFolder === '전체 라이브러리' ? '전체 라이브러리 스캔 완료' : '스캔 완료'}
+              {' — '}<strong>{scanInfo.totalFiles}</strong>개 처리
+              {scanInfo.newAdded > 0 && (
+                <span style={{ color: '#22c55e', marginLeft: 8 }}>
+                  · NEW <strong>{scanInfo.newAdded}</strong>개 발견
+                </span>
+              )}
+              {scanInfo.newAdded === 0 && (
+                <span style={{ color: '#6b7280', marginLeft: 8 }}>
+                  · 신규 없음
+                </span>
+              )}
               {scanInfo.missingCount > 0 && (
                 <span style={{ color: '#ef4444', marginLeft: 8 }}>
                   · 삭제됨 <strong>{scanInfo.missingCount}</strong>개 감지
