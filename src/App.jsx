@@ -8,7 +8,7 @@
  *   RandomPanel 모달, ActorPickPanel 모달, DeleteCleanupModal 모달
  */
 import { useState } from 'react'
-import { Alert, message } from 'antd'
+import { Alert } from 'antd'
 import './App.css'
 
 import { useVideoSearch }    from './hooks/useVideoSearch.js'
@@ -19,6 +19,7 @@ import RandomPanel           from './components/RandomPanel.jsx'
 import ActorPickPanel        from './components/ActorPickPanel.jsx'
 import DeleteCleanupModal    from './components/DeleteCleanupModal.jsx'
 import FolderPanel           from './components/FolderPanel.jsx'
+import OrResultModal         from './components/OrResultModal.jsx'
 
 export default function App() {
   // ── 동영상 목록 검색/정렬/폴더 상태 (hook) ─────────────────────
@@ -43,6 +44,8 @@ export default function App() {
   const [actorPicking,     setActorPicking]     = useState(false)
   // 삭제요망 정리 모달 표시 여부
   const [showDeleteModal,  setShowDeleteModal]  = useState(false)
+  // 검색 결과 OR문 모달 표시 여부
+  const [showOrModal,      setShowOrModal]      = useState(false)
   // FolderPanel 새로고침 트리거 (스캔/삭제 완료 시 증가)
   const [folderRefreshKey, setFolderRefreshKey] = useState(0)
 
@@ -107,24 +110,9 @@ export default function App() {
     }
   }
 
-  // ── 검색 결과 OR문 복사 (현재 화면 기준) ──────────────────────
-  const handleCopyOrText = async () => {
-    const validVideos = videos.filter(
-      (v) =>
-        v.code &&
-        v.status !== 'missing' &&
-        v.status !== 'deleted' &&
-        v.grade !== '삭제요망',
-    )
-    const codes = Array.from(new Set(validVideos.map((v) => v.code)))
-
-    if (codes.length === 0) {
-      message.warning('복사할 품번이 없습니다.')
-      return
-    }
-
-    await navigator.clipboard.writeText(codes.join(' OR '))
-    message.success(`${codes.length}개 품번 OR문을 복사했습니다.`)
+  // ── 검색 결과 OR문 모달 열기 (직접 복사 구조에서 모달 표시로 변경) ────
+  const handleCopyOrText = () => {
+    setShowOrModal(true)
   }
 
   // ── 삭제 완료 후 처리 ─────────────────────────────────────────
@@ -310,6 +298,14 @@ export default function App() {
           onClose={() => setShowDeleteModal(false)}
           onDeleted={handleDeleted}
           currentFolder={currentFolder}
+        />
+      )}
+
+      {/* 검색 결과 OR문 모달 */}
+      {showOrModal && (
+        <OrResultModal
+          videos={videos}
+          onClose={() => setShowOrModal(false)}
         />
       )}
     </div>

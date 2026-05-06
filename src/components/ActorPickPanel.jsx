@@ -15,10 +15,16 @@
  */
 import { useRef } from 'react'
 import { Tag, message } from 'antd'
-import { GRADE_COLORS } from '../utils/format.js'
+import { GRADE_COLORS, formatFileSize } from '../utils/format.js'
 
 export default function ActorPickPanel({ result, onClose }) {
   const overlayRef = useRef(null)
+
+  // ── 총 용량 계산 (items 배열의 size 합산) ─────────────────
+  const totalSize = (result.items || []).reduce(
+    (sum, item) => sum + (item.size || 0),
+    0,
+  )
 
   // ── OR문 클립보드 복사 ─────────────────────────────────────
   const handleCopyOr = async () => {
@@ -58,6 +64,9 @@ export default function ActorPickPanel({ result, onClose }) {
         <div className="modal-stats">
           <span className="stat-item">
             추출 배우 <strong>{result.count}</strong>명
+          </span>
+          <span className="stat-item">
+            총 용량 <strong>{formatFileSize(totalSize)}</strong>
           </span>
         </div>
 
