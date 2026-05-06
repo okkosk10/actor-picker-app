@@ -102,5 +102,13 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { count: number }
   getNewCount: () =>
     ipcRenderer.invoke('get-new-count'),
+
+  // ── Windows 파일 클립보드 복사 (CF_HDROP 방식) ───────────────
+  // 파일 경로 목록을 Windows 탐색기가 인식하는 파일 클립보드 형식으로 복사한다.
+  // 사용자는 Ctrl+V 로 임의 위치(MTP 장치 포함)에 파일을 붙여넣기할 수 있다.
+  // @param filePaths {string[]} - 복사할 파일의 절대 경로 배열
+  // 반환: { success, count, totalSize, failedPaths, error? }
+  copyFilesToClipboard: (filePaths) =>
+    ipcRenderer.invoke('copy-files-to-clipboard', filePaths),
 })
 

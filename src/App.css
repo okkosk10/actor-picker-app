@@ -504,16 +504,7 @@
 }
 
 /* ── 동영상 목록 아이템 ──────────────────────────────────── */
-.video-item {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background 0.1s;
-  outline: none;
-}
-.video-item:hover        { background: var(--surface); }
-.video-item--selected    { background: rgba(99, 102, 241, 0.1); }
-.video-item--selected:hover { background: rgba(99, 102, 241, 0.14); }
+/* display:flex 및 hover/selected 는 아래 vi-checkbox 섹션에서 재정의됨 */
 .video-item--watched     { border-left: 3px solid #10b981; }
 .video-item--favorite    { border-left: 3px solid #f59e0b; }
 .video-item--later       { border-left: 3px solid #6b7280; }
@@ -1304,5 +1295,202 @@
   color: #991b1b;
   font-weight: 600;
 }
+
+/* ── VideoItem 체크박스 (파일 복사 선택용) ───────────────── */
+
+/* 체크박스 좌측 컬럼 */
+.vi-check-col {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-right: 10px;
+  align-self: stretch;
+  /* 클릭 영역 확장을 위해 padding-left 도 약간 줌 */
+  padding-left: 2px;
+}
+
+/* 체크박스 공통 */
+.vi-checkbox {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* VideoItem 전체: 체크박스 컬럼 + 콘텐츠 컬럼을 가로로 배치 */
+.video-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+  outline: none;
+}
+.video-item:hover        { background: var(--surface); }
+.video-item--selected    { background: rgba(99, 102, 241, 0.1); }
+.video-item--selected:hover { background: rgba(99, 102, 241, 0.14); }
+
+/* 체크된 VideoItem 배경 강조 */
+.video-item:has(.vi-checkbox:checked) {
+  background: rgba(8, 145, 178, 0.08);
+}
+.video-item:has(.vi-checkbox:checked):hover {
+  background: rgba(8, 145, 178, 0.13);
+}
+
+/* 콘텐츠 영역 (체크박스 오른쪽) */
+.vi-content {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── 전체 선택 헤더 바 ────────────────────────────────────── */
+.video-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.video-list-check-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.video-list-check-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.video-list-deselect {
+  font-size: 11px;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+.video-list-deselect:hover {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+/* ── 파일 복사 모달 ──────────────────────────────────────── */
+.file-copy-action {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.file-copy-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.file-copy-hint kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-h);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.btn-file-copy-exec {
+  align-self: flex-start;
+  padding: 9px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: #0891b2;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.btn-file-copy-exec:hover:not(:disabled) { opacity: 0.88; }
+.btn-file-copy-exec:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.file-copy-result {
+  margin: 0;
+  padding: 14px 20px;
+  font-size: 13px;
+  line-height: 1.6;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+}
+
+.file-copy-result--ok {
+  color: #059669;
+  background: rgba(5, 150, 105, 0.07);
+}
+
+.file-copy-result--err {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.07);
+}
+
+.file-copy-result p {
+  margin: 6px 0 0;
+}
+
+.file-copy-result kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+}
+
+.file-copy-failed {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.file-copy-failed ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.file-copy-failed li {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: inherit;
+  word-break: break-all;
+}
+
 
 

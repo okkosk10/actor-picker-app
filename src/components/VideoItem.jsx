@@ -6,26 +6,25 @@
  *   video    {Video}    - DB 레코드
  *   selected {boolean}  - 선택 여부
  *   onClick  {Function} - 클릭 콜백
+ *   checked  {boolean}  - 파일 복사 체크박스 선택 여부
+ *   onToggle {Function} - 체크박스 토글 콜백 (e, id) => void
  *
  * 표시 레이아웃:
- *   1행: 품번(code badge) + 배우명
- *   2행: ⭐ 추천 Tag | 등급 Tag | 사용자 태그 칩
- *   3행: 별점 (StarRating, 읽기 전용)
- *   4행: 파일명
- *   5행: 폴더명 | 메모 미리보기
+ *   [체크박스(좌)] | 1행: 품번 + 배우명
+ *                  2행: 배지 묶음
+ *                  3행: 별점
+ *                  4행: 파일명
+ *                  5행: 폴더명 | 메모
  */
-import { Tag } from 'antd'
-import StarRating from './StarRating.jsx'
+import { Tag }      from 'antd'
+import StarRating   from './StarRating.jsx'
 import { GRADE_COLORS } from '../utils/format.js'
 
-// missing 상태 Tag color
 const STATUS_MISSING_COLOR = 'red'
 
-export default function VideoItem({ video, selected, onClick }) {
-  // missing 상태일 때 좌측 테두리 강조
+export default function VideoItem({ video, selected, onClick, checked, onToggle }) {
   const borderClass = video.status === 'missing' ? ' video-item--missing' : ''
 
-  // 태그 파싱 (쉼표 구분)
   const tagList = video.tags
     ? video.tags.split(',').map((t) => t.trim()).filter(Boolean)
     : []
@@ -38,6 +37,23 @@ export default function VideoItem({ video, selected, onClick }) {
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && onClick(video)}
     >
+      {/* ── 좌측 체크박스 컬럼 ────────────────────────────────── */}
+      {onToggle && (
+        <div className="vi-check-col" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="vi-checkbox"
+            checked={!!checked}
+            onChange={(e) => onToggle(e, video.id)}
+            aria-label={`${video.file_name} 선택`}
+            title="파일 복사 선택"
+          />
+        </div>
+      )}
+
+      {/* ── 우측 콘텐츠 영역 ──────────────────────────────────── */}
+      <div className="vi-content">
+
       {/* ── 1행: 품번 + 배우명 ────────────────────────────────── */}
       <div className="vi-header">
         <div className="vi-header-left">
@@ -98,6 +114,8 @@ export default function VideoItem({ video, selected, onClick }) {
           </span>
         )}
       </div>
+
+      </div>{/* vi-content end */}
     </div>
   )
 }

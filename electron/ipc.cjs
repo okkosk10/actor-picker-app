@@ -5,15 +5,16 @@
  * IPC 채널 핸들러 등록 모듈
  *
  * 채널 목록:
- *   select-folder     : 폴더 선택 다이얼로그
- *   scan-folder       : 폴더 재귀 스캔 + DB upsert + 삭제 파일 감지
- *   search-videos     : 동영상 검색 (키워드 + 정렬 + 숨김 필터)
- *   update-video-meta : 메모/태그/별점/상태/추천 업데이트
- *   update-recommended: 추천 여부 단독 토글
- *   update-grade      : 등급 단독 변경
- *   open-video        : OS 기본 플레이어로 파일 열기
- *   open-folder       : 탐색기로 폴더 열기
- *   random-pick       : DB 기반 배우별 랜덤 추천
+ *   select-folder              : 폴더 선택 다이얼로그
+ *   scan-folder                : 폴더 재귀 스캔 + DB upsert + 삭제 파일 감지
+ *   search-videos              : 동영상 검색 (키워드 + 정렬 + 숨김 필터)
+ *   update-video-meta          : 메모/태그/별점/상태/추천 업데이트
+ *   update-recommended         : 추천 여부 단독 토글
+ *   update-grade               : 등급 단독 변경
+ *   open-video                 : OS 기본 플레이어로 파일 열기
+ *   open-folder                : 탐색기로 폴더 열기
+ *   random-pick                : DB 기반 배우별 랜덤 추천
+ *   copy-files-to-clipboard    : Windows CF_HDROP 파일 클립보드 복사
  *
  * 보안:
  *   - Renderer에서 직접 fs/DB 접근 불가
@@ -22,9 +23,10 @@
 
 const path = require('path')
 const fs   = require('fs')
-const { ipcMain, dialog, shell } = require('electron')
-const { getDb }      = require('./db.cjs')
-const { scanFolder } = require('./scanner.cjs')
+const { ipcMain, dialog, shell }  = require('electron')
+const { getDb }               = require('./db.cjs')
+const { scanFolder }          = require('./scanner.cjs')
+const { copyFilesToClipboard } = require('./clipboardHelper.cjs')
 
 // ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
 // 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
@@ -782,6 +784,69 @@ function registerIpcHandlers() {
     }
 
     return { total: targets.length, deleted, failed, failedItems }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // Windows 파일 클립보드 복사 (CF_HDROP 방식)
+  //
+  // 입력: filePaths {string[]} - 복사할 파일의 절대 경로 배열
+  // 반환: {
+  //   success:     boolean
+  //   count:       number       - 실제 클립보드에 등록된 파일 수
+  //   totalSize:   number       - 존재 확인된 파일들의 합산 크기 (bytes)
+  //   failedPaths: string[]     - 존재하지 않거나 절대경로가 아닌 경로
+  //   error?:      string       - 실패 시 오류 메시지
+  // }
+  //
+  // 보안:
+  //   - 절대 경로 검증 (path.isAbsolute)
+  //   - fs.statSync 로 실제 존재 여부 확인
+  //   - 배열 타입 외 입력 거부
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('copy-files-to-clipboard', async (_event, filePaths) => {
+    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+      return { success: false, error: '파일 경로가 없습니다.', count: 0, totalSize: 0, failedPaths: [] }
+    }
+
+    const validPaths  = []
+    const failedPaths = []
+    let   totalSize   = 0
+
+    for (const fp of filePaths) {
+      // 보안: 문자열 + 절대 경로만 허용
+      if (typeof fp !== 'string' || !path.isAbsolute(fp)) {
+        failedPaths.push(fp)
+        continue
+      }
+      try {
+        const stat = fs.statSync(fp)
+        if (stat.isFile()) {
+          validPaths.push(fp)
+          totalSize += stat.size
+        } else {
+          failedPaths.push(fp)
+        }
+      } catch {
+        failedPaths.push(fp)
+      }
+    }
+
+    if (validPaths.length === 0) {
+      return {
+        success:     false,
+        error:       '존재하는 파일이 없습니다.',
+        count:       0,
+        totalSize:   0,
+        failedPaths,
+      }
+    }
+
+    try {
+      const { count } = await copyFilesToClipboard(validPaths)
+      return { success: true, count, totalSize, failedPaths }
+    } catch (err) {
+      return { success: false, error: err.message, count: 0, totalSize, failedPaths }
+    }
   })
 }
 

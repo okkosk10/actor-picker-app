@@ -21,7 +21,7 @@ import RandomPanel           from './components/RandomPanel.jsx'
 import ActorPickPanel        from './components/ActorPickPanel.jsx'
 import DeleteCleanupModal    from './components/DeleteCleanupModal.jsx'
 import FolderPanel           from './components/FolderPanel.jsx'
-import OrResultModal         from './components/OrResultModal.jsx'
+import FileCopyModal         from './components/FileCopyModal.jsx'
 
 export default function App() {
   // ── 동영상 목록 검색/정렬/폴더 상태 (hook) ─────────────────────
@@ -47,8 +47,10 @@ export default function App() {
   const [actorPicking,     setActorPicking]     = useState(false)
   // 삭제요망 정리 모달 표시 여부
   const [showDeleteModal,  setShowDeleteModal]  = useState(false)
-  // 검색 결과 OR문 모달 표시 여부
-  const [showOrModal,      setShowOrModal]      = useState(false)
+  // 파일 클립보드 복사 모달 표시 여부
+  const [showFileCopyModal, setShowFileCopyModal] = useState(false)
+  // 파일 복사 체크박스 선택 ID 집합
+  const [checkedIds,       setCheckedIds]       = useState(new Set())
   // FolderPanel 새로고침 트리거 (스캔/삭제 완료 시 증가)
   const [folderRefreshKey, setFolderRefreshKey] = useState(0)
   // NEW 탭 배지 숫자 (is_new=1 파일 수)
@@ -222,9 +224,31 @@ export default function App() {
     }
   }
 
-  // ── 검색 결과 OR문 모달 열기 (직접 복사 구조에서 모달 표시로 변경) ────
-  const handleCopyOrText = () => {
-    setShowOrModal(true)
+  // ── 검색 결과 파일 복사 모달 열기 ────────────────────────────────────
+  const handleOpenFileCopy = () => {
+    setShowFileCopyModal(true)
+  }
+
+  // ── 체크박스 토글 ─────────────────────────────────────────────
+  const handleToggleCheck = (_e, id) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  // ── 전체 선택 / 전체 해제 ─────────────────────────────────
+  const handleToggleAll = (checkAll) => {
+    if (checkAll) {
+      setCheckedIds(new Set(videos.map((v) => v.id)))
+    } else {
+      setCheckedIds(new Set())
+    }
   }
 
   // ── 삭제 완료 후 처리 ─────────────────────────────────────────
@@ -315,10 +339,12 @@ export default function App() {
           <button
             className="btn-or-copy"
             type="button"
-            onClick={handleCopyOrText}
+            onClick={handleOpenFileCopy}
             disabled={videos.length === 0}
           >
-            📋 검색 결과 OR문 복사
+            {checkedIds.size > 0
+              ? `📂 파일 복사 (${checkedIds.size}개 선택됨)`
+              : '📂 파일 복사'}
           </button>
           <button
             className="btn-danger"
@@ -424,6 +450,9 @@ export default function App() {
           selectedId={selectedVideo?.id}
           onSelect={setSelectedVideo}
           loading={loading}
+          checkedIds={checkedIds}
+          onToggleCheck={handleToggleCheck}
+          onToggleAll={handleToggleAll}
         />
 
         {/* 우측: 상세 정보 */}
@@ -469,11 +498,12 @@ export default function App() {
         />
       )}
 
-      {/* 검색 결과 OR문 모달 */}
-      {showOrModal && (
-        <OrResultModal
+      {/* 파일 클립보드 복사 모달 */}
+      {showFileCopyModal && (
+        <FileCopyModal
           videos={videos}
-          onClose={() => setShowOrModal(false)}
+          selectedIds={checkedIds}
+          onClose={() => setShowFileCopyModal(false)}
         />
       )}
     </div>
