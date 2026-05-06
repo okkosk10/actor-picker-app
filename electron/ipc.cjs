@@ -1027,26 +1027,55 @@ function registerIpcHandlers() {
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return { success: false, error: '파일 경로가 없습니다.', action: 'none' }
     }
-    const validPaths = filePaths.filter(fp => {
-      if (typeof fp !== 'string' || !path.isAbsolute(fp)) return false
-      try { return fs.statSync(fp).isFile() } catch { return false }
-    })
-    if (validPaths.length === 0) {
+
+    // ── 입력 검증 + 파일 크기 수집 ─────────────────────────────
+    const validInfos = []
+    for (const fp of filePaths) {
+      if (typeof fp !== 'string' || !path.isAbsolute(fp)) continue
+      try {
+        const stat = fs.statSync(fp)
+        if (stat.isFile()) validInfos.push({ path: fp, size: stat.size })
+      } catch { /* 무시 */ }
+    }
+    if (validInfos.length === 0) {
       return { success: false, error: '존재하는 파일이 없습니다.', action: 'none' }
     }
+
+    // ── 로그 헬퍼 ────────────────────────────────────────────
+    const logPath = path.join(app.getPath('userData'), 'mtp-transfer.log')
+    const mtpLog  = (msg) => {
+      const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
+      try { fs.appendFileSync(logPath, `[${ts}] ${msg}\n`, 'utf8') } catch { /* 무시 */ }
+    }
+
+    const totalSize   = validInfos.reduce((s, f) => s + f.size, 0)
+    const totalSizeGB = (totalSize / (1024 ** 3)).toFixed(2)
+    mtpLog(`STABLE_SESSION_START | files: ${validInfos.length} | totalSize: ${totalSizeGB}GB`)
+    validInfos.forEach((f, i) => {
+      const sizeGB = (f.size / (1024 ** 3)).toFixed(2)
+      mtpLog(`  [${i + 1}/${validInfos.length}] ${path.basename(f.path)} | ${sizeGB}GB`)
+    })
+    mtpLog(`STABLE_COPYHEREALL_CALL | ${new Date().toISOString()}`)
+
     const mainWin    = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
     const hwndBuffer = mainWin?.getNativeWindowHandle()
     const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
 
-    let bulkSession
-    try { bulkSession = await createMtpBulkSession(hwnd, validPaths) }
-    catch (err) { return { success: false, error: err.message, action: 'error' } }
+    let result
+    try {
+      result = await createMtpBulkSession(hwnd, validInfos.map(f => f.path))
+    } catch (err) {
+      mtpLog(`STABLE_SESSION_ERR | ${err.message}`)
+      return { success: false, error: err.message, action: 'error' }
+    }
 
-    if (!bulkSession) return { success: false, action: 'cancelled' }
+    if (!result || result.action === 'cancelled') {
+      mtpLog('STABLE_SESSION_CANCEL')
+      return { success: false, action: 'cancelled' }
+    }
 
-    // 60분 후 COM 아파트 종료 (안전장치)
-    setTimeout(() => { try { bulkSession.close() } catch { /* 무시 */ } }, 60 * 60 * 1000)
-    return { success: true, action: 'bulk-started', count: validPaths.length }
+    mtpLog(`STABLE_DONE | count: ${result.count}`)
+    return { success: true, action: 'copied', count: result.count }
   })
 }
 

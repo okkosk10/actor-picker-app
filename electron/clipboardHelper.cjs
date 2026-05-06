@@ -261,75 +261,82 @@ async function createMtpSession(hwnd) {
 }
 
 /**
- * MTP 안정 모드(일괄 전송) 세션.
- * 모든 파일을 한 번에 CopyHere 로 전달하고 Windows 복사 창에 위임한다.
- * 앱 내부 진행률 없음.
+ * MTP 안정 모드(일괄 전송) — c7783d4 copyFilesToDevice 패턴 그대로 사용
+ *
+ * temp 파일에 경로를 기록 → Get-Content 로 읽기 → foreach CopyHere →
+ * 폴링 루프로 프로세스 유지(COM 아파트 유지) → 완료/timeout 반환
  *
  * @param {number}   hwnd
  * @param {string[]} filePaths
- * @returns {Promise<MtpBulkSession|null>}  null = 취소
+ * @returns {Promise<{action:'copied'|'cancelled'|'timeout', count:number}|null>}
  */
 async function createMtpBulkSession(hwnd, filePaths) {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) return null
+
   const hwndVal     = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
-  const tmpFileName = `acp-bulk-${crypto.randomBytes(6).toString('hex')}.txt`
+  const tmpFileName = `acp-bulk-${crypto.randomBytes(8).toString('hex')}.txt`
   const tmpFile     = path.join(os.tmpdir(), tmpFileName)
   const bom         = Buffer.from([0xEF, 0xBB, 0xBF])
   fs.writeFileSync(tmpFile, Buffer.concat([bom, Buffer.from(filePaths.join('\n'), 'utf8')]))
 
   const tmpSafe = tmpFile.replace(/'/g, "''")
-  const script  = `
-$ErrorActionPreference = 'Continue'
-$shell = New-Object -ComObject Shell.Application
-$paths = @(Get-Content -LiteralPath '${tmpSafe}' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
-Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue
-$dest = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)
-if (-not $dest) { [Console]::WriteLine('CANCEL'); exit 0 }
-foreach ($p in $paths) { $dest.CopyHere($p, 0) }
-[Console]::WriteLine('STARTED')
-$reader = [System.Console]::In
-while ($true) {
-  $l = $reader.ReadLine()
-  if ($null -eq $l -or $l.Trim() -eq 'QUIT') { break }
-}
-`.trim()
 
-  const encoded = Buffer.from(script, 'utf16le').toString('base64')
-  const proc    = spawn(
-    'powershell.exe',
-    ['-STA', '-NoProfile', '-EncodedCommand', encoded],
-    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
-  )
+  // c7783d4의 copyFilesToDevice 와 동일한 PS 스크립트 구조
+  const psLines = [
+    `$ErrorActionPreference = 'Stop'`,
+    `$paths = @(Get-Content -LiteralPath '${tmpSafe}' |`,
+    `  ForEach-Object { $_.Trim() } |`,
+    `  Where-Object { $_ -ne '' })`,
+    `Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue`,
+    `if ($paths.Count -eq 0) { Write-Output 'ERR:파일 없음'; exit 1 }`,
+    `$shell = New-Object -ComObject Shell.Application`,
+    `$dest = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)`,
+    `if (-not $dest) { Write-Output 'CANCEL'; exit 0 }`,
+    // flags=0: Windows 표준 복사 진행 창 표시
+    `foreach ($p in $paths) { $dest.CopyHere($p, 0) }`,
+    // CopyHere 는 비동기 → 폴링 루프로 프로세스(COM 아파트) 유지 (완료될 때까지 무한 대기)
+    `$names = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
+    `$left  = $names`,
+    `while ($left.Count -gt 0) {`,
+    `  Start-Sleep -Seconds 3`,
+    `  try {`,
+    `    $have = @($dest.Items() | ForEach-Object { $_.Name })`,
+    `    $left = @($names | Where-Object { $have -notcontains $_ })`,
+    `  } catch {}`,
+    `}`,
+    `Write-Output "OK:$($names.Count)"`,
+  ]
+  const psScript = psLines.join('\r\n')
+  const encoded  = Buffer.from(psScript, 'utf16le').toString('base64')
 
-  let stdoutBuf = ''
-  let closed    = false
-  proc.on('close', () => { closed = true })
-  proc.stderr.on('data', () => {})
-  proc.stdout.on('data', (d) => { stdoutBuf += d.toString('utf8') })
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      'powershell.exe',
+      ['-STA', '-NoProfile', '-EncodedCommand', encoded],
+      { windowsHide: true },
+    )
 
-  const firstLine = await new Promise((resolve, reject) => {
-    const check = () => {
-      if (closed && !stdoutBuf.includes('\n')) return reject(new Error('프로세스 종료'))
-      const idx = stdoutBuf.indexOf('\n')
-      if (idx !== -1) { resolve(stdoutBuf.slice(0, idx).trim()); stdoutBuf = stdoutBuf.slice(idx + 1) }
-      else setTimeout(check, 50)
-    }
-    check()
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', (d) => { stdout += d.toString('utf8') })
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf8') })
+
+    proc.on('close', (code) => {
+      try { fs.unlinkSync(tmpFile) } catch { /* 이미 삭제됨 */ }
+      const out = stdout.trim()
+      if (out === 'CANCEL') return resolve({ action: 'cancelled', count: 0 })
+      const okMatch = out.match(/OK:(\d+)/)
+      if (code === 0 && okMatch) return resolve({ action: 'copied', count: parseInt(okMatch[1], 10) })
+      const toMatch = out.match(/TIMEOUT:(\d+)\/\d+/)
+      if (toMatch) return resolve({ action: 'timeout', count: parseInt(toMatch[1], 10) })
+      reject(new Error(stderr.trim() || `PowerShell 실패 (종료 코드: ${code})\n${out}`))
+    })
+
+    proc.on('error', (err) => {
+      try { fs.unlinkSync(tmpFile) } catch { /* 무시 */ }
+      reject(new Error(`PowerShell 실행 실패: ${err.message}`))
+    })
   })
-
-  try { fs.unlinkSync(tmpFile) } catch { /* 무시 */ }
-
-  if (firstLine === 'CANCEL') {
-    try { proc.stdin.write('QUIT\n') } catch { /* 무시 */ }
-    try { proc.stdin.end() }           catch { /* 무시 */ }
-    return null
-  }
-
-  return {
-    close: () => {
-      try { proc.stdin.write('QUIT\n') } catch { /* 무시 */ }
-      try { proc.stdin.end() }           catch { /* 무시 */ }
-    },
-  }
 }
 
 module.exports = { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec }

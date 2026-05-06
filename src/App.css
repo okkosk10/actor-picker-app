@@ -1705,6 +1705,91 @@
 .btn-file-copy-bulk:hover:not(:disabled) { opacity: 0.88; }
 .btn-file-copy-bulk:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* ── MTP 모드 탭 ─────────────────────────────────────────── */
+.mtp-mode-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.mtp-mode-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-sub, #aaa);
+  background: transparent;
+  border: 1px solid var(--border, #333);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.mtp-mode-tab:hover:not(:disabled) {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-h, #fff);
+}
+.mtp-mode-tab:disabled { opacity: 0.45; cursor: not-allowed; }
+.mtp-mode-tab--active {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: #6366f1;
+  color: var(--text-h, #fff);
+}
+
+.mtp-mode-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: #059669;
+  border-radius: 4px;
+  line-height: 1.5;
+}
+
+/* ── 안정 모드 섹션 ──────────────────────────────────────── */
+.mtp-stable-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mtp-stable-desc {
+  font-size: 12px;
+  color: var(--text-sub, #aaa);
+  line-height: 1.7;
+}
+
+.mtp-stable-tip {
+  color: #34d399;
+  font-weight: 600;
+}
+
+.mtp-stable-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── 실험 모드 섹션 ──────────────────────────────────────── */
+.mtp-queue-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mtp-queue-warning {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 6px;
+  line-height: 1.6;
+}
+
 .file-copy-result {
   margin: 0;
   padding: 14px 20px;
