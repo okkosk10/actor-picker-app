@@ -1038,6 +1038,87 @@
   border-color: #f59e0b;
   color: #b45309;
 }
+
+/* ══════════════════════════════════════════════════════════
+   FilterBar
+   ══════════════════════════════════════════════════════════ */
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* 각 섹션 행 */
+.filter-section {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 26px;
+}
+
+/* Ant Design 체크박스 텍스트 색상 */
+.filter-bar .ant-checkbox-wrapper {
+  color: var(--text);
+  font-size: 12px;
+}
+.filter-bar .ant-checkbox-wrapper:hover .ant-checkbox-inner,
+.filter-bar .ant-checkbox:hover .ant-checkbox-inner {
+  border-color: var(--accent);
+}
+
+/* 등급 Checkbox.Group 섹션 */
+.filter-section--grades .ant-checkbox-wrapper {
+  font-size: 11px;
+}
+
+/* 구분 레이블 */
+.filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 50px;
+}
+
+/* 등급 초기화 버튼 */
+.filter-clear-btn {
+  padding: 1px 8px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+.filter-clear-btn:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+/* 최소 별점 + 결과 수 섹션 */
+.filter-section--rating {
+  gap: 10px;
+}
+
+.filter-result-info {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.filter-result-info strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.filter-result-size {
+  font-size: 11px;
+}
+
 .btn-recommended--on {
   background: #fef3c7;
   color: #92400e;

@@ -293,9 +293,16 @@ function registerIpcHandlers() {
   //
   // @param query  {string}  - 검색 키워드 (빈 문자열 = 전체)
   // @param options {object} - {
-  //   sortBy:        string  - SORT_CLAUSES 키 (기본: 'created_desc')
-  //   hideMissing:   boolean - true이면 status='missing' 제외 (기본: true)
+  //   sortBy:        string     - SORT_CLAUSES 키 (기본: 'created_desc')
   //   currentFolder: string|null - 폴더 필터 (null이면 전체 라이브러리)
+  //   filters: {
+  //     recommendedOnly:    boolean  - true이면 recommended=1만
+  //     excludeDeleteGrade: boolean  - true이면 grade='삭제요망' 제외
+  //     excludeMissing:     boolean  - true이면 status='missing' 제외
+  //     excludeDeleted:     boolean  - true이면 status='deleted' 제외
+  //     grades:             string[] - 지정 시 해당 등급만 (빈 배열=전체)
+  //     minRating:          number   - 지정 시 rating >= 이 값
+  //   }
   // }
   //
   // 반환: Video[]
@@ -303,20 +310,67 @@ function registerIpcHandlers() {
   ipcMain.handle('search-videos', async (_event, query, options = {}) => {
     const db          = getDb()
     const orderClause = getSortClause(options.sortBy)
-    const hideMissing = options.hideMissing !== false // 기본값 true
-
-    // 삭제 파일 숨김 조건 (hideMissing=true 이면 missing 제외)
-    const missingFilter = hideMissing ? `AND status != 'missing'` : ''
+    const filters     = options.filters || {}
 
     // 폴더 필터 (currentFolder가 null이면 전체 조회)
     const { clause: folderClause, params: folderParams } = buildFolderFilter(options.currentFolder || null)
 
+    // ── 필터 조건 빌드 ─────────────────────────────────────────
+    // 각 조건을 AND로 연결. SQL Injection 방지:
+    //   - 불린 조건은 리터럴 SQL 문자열(사용자 값 미포함)
+    //   - grades는 허용 목록(ALLOWED_GRADES) 검증 후 ? 바인딩
+    //   - minRating은 숫자 검증 후 ? 바인딩
+    const filterConditions = []
+    const filterParams     = []
+
+    // 추천작만
+    if (filters.recommendedOnly) {
+      filterConditions.push(`recommended = 1`)
+    }
+
+    // 삭제요망 등급 제외
+    if (filters.excludeDeleteGrade) {
+      filterConditions.push(`grade != '삭제요망'`)
+    }
+
+    // missing 상태 제외
+    if (filters.excludeMissing) {
+      filterConditions.push(`status != 'missing'`)
+    }
+
+    // deleted 상태 제외
+    if (filters.excludeDeleted) {
+      filterConditions.push(`status != 'deleted'`)
+    }
+
+    // 등급 화이트리스트 필터 (grades 배열이 비어있으면 전체 허용)
+    if (Array.isArray(filters.grades) && filters.grades.length > 0) {
+      const ALLOWED_GRADES = ['영구소장', '재시청 추천', '만족', '보관', '애매', '삭제요망']
+      const safeGrades = filters.grades.filter((g) => ALLOWED_GRADES.includes(g))
+      if (safeGrades.length > 0) {
+        filterConditions.push(`grade IN (${safeGrades.map(() => '?').join(',')})`)
+        filterParams.push(...safeGrades)
+      }
+    }
+
+    // 최소 별점 필터 (0이면 필터 없음)
+    const minRating = typeof filters.minRating === 'number' ? Math.floor(filters.minRating) : 0
+    if (minRating > 0) {
+      filterConditions.push(`rating >= ?`)
+      filterParams.push(minRating)
+    }
+
+    // 필터 조건 SQL 문자열 조합
+    const filterClause = filterConditions.length > 0
+      ? 'AND ' + filterConditions.join(' AND ')
+      : ''
+
     if (!query || query.trim() === '') {
       return db.prepare(`
         SELECT * FROM videos
-        WHERE 1=1 ${missingFilter} ${folderClause}
+        WHERE 1=1 ${filterClause} ${folderClause}
         ORDER BY ${orderClause}
-      `).all(...folderParams)
+      `).all(...filterParams, ...folderParams)
     }
 
     const q = `%${query.trim()}%`
@@ -328,9 +382,9 @@ function registerIpcHandlers() {
          OR actor_name LIKE ?
          OR memo       LIKE ?
          OR tags       LIKE ?
-      ) ${missingFilter} ${folderClause}
+      ) ${filterClause} ${folderClause}
       ORDER BY ${orderClause}
-    `).all(q, q, q, q, q, ...folderParams)
+    `).all(q, q, q, q, q, ...filterParams, ...folderParams)
   })
 
   // ══════════════════════════════════════════════════════════════

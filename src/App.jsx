@@ -13,6 +13,7 @@ import './App.css'
 
 import { useVideoSearch }    from './hooks/useVideoSearch.js'
 import SearchBar             from './components/SearchBar.jsx'
+import FilterBar             from './components/FilterBar.jsx'
 import VideoList             from './components/VideoList.jsx'
 import DetailPanel           from './components/DetailPanel.jsx'
 import RandomPanel           from './components/RandomPanel.jsx'
@@ -27,7 +28,7 @@ export default function App() {
     videos, setVideos,
     searchQuery, search,
     sortBy, changeSort,
-    hideMissing, toggleHideMissing,
+    filters, changeFilters,
     currentFolder, changeFolder,
     loading, error, setError,
     refresh,
@@ -85,7 +86,7 @@ export default function App() {
   const handleRandomPick = async () => {
     try {
       const result = await window.api.randomPick(searchQuery, {
-        hideMissing,
+        hideMissing: filters.excludeMissing,
         currentFolder,
       })
       setRandomResult(result)
@@ -99,7 +100,7 @@ export default function App() {
     setActorPicking(true)
     try {
       const result = await window.api.pickOnePerActor(searchQuery, {
-        hideMissing,
+        hideMissing: filters.excludeMissing,
         currentFolder,
       })
       setActorPickResult(result)
@@ -196,9 +197,14 @@ export default function App() {
         onQueryChange={search}
         sortBy={sortBy}
         onSortChange={changeSort}
-        hideMissing={hideMissing}
-        onHideMissing={toggleHideMissing}
-        count={videos.length}
+      />
+
+      {/* 필터 바 */}
+      <FilterBar
+        filters={filters}
+        onFiltersChange={changeFilters}
+        totalCount={videos.length}
+        totalSize={videos.reduce((s, v) => s + (v.size || 0), 0)}
       />
 
       {/* 현재 보기 기준 표시 바 */}
