@@ -95,5 +95,12 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { total, deleted, failed, failedItems }
   deleteGradeTargets: (currentFolder) =>
     ipcRenderer.invoke('delete-grade-targets', currentFolder),
+
+  // ── NEW 작업 대기함 카운트 조회 ───────────────────────────────
+  // is_new=1 인 파일 수를 반환한다. (탭 배지 숫자 표시용)
+  // missing/deleted 상태는 제외
+  // 반환: { count: number }
+  getNewCount: () =>
+    ipcRenderer.invoke('get-new-count'),
 })
 

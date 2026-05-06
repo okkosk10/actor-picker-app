@@ -3,17 +3,18 @@
  * 최상위 컴포넌트 — 상태 연결과 레이아웃만 담당
  *
  * 레이아웃:
- *   header → SearchBar → (scan-info) → (error)
+ *   header → TabBar → SearchBar → FilterBar → (scan-info) → (error)
  *   → app-content[ FolderPanel | VideoList | DetailPanel ]
  *   RandomPanel 모달, ActorPickPanel 모달, DeleteCleanupModal 모달
  */
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Alert } from 'antd'
 import './App.css'
 
 import { useVideoSearch }    from './hooks/useVideoSearch.js'
 import SearchBar             from './components/SearchBar.jsx'
 import FilterBar             from './components/FilterBar.jsx'
+import TabBar                from './components/TabBar.jsx'
 import VideoList             from './components/VideoList.jsx'
 import DetailPanel           from './components/DetailPanel.jsx'
 import RandomPanel           from './components/RandomPanel.jsx'
@@ -29,6 +30,7 @@ export default function App() {
     searchQuery, search,
     sortBy, changeSort,
     filters, changeFilters,
+    tabMode, changeTab,
     currentFolder, changeFolder,
     loading, error, setError,
     refresh,
@@ -49,6 +51,24 @@ export default function App() {
   const [showOrModal,      setShowOrModal]      = useState(false)
   // FolderPanel 새로고침 트리거 (스캔/삭제 완료 시 증가)
   const [folderRefreshKey, setFolderRefreshKey] = useState(0)
+  // NEW 탭 배지 숫자 (is_new=1 파일 수)
+  const [newCount,         setNewCount]         = useState(0)
+
+  /**
+   * NEW 카운트를 DB에서 갱신한다.
+   * 스캔 완료, 메타 업데이트, 탭 전환 시 호출한다.
+   */
+  const refreshNewCount = useCallback(async () => {
+    try {
+      const { count } = await window.api.getNewCount()
+      setNewCount(count)
+    } catch {
+      // 카운트 조회 실패는 조용히 무시
+    }
+  }, [])
+
+  // 앱 시작 시 NEW 카운트 초기 조회
+  useEffect(() => { refreshNewCount() }, [refreshNewCount])
 
   // ── 폴더 선택 ─────────────────────────────────────────────────
   const handleSelectFolder = async () => {
@@ -75,6 +95,8 @@ export default function App() {
       // 스캔 완료: 해당 폴더 보기로 전환 + 폴더 패널 새로고침
       changeFolder(result.scannedFolder)
       setFolderRefreshKey((k) => k + 1)
+      // 신규 파일 발생 가능 → NEW 카운트 갱신
+      refreshNewCount()
     } catch (e) {
       setError('스캔 중 오류: ' + e.message)
     } finally {
@@ -126,12 +148,21 @@ export default function App() {
   const handleVideoUpdated = (updated) => {
     setVideos((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
     setSelectedVideo(updated)
+    // 메타 수정 시 is_new=0 처리됨 → NEW 카운트 갱신
+    refreshNewCount()
   }
 
   // ── 현재 보기 레이블 ──────────────────────────────────────────
   const viewLabel = currentFolder
     ? currentFolder
     : '전체 라이브러리'
+
+  // ── 전체 라이브러리 새로고침 (SearchBar 검색 버튼 트리거용) ────
+  // 검색 버튼(🔍) 클릭 시 현재 조건 그대로 DB 재조회
+  const handleRefreshSearch = () => {
+    refresh()
+    refreshNewCount()
+  }
 
   // ──────────────────────────────────────────────────────────────
   return (
@@ -191,10 +222,19 @@ export default function App() {
         </div>
       </header>
 
+      {/* 탭 바 */}
+      <TabBar
+        tabMode={tabMode}
+        onTabChange={changeTab}
+        newCount={newCount}
+        currentFolder={currentFolder}
+      />
+
       {/* 검색 바 */}
       <SearchBar
         query={searchQuery}
         onQueryChange={search}
+        onSearch={handleRefreshSearch}
         sortBy={sortBy}
         onSortChange={changeSort}
       />

@@ -1119,6 +1119,74 @@
   font-size: 11px;
 }
 
+/* ══════════════════════════════════════════════════════════
+   TabBar — 라이브러리 탭 네비게이션
+   ══════════════════════════════════════════════════════════ */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+  flex-shrink: 0;
+}
+
+/* 탭 버튼 기본 */
+.tab-btn {
+  position: relative;
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  outline: none;
+}
+.tab-btn:hover {
+  color: var(--text);
+}
+
+/* 활성 탭 */
+.tab-btn--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 700;
+}
+
+/* NEW 배지가 있는 탭 — 글자 색상 강조 */
+.tab-btn--new-badge {
+  color: #16a34a;
+}
+.tab-btn--new-badge.tab-btn--active {
+  color: #16a34a;
+  border-bottom-color: #16a34a;
+}
+
+/* ══════════════════════════════════════════════════════════
+   SearchBar — 검색 아이콘 버튼 (새로고침 기능 겸용)
+   ══════════════════════════════════════════════════════════ */
+.search-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.search-icon-btn:hover {
+  background: rgba(255,255,255,0.07);
+}
+
 .btn-recommended--on {
   background: #fef3c7;
   color: #92400e;

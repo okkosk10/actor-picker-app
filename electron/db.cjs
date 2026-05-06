@@ -107,6 +107,14 @@ function migrateSchema() {
     db.exec("ALTER TABLE videos ADD COLUMN grade TEXT DEFAULT '보관'")
     db.exec('CREATE INDEX IF NOT EXISTS idx_videos_grade ON videos (grade)')
   }
+
+  // is_new 컬럼 마이그레이션
+  // is_new = 1 : 새로 추가되었고 아직 사용자가 작업하지 않은 파일 (NEW 대기함)
+  // is_new = 0 : 사용자가 등급/추천/별점/태그/메모 중 하나 이상 작업한 파일
+  if (!cols.includes('is_new')) {
+    db.exec('ALTER TABLE videos ADD COLUMN is_new INTEGER DEFAULT 0')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_videos_is_new ON videos (is_new)')
+  }
 }
 
 /**

@@ -147,20 +147,22 @@ function registerIpcHandlers() {
     //
     //   신규 파일 (INSERT 실행):
     //     - tags = createDefaultTags(video)  ← 자동 태그 최초 설정
+    //     - is_new = 1 : "작업 대기" 상태로 NEW 탭에 표시
     //     - 모든 컬럼 초기화
     //
     //   기존 파일 (ON CONFLICT DO UPDATE 실행):
     //     - 파일 시스템 컬럼만 갱신 (file_name, folder_path, extension, size, modified_at, code, actor_name)
     //     - tags 는 업데이트하지 않음 → 사용자가 수정한 태그 유지
     //     - memo / rating / recommended / grade 도 보존 (SET 절 미포함)
+    //     - is_new 도 보존 → 기존 파일 재스캔 시 NEW 상태 유지/변경 없음
     //     - missing → normal 자동 복구
     const upsert = db.prepare(`
       INSERT INTO videos
         (file_name, file_path, folder_path, extension, size, modified_at,
-         code, actor_name, tags, updated_at)
+         code, actor_name, tags, is_new, updated_at)
       VALUES
         (@file_name, @file_path, @folder_path, @extension, @size, @modified_at,
-         @code, @actor_name, @tags, CURRENT_TIMESTAMP)
+         @code, @actor_name, @tags, 1, CURRENT_TIMESTAMP)
       ON CONFLICT(file_path) DO UPDATE SET
         file_name   = excluded.file_name,
         folder_path = excluded.folder_path,
@@ -169,7 +171,7 @@ function registerIpcHandlers() {
         modified_at = excluded.modified_at,
         code        = excluded.code,
         actor_name  = excluded.actor_name,
-        -- tags 컬럼은 여기에 포함하지 않음 → 사용자 데이터 보존
+        -- tags / is_new 컬럼은 여기에 포함하지 않음 → 사용자 데이터 보존
         -- 이전에 missing 이었으면 normal 로 복구, 그 외 상태는 보존
         status      = CASE WHEN status = 'missing' THEN 'normal' ELSE status END,
         updated_at  = CURRENT_TIMESTAMP
@@ -295,6 +297,9 @@ function registerIpcHandlers() {
   // @param options {object} - {
   //   sortBy:        string     - SORT_CLAUSES 키 (기본: 'created_desc')
   //   currentFolder: string|null - 폴더 필터 (null이면 전체 라이브러리)
+  //   tabMode:       string     - 'all' | 'new' | 'recommended'
+  //                              'new' 이면 is_new=1 + missing/deleted 자동 제외
+  //                              'recommended' 이면 recommended=1만
   //   filters: {
   //     recommendedOnly:    boolean  - true이면 recommended=1만
   //     excludeDeleteGrade: boolean  - true이면 grade='삭제요망' 제외
@@ -311,9 +316,26 @@ function registerIpcHandlers() {
     const db          = getDb()
     const orderClause = getSortClause(options.sortBy)
     const filters     = options.filters || {}
+    const tabMode     = options.tabMode || 'all'   // 'all' | 'new' | 'recommended'
 
     // 폴더 필터 (currentFolder가 null이면 전체 조회)
     const { clause: folderClause, params: folderParams } = buildFolderFilter(options.currentFolder || null)
+
+    // ── 탭 모드별 기본 조건 ─────────────────────────────────────
+    // tabMode='new': NEW 작업 대기함 — is_new=1 + missing/deleted 자동 제외
+    // tabMode='recommended': 추천 탭 — recommended=1만 표시
+    // tabMode='all' (기본): 필터 조건만 적용
+    const tabConditions = []
+    if (tabMode === 'new') {
+      tabConditions.push(`is_new = 1`)
+      tabConditions.push(`status != 'missing'`)
+      tabConditions.push(`status != 'deleted'`)
+    } else if (tabMode === 'recommended') {
+      tabConditions.push(`recommended = 1`)
+    }
+    const tabClause = tabConditions.length > 0
+      ? 'AND ' + tabConditions.join(' AND ')
+      : ''
 
     // ── 필터 조건 빌드 ─────────────────────────────────────────
     // 각 조건을 AND로 연결. SQL Injection 방지:
@@ -323,8 +345,8 @@ function registerIpcHandlers() {
     const filterConditions = []
     const filterParams     = []
 
-    // 추천작만
-    if (filters.recommendedOnly) {
+    // 추천작만 (tabMode가 recommended가 아닐 때만 적용)
+    if (filters.recommendedOnly && tabMode !== 'recommended') {
       filterConditions.push(`recommended = 1`)
     }
 
@@ -333,13 +355,13 @@ function registerIpcHandlers() {
       filterConditions.push(`grade != '삭제요망'`)
     }
 
-    // missing 상태 제외
-    if (filters.excludeMissing) {
+    // missing 상태 제외 (NEW 탭에서는 이미 tabClause에서 처리됨)
+    if (filters.excludeMissing && tabMode !== 'new') {
       filterConditions.push(`status != 'missing'`)
     }
 
-    // deleted 상태 제외
-    if (filters.excludeDeleted) {
+    // deleted 상태 제외 (NEW 탭에서는 이미 tabClause에서 처리됨)
+    if (filters.excludeDeleted && tabMode !== 'new') {
       filterConditions.push(`status != 'deleted'`)
     }
 
@@ -368,7 +390,7 @@ function registerIpcHandlers() {
     if (!query || query.trim() === '') {
       return db.prepare(`
         SELECT * FROM videos
-        WHERE 1=1 ${filterClause} ${folderClause}
+        WHERE 1=1 ${tabClause} ${filterClause} ${folderClause}
         ORDER BY ${orderClause}
       `).all(...filterParams, ...folderParams)
     }
@@ -382,7 +404,7 @@ function registerIpcHandlers() {
          OR actor_name LIKE ?
          OR memo       LIKE ?
          OR tags       LIKE ?
-      ) ${filterClause} ${folderClause}
+      ) ${tabClause} ${filterClause} ${folderClause}
       ORDER BY ${orderClause}
     `).all(q, q, q, q, q, ...filterParams, ...folderParams)
   })
@@ -406,6 +428,8 @@ function registerIpcHandlers() {
       grade       = '보관',
     } = data
 
+    // 사용자가 메타 정보를 수정하면 is_new = 0 으로 해제한다.
+    // (등급/추천/별점/태그/메모 중 하나라도 작업하면 NEW 상태 해제)
     db.prepare(`
       UPDATE videos
       SET
@@ -415,6 +439,7 @@ function registerIpcHandlers() {
         status      = ?,
         recommended = ?,
         grade       = ?,
+        is_new      = 0,
         updated_at  = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(memo, tags, rating, status, recommended ? 1 : 0, grade, id)
@@ -434,9 +459,11 @@ function registerIpcHandlers() {
   // ══════════════════════════════════════════════════════════════
   ipcMain.handle('update-recommended', async (_event, id, recommended) => {
     const db = getDb()
+    // 추천 체크/해제 시에도 is_new = 0 으로 해제 (사용자가 작업한 것으로 판단)
     db.prepare(`
       UPDATE videos
       SET recommended = ?,
+          is_new      = 0,
           updated_at  = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(recommended ? 1 : 0, id)
@@ -460,14 +487,36 @@ function registerIpcHandlers() {
     const ALLOWED_GRADES = ['영구소장', '재시청 추천', '만족', '보관', '애매', '삭제요망']
     const safeGrade = ALLOWED_GRADES.includes(grade) ? grade : '보관'
 
+    // 등급 변경 시 is_new = 0 으로 해제 (사용자가 등급을 설정한 것으로 판단)
     db.prepare(`
       UPDATE videos
       SET grade      = ?,
+          is_new     = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(safeGrade, id)
 
     return db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // NEW 작업 대기함 카운트 조회 (get-new-count)
+  //
+  // is_new = 1 인 파일 수를 반환한다. (탭 배지 숫자용)
+  // missing / deleted 상태 파일은 제외한다.
+  //
+  // 반환: { count: number }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-new-count', async () => {
+    const db = getDb()
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM   videos
+      WHERE  is_new  = 1
+        AND  status != 'missing'
+        AND  status != 'deleted'
+    `).get()
+    return { count: row.count }
   })
 
   // ══════════════════════════════════════════════════════════════

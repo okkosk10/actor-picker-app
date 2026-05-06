@@ -53,6 +53,11 @@ export default function VideoItem({ video, selected, onClick }) {
 
       {/* ── 2행: 배지 묶음 ────────────────────────────────────── */}
       <div className="vi-badges">
+        {/* NEW 배지 — is_new=1 일 때만 표시 (작업 대기 상태) */}
+        {Boolean(video.is_new) && (
+          <Tag color="green" style={{ fontWeight: 700, letterSpacing: 1 }}>NEW</Tag>
+        )}
+
         {/* 추천작 배지 — recommended=1 일 때만 */}
         {Boolean(video.recommended) && (
           <Tag color="warning" style={{ fontWeight: 600 }}>⭐ 추천</Tag>
