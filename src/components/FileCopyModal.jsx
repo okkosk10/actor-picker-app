@@ -20,8 +20,9 @@ import { formatFileSize }            from '../utils/format.js'
 
 export default function FileCopyModal({ videos, selectedIds, onClose }) {
   const overlayRef               = useRef(null)
-  const [copying,    setCopying] = useState(false)
-  const [copyResult, setCopyResult] = useState(null)
+  const [copying,       setCopying]      = useState(false)
+  const [copyResult,    setCopyResult]   = useState(null)
+  const [directCopying, setDirectCopying] = useState(false)
   // copyResult: null | { success, count, totalSize, failedPaths, error? }
 
   // ── 복사 대상 영상 결정 ────────────────────────────────────────
@@ -72,6 +73,35 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
       message.error('클립보드 복사 중 오류: ' + err.message)
     } finally {
       setCopying(false)
+    }
+  }
+
+  // ── 직접 복사 실행 (Shell BrowseForFolder + CopyHere, MTP 장치 지원) ──
+  const handleDirectCopy = async () => {
+    if (targetVideos.length === 0 || directCopying) return
+    setDirectCopying(true)
+    setCopyResult(null)
+
+    const filePaths = targetVideos.map((v) => v.file_path)
+    try {
+      const result = await window.api.copyFilesToDevice(filePaths)
+      if (!result.success) {
+        if (result.action === 'cancelled') {
+          message.info('폴더 선택이 취소되었습니다.')
+          return
+        }
+        message.error(result.error || '직접 복사 실패')
+        return
+      }
+      if (result.action === 'timeout') {
+        message.warning('복사를 시작했지만 완료 확인이 초과되었습니다. 휴대폰에서 파일을 확인하세요.')
+        return
+      }
+      message.success(`✅ ${result.count}개 파일이 휴대폰에 복사되었습니다.`)
+    } catch (err) {
+      message.error('직접 복사 오류: ' + err.message)
+    } finally {
+      setDirectCopying(false)
     }
   }
 
@@ -135,6 +165,21 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                 {copying
                   ? '복사 중…'
                   : `📋 클립보드에 복사 (${targetVideos.length}개 · ${formatFileSize(totalSize)})`}
+              </button>
+              <div className="file-copy-divider" />
+              <p className="file-copy-hint file-copy-hint--mtp">
+                클립보드 붙여넣기가 휴대폰 폴더에서 안 될 때는 아래 버튼을 사용하세요.
+                폴더 선택 창이 열리면 <strong>이 PC &gt; 휴대폰 폴더</strong>를 선택하면 됩니다.
+              </p>
+              <button
+                className="btn-file-copy-direct"
+                type="button"
+                onClick={handleDirectCopy}
+                disabled={directCopying}
+              >
+                {directCopying
+                  ? '복사 중… (Windows 복사 창 확인)'
+                  : `📱 폴더 선택 후 직접 복사 (MTP 지원)`}
               </button>
             </>
           )}

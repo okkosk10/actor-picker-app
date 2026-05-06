@@ -15,6 +15,7 @@
  *   open-folder                : 탐색기로 폴더 열기
  *   random-pick                : DB 기반 배우별 랜덤 추천
  *   copy-files-to-clipboard    : Windows CF_HDROP 파일 클립보드 복사
+ *   copy-files-to-device       : Shell 폴더 선택 + CopyHere 직접 복사 (MTP 지원)
  *
  * 보안:
  *   - Renderer에서 직접 fs/DB 접근 불가
@@ -23,10 +24,10 @@
 
 const path = require('path')
 const fs   = require('fs')
-const { ipcMain, dialog, shell }  = require('electron')
+const { ipcMain, dialog, shell, BrowserWindow } = require('electron')
 const { getDb }               = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
-const { copyFilesToClipboard } = require('./clipboardHelper.cjs')
+const { copyFilesToClipboard, copyFilesToDevice } = require('./clipboardHelper.cjs')
 
 // ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
 // 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
@@ -846,6 +847,38 @@ function registerIpcHandlers() {
       return { success: true, count, totalSize, failedPaths }
     } catch (err) {
       return { success: false, error: err.message, count: 0, totalSize, failedPaths }
+    }
+  })
+
+  // ── Shell 폴더 선택 + 직접 복사 (MTP 장치 지원) ──────────────
+  ipcMain.handle('copy-files-to-device', async (_event, filePaths) => {
+    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+      return { success: false, error: '파일 경로가 없습니다.', action: 'none', count: 0 }
+    }
+
+    const validPaths = []
+    for (const fp of filePaths) {
+      if (typeof fp !== 'string' || !path.isAbsolute(fp)) continue
+      try {
+        if (fs.statSync(fp).isFile()) validPaths.push(fp)
+      } catch { /* 존재하지 않는 파일 무시 */ }
+    }
+
+    if (validPaths.length === 0) {
+      return { success: false, error: '존재하는 파일이 없습니다.', action: 'none', count: 0 }
+    }
+
+    // Electron 창 HWND 를 BrowseForFolder 부모로 전달
+    // → 대화상자가 앱 위에 표시되고 MTP 장치(휴대폰) 폴더도 목록에 포함됨
+    const mainWin    = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const hwndBuffer = mainWin?.getNativeWindowHandle()
+    const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
+
+    try {
+      const result = await copyFilesToDevice(validPaths, hwnd)
+      return { success: true, ...result }
+    } catch (err) {
+      return { success: false, error: err.message, action: 'error', count: 0 }
     }
   })
 }

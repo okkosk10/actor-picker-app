@@ -111,4 +111,99 @@ async function copyFilesToClipboard(filePaths) {
   })
 }
 
-module.exports = { copyFilesToClipboard }
+/**
+ * Shell.Application 기반 직접 복사 (BrowseForFolder + CopyHere)
+ *
+ * 동작:
+ *   - Electron 창의 HWND 를 BrowseForFolder 의 부모로 전달한다.
+ *     → 대화상자가 앱 창 위에 정상 표시되며 MTP 장치(휴대폰 폴더)도 포함된다.
+ *   - 사용자가 대상 폴더를 선택하면 Shell Folder COM 객체로 CopyHere 를 호출한다.
+ *     → Shell.NameSpace(문자열 경로) 방식과 달리 MTP 경로도 직접 처리된다.
+ *   - CopyHere flags=0: Windows 표준 복사 진행창 표시, 완료까지 블로킹
+ *
+ * @param {string[]} filePaths - 복사할 파일의 절대 경로 배열
+ * @param {number}   hwnd      - Electron BrowserWindow 의 native HWND (정수)
+ * @returns {Promise<{ action: 'copied'|'cancelled', count: number }>}
+ */
+async function copyFilesToDevice(filePaths, hwnd) {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) {
+    throw new Error('복사할 파일이 없습니다.')
+  }
+
+  const tmpFileName = `acp-dev-${crypto.randomBytes(8).toString('hex')}.txt`
+  const tmpFile     = path.join(os.tmpdir(), tmpFileName)
+  const bom         = Buffer.from([0xEF, 0xBB, 0xBF])
+  fs.writeFileSync(
+    tmpFile,
+    Buffer.concat([bom, Buffer.from(filePaths.join('\n'), 'utf8')]),
+  )
+
+  const tmpSafe = tmpFile.replace(/'/g, "''")
+  // HWND 는 정수 리터럴로 스크립트에 직접 삽입 (인젝션 불가 - 숫자만)
+  const hwndVal = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
+  const psLines = [
+    `$ErrorActionPreference = 'Stop'`,
+    `$paths = @(Get-Content -LiteralPath '${tmpSafe}' |`,
+    `  ForEach-Object { $_.Trim() } |`,
+    `  Where-Object { $_ -ne '' })`,
+    `Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue`,
+    `if ($paths.Count -eq 0) { Write-Output 'ERR:파일 없음'; exit 1 }`,
+    `$shell = New-Object -ComObject Shell.Application`,
+    // Electron 창 HWND 를 부모로 지정 → 대화상자가 앱 앞에 표시됨
+    // rootFolder=17(ssfDRIVES) → "이 PC" 루트, MTP 장치 포함
+    `$dest = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)`,
+    `if (-not $dest) { Write-Output 'CANCEL'; exit 0 }`,
+    // 문자열 경로 직접 전달 → 로컬↔MTP 네임스페이스 불일치 없음, MTP Shell 핸들러가 직접 읽어 전송
+    // flags=0: Windows 표준 복사 진행 창 표시
+    `foreach ($p in $paths) { $dest.CopyHere($p, 0) }`,
+    // MTP 의 CopyHere 는 비동기 → PowerShell 프로세스가 살아있어야 COM 아파트 유지
+    // 대상 폴더에 파일이 나타날 때까지 폴링하여 프로세스를 유지한다 (최대 30분)
+    `$names = @($paths | ForEach-Object { [System.IO.Path]::GetFileName($_) })`,
+    `$left  = $names`,
+    `$dl    = [DateTime]::Now.AddMinutes(30)`,
+    `while ($left.Count -gt 0 -and [DateTime]::Now -lt $dl) {`,
+    `  Start-Sleep -Seconds 3`,
+    `  try {`,
+    `    $have = @($dest.Items() | ForEach-Object { $_.Name })`,
+    `    $left = @($names | Where-Object { $have -notcontains $_ })`,
+    `  } catch {}`,
+    `}`,
+    `if ($left.Count -eq 0) { Write-Output "OK:$($names.Count)" }`,
+    `else { Write-Output "TIMEOUT:$($names.Count - $left.Count)/$($names.Count)" }`,
+  ]
+  const psScript = psLines.join('\r\n')
+  const encoded  = Buffer.from(psScript, 'utf16le').toString('base64')
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      'powershell.exe',
+      ['-STA', '-NoProfile', '-EncodedCommand', encoded],
+      { windowsHide: true },
+    )
+
+    let stdout = ''
+    let stderr = ''
+
+    proc.stdout.on('data', (d) => { stdout += d.toString('utf8') })
+    proc.stderr.on('data', (d) => { stderr += d.toString('utf8') })
+
+    proc.on('close', (code) => {
+      try { fs.unlinkSync(tmpFile) } catch { /* 이미 삭제됨 */ }
+
+      const out = stdout.trim()
+      if (out === 'CANCEL') return resolve({ action: 'cancelled', count: 0 })
+      const okMatch = out.match(/OK:(\d+)/)
+      if (code === 0 && okMatch) return resolve({ action: 'copied', count: parseInt(okMatch[1], 10) })
+      const toMatch = out.match(/TIMEOUT:(\d+)\/\d+/)
+      if (toMatch) return resolve({ action: 'timeout', count: parseInt(toMatch[1], 10) })
+      reject(new Error(stderr.trim() || `PowerShell 실패 (종료 코드: ${code})\n${out}`))
+    })
+
+    proc.on('error', (err) => {
+      try { fs.unlinkSync(tmpFile) } catch { /* 무시 */ }
+      reject(new Error(`PowerShell 실행 실패: ${err.message}`))
+    })
+  })
+}
+
+module.exports = { copyFilesToClipboard, copyFilesToDevice }

@@ -110,5 +110,14 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { success, count, totalSize, failedPaths, error? }
   copyFilesToClipboard: (filePaths) =>
     ipcRenderer.invoke('copy-files-to-clipboard', filePaths),
+
+  // ── Shell 폴더 선택 + 직접 복사 (MTP 장치 포함) ─────────────
+  // BrowseForFolder 대화상자(이 PC 루트)에서 사용자가 대상 폴더를 선택하면
+  // Shell.Application.CopyHere 로 직접 복사한다.
+  // 클립보드 방식이 MTP 폴더에 동작하지 않을 때 사용한다.
+  // @param filePaths {string[]} - 복사할 파일의 절대 경로 배열
+  // 반환: { success, action: 'copied'|'cancelled'|'error', count, error? }
+  copyFilesToDevice: (filePaths) =>
+    ipcRenderer.invoke('copy-files-to-device', filePaths),
 })
 
