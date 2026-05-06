@@ -50,6 +50,7 @@
     }
   },
   "dependencies": {
+    "antd": "^6.3.7",
     "better-sqlite3": "^12.9.0"
   }
 }

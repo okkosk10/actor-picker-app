@@ -37,6 +37,14 @@ contextBridge.exposeInMainWorld('api', {
   updateVideoMeta: (id, data) =>
     ipcRenderer.invoke('update-video-meta', id, data),
 
+  // ── 추천 여부 단독 토글 ───────────────────────────────────────
+  // recommended 컬럼만 변경하는 가벼운 API (Switch 즉시 반영용)
+  // @param id          {number} - 동영상 ID
+  // @param recommended {0|1}    - 1=추천, 0=일반
+  // 반환: 업데이트된 Video 레코드
+  updateRecommended: (id, recommended) =>
+    ipcRenderer.invoke('update-recommended', id, recommended),
+
   // ── 파일 열기 (OS 기본 플레이어) ─────────────────────────────
   openVideo: (filePath) =>
     ipcRenderer.invoke('open-video', filePath),

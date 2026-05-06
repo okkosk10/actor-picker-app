@@ -12,14 +12,15 @@
  *   recommended, rating, status, tags, memo
  */
 import { useState, useEffect } from 'react'
+import { Switch, Tag, message } from 'antd'
 import StarRating from './StarRating.jsx'
-import TagBadge   from './TagBadge.jsx'
 import { useVideoMeta }   from '../hooks/useVideoMeta.js'
 import { formatFileSize, formatDate, STATUS_LABELS } from '../utils/format.js'
 
 export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder }) {
   // ── 편집 필드 로컬 상태 ────────────────────────────────────────
   const [recommended, setRecommended] = useState(Boolean(video.recommended))
+  const [recLoading,  setRecLoading]  = useState(false) // Switch 로딩 상태
   const [rating,      setRating]      = useState(video.rating      || 0)
   const [status,      setStatus]      = useState(video.status      || 'normal')
   const [tags,        setTags]        = useState(video.tags        || '')
@@ -36,6 +37,22 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
     setMemo(video.memo          || '')
     resetSaved()
   }, [video.id, resetSaved])
+
+  // ── 추천 즉시 토글 (updateRecommended API) ─────────────────────
+  // Switch 변경 즉시 DB에 반영 — 저장 버튼 불필요
+  const handleRecommendedToggle = async (checked) => {
+    setRecLoading(true)
+    try {
+      const updated = await window.api.updateRecommended(video.id, checked ? 1 : 0)
+      setRecommended(checked)
+      onUpdate(updated) // 부모(목록) 동기화
+      message.success(checked ? '추천작으로 등록했습니다.' : '추천 해제했습니다.')
+    } catch (e) {
+      message.error('추천 변경 실패: ' + e.message)
+    } finally {
+      setRecLoading(false)
+    }
+  }
 
   // ── 저장 처리 ─────────────────────────────────────────────────
   const handleSave = async () => {
@@ -98,17 +115,17 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
       {/* ── 편집 섹션 ───────────────────────────────────────────── */}
       <div className="detail-edit">
 
-        {/* 추천작 토글 */}
-        <div className="edit-field">
+        {/* 추천작 토글 — Ant Design Switch */}
+        <div className="edit-field edit-field--inline">
           <span className="edit-label">추천작</span>
-          <button
-            type="button"
-            className={`btn-recommended${recommended ? ' btn-recommended--on' : ''}`}
-            onClick={() => setRecommended((v) => !v)}
-            aria-pressed={recommended}
-          >
-            {recommended ? '⭐ 추천작' : '☆ 추천 없음'}
-          </button>
+          <Switch
+            checked={recommended}
+            onChange={handleRecommendedToggle}
+            checkedChildren="⭐ 추천"
+            unCheckedChildren="☆ 일반"
+            loading={recLoading}
+            style={{ background: recommended ? '#f59e0b' : undefined }}
+          />
         </div>
 
         {/* 별점 */}
@@ -146,11 +163,11 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
             onChange={(e) => setTags(e.target.value)}
             placeholder="쉼표로 구분 (예: 4K, 자막, HD)"
           />
-          {/* 태그 미리보기 */}
+          {/* 태그 미리보기 — Ant Design Tag */}
           {tagList.length > 0 && (
             <div className="tag-preview">
               {tagList.map((t) => (
-                <TagBadge key={t} label={t} variant="tag" />
+                <Tag key={t} color="default" style={{ marginBottom: 4 }}>{t}</Tag>
               ))}
             </div>
           )}

@@ -215,6 +215,28 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
+  // 추천 여부 단독 토글
+  //
+  // update-video-meta 와 달리 recommended 컬럼만 변경한다.
+  // UI에서 Switch 토글 시 즉각 반영을 위해 별도 채널로 분리.
+  //
+  // @param id          {number}  - 동영상 ID
+  // @param recommended {0|1}     - 추천 여부 (1=추천, 0=일반)
+  // 반환: 업데이트된 Video 레코드
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('update-recommended', async (_event, id, recommended) => {
+    const db = getDb()
+    db.prepare(`
+      UPDATE videos
+      SET recommended = ?,
+          updated_at  = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(recommended ? 1 : 0, id)
+
+    return db.prepare(`SELECT * FROM videos WHERE id = ?`).get(id)
+  })
+
+  // ══════════════════════════════════════════════════════════════
   // 파일 열기 (OS 기본 플레이어)
   // ══════════════════════════════════════════════════════════════
   ipcMain.handle('open-video', async (_event, filePath) => {

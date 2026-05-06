@@ -1,4 +1,4 @@
-/**
+﻿/**
  * src/components/VideoItem.jsx
  * 동영상 목록의 단일 항목 컴포넌트
  *
@@ -10,16 +10,24 @@
  * 표시 정보:
  *   - 품번 (code badge)
  *   - 배우명
- *   - 별점 (읽기 전용)
- *   - 추천 / 상태 / 삭제됨 배지
- *   - 태그 칩 목록
+ *   - 별점 (읽기 전용, StarRating)
+ *   - 추천 / 상태 / 삭제됨 배지 (Ant Design Tag)
+ *   - 태그 칩 목록 (Ant Design Tag)
  *   - 파일명
  *   - 폴더명 (마지막 경로 세그먼트)
  *   - 메모 미리보기
  */
+import { Tag } from 'antd'
 import StarRating from './StarRating.jsx'
-import TagBadge   from './TagBadge.jsx'
-import { STATUS_LABELS, STATUS_VARIANTS } from '../utils/format.js'
+import { STATUS_LABELS } from '../utils/format.js'
+
+// 상태(status)별 Ant Design Tag color 매핑
+const STATUS_COLORS = {
+  watched:  'green',
+  favorite: 'gold',
+  later:    'default',
+  missing:  'red',
+}
 
 export default function VideoItem({ video, selected, onClick }) {
   // 상태 기반 좌측 테두리 색상 클래스
@@ -59,24 +67,23 @@ export default function VideoItem({ video, selected, onClick }) {
         {video.file_name}
       </div>
 
-      {/* ── 3행: 배지 묶음 ────────────────────────────────────── */}
+      {/* ── 3행: 배지 묶음 (Ant Design Tag) ─────────────────── */}
       <div className="vi-badges">
-        {/* 추천작 배지 */}
+        {/* 추천작 배지 — recommended=1 일 때만 표시 */}
         {Boolean(video.recommended) && (
-          <TagBadge label="추천" variant="recommended" />
+          <Tag color="warning" style={{ fontWeight: 600 }}>⭐ 추천</Tag>
         )}
 
-        {/* 상태 배지 (normal 제외) */}
+        {/* 상태 배지 (normal 은 표시 생략) */}
         {video.status && video.status !== 'normal' && (
-          <TagBadge
-            label={STATUS_LABELS[video.status] || video.status}
-            variant={STATUS_VARIANTS[video.status] || 'tag'}
-          />
+          <Tag color={STATUS_COLORS[video.status] || 'default'}>
+            {STATUS_LABELS[video.status] || video.status}
+          </Tag>
         )}
 
-        {/* 태그 칩 */}
+        {/* 사용자 태그 칩 */}
         {tagList.map((tag) => (
-          <TagBadge key={tag} label={tag} variant="tag" />
+          <Tag key={tag} color="blue">{tag}</Tag>
         ))}
       </div>
 
