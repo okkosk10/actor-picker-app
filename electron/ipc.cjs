@@ -24,10 +24,18 @@
 
 const path = require('path')
 const fs   = require('fs')
-const { ipcMain, dialog, shell, BrowserWindow } = require('electron')
+const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
 const { getDb }               = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
-const { copyFilesToClipboard, createMtpSession } = require('./clipboardHelper.cjs')
+const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
+
+// ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
+// device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
+let _resolveAction = null
+const waitForAction  = () => new Promise(resolve => { _resolveAction = resolve })
+const dispatchAction = (action) => {
+  if (_resolveAction) { _resolveAction(action); _resolveAction = null }
+}
 
 // ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
 // 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
@@ -850,33 +858,47 @@ function registerIpcHandlers() {
     }
   })
 
-  // ── MTP 전송 큐 (1개씩 순차 전송, 진행률 IPC 이벤트) ─────────
+  // ── MTP 액션 수신 (needsCheck 일시정지 해제용) ───────────────
+  ipcMain.on('device-copy-action', (_ev, action) => dispatchAction(action))
+
+  // ── MTP 전송 큐 (needsCheck 일시정지 포함) ───────────────────
   ipcMain.handle('copy-files-to-device', async (event, filePaths) => {
     // ── 입력 검증 ──────────────────────────────────────────────
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return { success: false, error: '파일 경로가 없습니다.', action: 'none' }
     }
 
-    const validPaths = []
+    const fileInfos = []
     for (const fp of filePaths) {
       if (typeof fp !== 'string' || !path.isAbsolute(fp)) continue
-      try { if (fs.statSync(fp).isFile()) validPaths.push(fp) } catch { /* 무시 */ }
+      try {
+        const stat = fs.statSync(fp)
+        if (stat.isFile()) fileInfos.push({ path: fp, size: stat.size })
+      } catch { /* 무시 */ }
     }
-    if (validPaths.length === 0) {
+    if (fileInfos.length === 0) {
       return { success: false, error: '존재하는 파일이 없습니다.', action: 'none' }
     }
 
-    // ── progress 전송 헬퍼 ────────────────────────────────────
-    const total        = validPaths.length
-    const failedFiles  = []
-    let   doneCount    = 0
-    let   failedCount  = 0
+    // ── 로그 헬퍼 ────────────────────────────────────────────
+    const logPath = path.join(app.getPath('userData'), 'mtp-transfer.log')
+    const mtpLog  = (msg) => {
+      const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
+      try { fs.appendFileSync(logPath, `[${ts}] ${msg}\n`, 'utf8') } catch { /* 무시 */ }
+    }
 
-    const sendProgress = (status, currentIndex, currentFileName, message = '') => {
+    // ── progress 전송 헬퍼 ────────────────────────────────────
+    const total       = fileInfos.length
+    const failedFiles = []
+    let   doneCount   = 0
+    let   failedCount = 0
+
+    const sendProgress = (status, currentIndex, currentFileName, message = '', extra = {}) => {
       try {
         event.sender.send('device-copy-progress', {
           status, currentIndex, total, currentFileName,
           doneCount, failedCount, failedFiles: [...failedFiles], message,
+          ...extra,
         })
       } catch { /* renderer 가 닫혔을 경우 무시 */ }
     }
@@ -887,58 +909,144 @@ function registerIpcHandlers() {
     const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
 
     // ── MTP 세션 시작 (BrowseForFolder 1회) ───────────────────
+    mtpLog(`SESSION_START | files: ${total}`)
     sendProgress('selecting', 0, '', '폴더를 선택해 주세요…')
     let session
-    try {
-      session = await createMtpSession(hwnd)
-    } catch (err) {
+    try { session = await createMtpSession(hwnd) }
+    catch (err) {
+      mtpLog(`SESSION_ERR | ${err.message}`)
       sendProgress('cancelled', 0, '', err.message)
       return { success: false, error: err.message, action: 'error' }
     }
-
     if (!session) {
+      mtpLog('SESSION_CANCEL')
       sendProgress('cancelled', 0, '', '폴더 선택이 취소되었습니다.')
       return { success: false, action: 'cancelled' }
     }
 
     // ── 파일 1개씩 순차 전송 ──────────────────────────────────
-    for (let i = 0; i < validPaths.length; i++) {
-      const fp       = validPaths[i]
-      const fileName = path.basename(fp)
+    for (let i = 0; i < fileInfos.length; i++) {
+      const { path: fp, size: fileSize } = fileInfos[i]
+      const fileName   = path.basename(fp)
+      const timeoutSec = calcTimeoutSec(fileSize)
+      const sizeLabel  = (fileSize / (1024 ** 3)).toFixed(2) + ' GB'
+      const extra      = { fileSize, timeoutSec }
 
-      sendProgress('copying', i, fileName, `전송 중… (${i + 1}/${total})`)
+      let fileResolved = false
+      let useCopyHere  = true   // true=SEND(CopyHere+Poll), false=POLL only
 
-      let result
-      try {
-        result = await session.sendFile(fp)
-      } catch {
-        result = 'error'
-      }
+      while (!fileResolved) {
+        const startTs  = Date.now()
+        const waitMin  = Math.round(timeoutSec / 60)
+        const msgCopy  = useCopyHere
+          ? `전송 중… (${i + 1}/${total}) · 최대 ${waitMin}분 대기`
+          : `계속 대기 중… (최대 ${waitMin}분)`
 
-      if (result === 'ok') {
-        doneCount++
-        sendProgress('completed', i, fileName, `완료 (${doneCount}/${total})`)
-      } else if (result === 'timeout') {
-        failedCount++
-        failedFiles.push(fileName)
-        sendProgress('timeout', i, fileName, `시간 초과 — 다음 파일로 이동`)
-      } else {
-        failedCount++
-        failedFiles.push(fileName)
-        sendProgress('failed', i, fileName, `전송 실패 — 다음 파일로 이동`)
-      }
+        sendProgress('copying', i, fileName, msgCopy, extra)
+        mtpLog(`${useCopyHere ? 'COPY' : 'POLL'}_START | [${i+1}/${total}] ${fileName} | size: ${sizeLabel} | timeout: ${waitMin}min`)
 
-      // 파일 간 안정화 딜레이 (마지막 파일 제외)
-      if (i < validPaths.length - 1) {
-        await new Promise((r) => setTimeout(r, 3000))
+        let result
+        try {
+          result = useCopyHere
+            ? await session.sendFile(fp, timeoutSec)
+            : await session.pollFile(fp, timeoutSec)
+        } catch { result = 'error' }
+
+        const elapsedMin = Math.round((Date.now() - startTs) / 60000)
+
+        if (result === 'ok') {
+          doneCount++
+          mtpLog(`OK | ${fileName} | elapsed: ${elapsedMin}min`)
+          sendProgress('completed', i, fileName, `완료 (${doneCount}/${total})`, extra)
+          fileResolved = true
+          if (i < fileInfos.length - 1) await new Promise(r => setTimeout(r, 3000))
+
+        } else {
+          // ── timeout / error → needsCheck 일시정지 ──────────
+          const reason = result === 'timeout' ? '시간 초과' : '전송 오류'
+          mtpLog(`${result.toUpperCase()} | ${fileName} | waited: ${elapsedMin}min → needsCheck`)
+          sendProgress('needsCheck', i, fileName, `${reason} — 조치를 선택해 주세요`, extra)
+
+          // 사용자 조치 루프
+          actionLoop: while (true) {
+            const action = await waitForAction()
+            mtpLog(`USER_ACTION | ${action} | ${fileName}`)
+
+            if (action === 'continue') {
+              // CopyHere 없이 폴링만 추가 10분
+              const extraSec = 10 * 60
+              const xtra     = { fileSize, timeoutSec: extraSec }
+              sendProgress('copying', i, fileName, '계속 대기 중… (추가 10분)', xtra)
+              let pr
+              try { pr = await session.pollFile(fp, extraSec) } catch { pr = 'error' }
+              if (pr === 'ok') {
+                doneCount++
+                const em = Math.round((Date.now() - startTs) / 60000)
+                mtpLog(`OK (continue) | ${fileName} | total: ${em}min`)
+                sendProgress('completed', i, fileName, `완료 (${doneCount}/${total})`, xtra)
+                fileResolved = true
+                if (i < fileInfos.length - 1) await new Promise(r => setTimeout(r, 3000))
+                break actionLoop
+              }
+              mtpLog(`STILL_TIMEOUT | ${fileName} → needsCheck again`)
+              sendProgress('needsCheck', i, fileName, '여전히 확인되지 않습니다 — 조치를 선택해 주세요', xtra)
+
+            } else if (action === 'retry') {
+              useCopyHere = true
+              break actionLoop  // while(!fileResolved) 재진입, CopyHere 재시도
+
+            } else if (action === 'skip') {
+              failedCount++
+              failedFiles.push(fileName)
+              mtpLog(`SKIP | ${fileName}`)
+              sendProgress('skipped', i, fileName, `건너뜀 (${failedCount}개 누적)`, extra)
+              fileResolved = true
+              if (i < fileInfos.length - 1) await new Promise(r => setTimeout(r, 3000))
+              break actionLoop
+
+            } else if (action === 'abort') {
+              mtpLog(`ABORT | at [${i+1}/${total}] — success: ${doneCount}, skipped: ${failedCount}`)
+              session.close()
+              sendProgress('cancelled', i, fileName, '전체 중단됨', extra)
+              return { success: false, action: 'aborted', doneCount, failedCount, failedFiles: [...failedFiles] }
+            }
+          }
+        }
       }
     }
 
     session.close()
+    const finalAction = failedCount === 0 ? 'copied' : failedCount === total ? 'failed' : 'partial'
+    mtpLog(`SESSION_DONE | success: ${doneCount}, skipped: ${failedCount} | ${finalAction}`)
+    sendProgress('done', total - 1, '', `전체 완료 — 성공 ${doneCount}개, 건너뜀 ${failedCount}개`)
+    return { success: true, action: finalAction, doneCount, failedCount, failedFiles: [...failedFiles] }
+  })
 
-    const action = failedCount === 0 ? 'copied' : failedCount === total ? 'failed' : 'partial'
-    sendProgress('done', total - 1, '', `전체 완료 — 성공 ${doneCount}개, 실패 ${failedCount}개`)
-    return { success: true, action, doneCount, failedCount, failedFiles: [...failedFiles] }
+  // ── MTP 안정 모드 (Windows 복사 창 위임, 일괄 전송) ──────────
+  ipcMain.handle('copy-files-to-device-bulk', async (_event, filePaths) => {
+    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+      return { success: false, error: '파일 경로가 없습니다.', action: 'none' }
+    }
+    const validPaths = filePaths.filter(fp => {
+      if (typeof fp !== 'string' || !path.isAbsolute(fp)) return false
+      try { return fs.statSync(fp).isFile() } catch { return false }
+    })
+    if (validPaths.length === 0) {
+      return { success: false, error: '존재하는 파일이 없습니다.', action: 'none' }
+    }
+    const mainWin    = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const hwndBuffer = mainWin?.getNativeWindowHandle()
+    const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
+
+    let bulkSession
+    try { bulkSession = await createMtpBulkSession(hwnd, validPaths) }
+    catch (err) { return { success: false, error: err.message, action: 'error' } }
+
+    if (!bulkSession) return { success: false, action: 'cancelled' }
+
+    // 60분 후 COM 아파트 종료 (안전장치)
+    setTimeout(() => { try { bulkSession.close() } catch { /* 무시 */ } }, 60 * 60 * 1000)
+    return { success: true, action: 'bulk-started', count: validPaths.length }
   })
 }
 

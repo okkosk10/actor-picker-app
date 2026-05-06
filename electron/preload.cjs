@@ -116,13 +116,21 @@ contextBridge.exposeInMainWorld('api', {
   // Shell.Application.CopyHere 로 1개씩 순차 전송한다.
   // 진행 상황은 device-copy-progress IPC 이벤트로 수신한다.
   // @param filePaths {string[]} - 복사할 파일의 절대 경로 배열
-  // 반환: { success, action: 'copied'|'partial'|'failed'|'cancelled'|'error', doneCount, failedCount, failedFiles }
+  // 반환: { success, action: 'copied'|'partial'|'failed'|'aborted'|'cancelled'|'error', doneCount, failedCount, failedFiles }
   copyFilesToDevice: (filePaths) =>
     ipcRenderer.invoke('copy-files-to-device', filePaths),
 
+  // ── MTP 안정 모드 (Windows 복사 창 위임) ─────────────────────
+  // 모든 파일을 한 번에 CopyHere 로 전달하고 앱 내부 진행률은 없음.
+  // @param filePaths {string[]}
+  // 반환: { success, action: 'bulk-started'|'cancelled'|'error', count }
+  copyFilesToDeviceBulk: (filePaths) =>
+    ipcRenderer.invoke('copy-files-to-device-bulk', filePaths),
+
   // ── MTP 전송 진행 이벤트 구독 ────────────────────────────────
   // callback: (payload) => void
-  //   payload: { status, currentIndex, total, currentFileName, doneCount, failedCount, failedFiles, message }
+  //   payload: { status, currentIndex, total, currentFileName, fileSize, timeoutSec,
+  //              doneCount, failedCount, failedFiles, message }
   // 반환: unsubscribe 함수
   onDeviceCopyProgress: (callback) => {
     const listener = (_event, payload) => callback(payload)
@@ -133,5 +141,10 @@ contextBridge.exposeInMainWorld('api', {
   removeDeviceCopyProgress: () => {
     ipcRenderer.removeAllListeners('device-copy-progress')
   },
+
+  // ── MTP needsCheck 액션 전송 ─────────────────────────────────
+  // action: 'continue' | 'retry' | 'skip' | 'abort'
+  sendDeviceCopyAction: (action) =>
+    ipcRenderer.send('device-copy-action', action),
 })
 

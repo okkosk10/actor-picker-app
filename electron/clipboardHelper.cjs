@@ -112,52 +112,40 @@ async function copyFilesToClipboard(filePaths) {
 }
 
 /**
- * Shell.Application 기반 MTP 순차 전송 세션
+ * Shell.Application 기반 MTP 순차 전송 세션 (큐 모드)
  *
- * 동작:
- *   - PowerShell STA 프로세스 1개를 장기 실행 상태로 유지한다.
- *   - BrowseForFolder 는 스크립트 시작 즉시(c7783d4 방식) 실행한다.
- *     → windowsHide:true 상태에서도 BrowseForFolder 다이얼로그가 정상 표시됨.
- *   - BrowseForFolder 선택 결과(READY/CANCEL)를 stdout 으로 출력한다.
- *   - 이후 stdin 으로 SEND:<path> 명령을 받아 파일을 1개씩 순차 전송한다.
- *   - windowsHide:true 로 PowerShell 콘솔 창은 사용자에게 노출되지 않는다.
+ * 프로토콜:
+ *   (시작)                    → READY | CANCEL | ERR:<msg>
+ *   SEND:<timeoutSec>:<path>  → OK | TIMEOUT | ERR:<msg>   (CopyHere + Poll)
+ *   POLL:<timeoutSec>:<path>  → OK | TIMEOUT               (Poll only, CopyHere 없음)
+ *   QUIT                      → (프로세스 종료)
  *
- * 프로토콜 (stdout 먼저):
- *   (시작)            → READY  (폴더 선택 성공)
- *                     → CANCEL (폴더 선택 취소)
- *                     → ERR:<msg>
- *   SEND:<filePath>   → OK     (전송 확인)
- *                     → TIMEOUT
- *                     → ERR:<msg>
- *   QUIT              → (프로세스 종료)
+ * Poll-Item: 순수 timeout 방식. 파일이 Items()에 나타날 때까지 대기한다.
+ * staleSec 버그(원래 코드에서 $lastTick이 갱신되지 않아 staleSec=2분이
+ * 사실상 timeout으로 작동하던 문제) 완전 제거.
  */
 
-// HWND 플레이스홀더를 스크립트 빌드 시 숫자 리터럴로 치환한다 (c7783d4 방식)
+// HWND 를 스크립트 빌드 시 숫자 리터럴로 치환 (인젝션 불가 - 숫자만 허용)
 const MTP_SESSION_SCRIPT_TPL = `
 $ErrorActionPreference = 'Continue'
 $shell = New-Object -ComObject Shell.Application
 
 function Poll-Item {
-  param($name, $timeoutSec, $staleSec)
-  $deadline  = [DateTime]::Now.AddSeconds($timeoutSec)
-  $lastTick  = [DateTime]::Now
-  $staleSpan = [TimeSpan]::FromSeconds($staleSec)
+  param($destFolder, $name, $timeoutSec)
+  $deadline = [DateTime]::Now.AddSeconds($timeoutSec)
   while ([DateTime]::Now -lt $deadline) {
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds 5
     try {
-      $items = @($dest.Items() | ForEach-Object { $_.Name })
+      $items = @($destFolder.Items() | ForEach-Object { $_.Name })
       if ($items -contains $name) {
         Start-Sleep -Seconds 3
         return 'OK'
-      } else {
-        if (([DateTime]::Now - $lastTick) -gt $staleSpan) { return 'TIMEOUT' }
       }
     } catch {}
   }
   return 'TIMEOUT'
 }
 
-# BrowseForFolder 스크립트 시작 즉시 실행 (c7783d4 동일 방식)
 $dest = $shell.BrowseForFolder(HWND_PLACEHOLDER, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)
 if (-not $dest) { [Console]::WriteLine('CANCEL'); exit 0 }
 [Console]::WriteLine('READY')
@@ -169,33 +157,55 @@ while ($true) {
   $line = $line.Trim()
   if ($line -eq 'QUIT') { break }
 
-  if ($line -match '^SEND:(.+)$') {
-    $filePath = $Matches[1]
+  if ($line -match '^SEND:(\d+):(.+)$') {
+    $timeoutSec = [int]$Matches[1]
+    $filePath   = $Matches[2]
     try {
       $dest.CopyHere($filePath, 0)
       $name   = [System.IO.Path]::GetFileName($filePath)
-      $result = Poll-Item -name $name -timeoutSec 1800 -staleSec 120
+      $result = Poll-Item -destFolder $dest -name $name -timeoutSec $timeoutSec
       [Console]::WriteLine($result)
     } catch { [Console]::WriteLine("ERR:$_") }
+    continue
+  }
+
+  if ($line -match '^POLL:(\d+):(.+)$') {
+    $timeoutSec = [int]$Matches[1]
+    $filePath   = $Matches[2]
+    $name       = [System.IO.Path]::GetFileName($filePath)
+    $result     = Poll-Item -destFolder $dest -name $name -timeoutSec $timeoutSec
+    [Console]::WriteLine($result)
+    continue
   }
 }
 `.trim()
 
 /**
- * MTP 전송 세션 생성
- * PowerShell 프로세스를 시작하고 BrowseForFolder 결과를 기다린다.
+ * 파일 크기 기반 timeout 계산
+ *   최소 10분, 1GB당 7분, 10GB→70분, 20GB→140분
+ * @param {number} sizeBytes
+ * @returns {number} seconds
+ */
+function calcTimeoutSec(sizeBytes) {
+  const MIN_SEC  = 10 * 60
+  const sizeGB   = (sizeBytes || 0) / (1024 ** 3)
+  const bySizeSec = Math.ceil(sizeGB * 7 * 60)
+  return Math.max(MIN_SEC, bySizeSec)
+}
+
+/**
+ * MTP 순차 전송 세션 생성.
+ * BrowseForFolder 선택 후 SEND/POLL 명령을 개별 파일에 사용한다.
  *
- * @param {number} hwnd - Electron BrowserWindow 의 native HWND
+ * @param {number} hwnd
  * @returns {Promise<MtpSession|null>}  null = 취소
  */
 async function createMtpSession(hwnd) {
-  // HWND 를 스크립트에 리터럴로 삽입 (c7783d4 와 동일한 방식, 인젝션 불가 - 숫자만 허용)
-  const hwndVal  = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
-  const script   = MTP_SESSION_SCRIPT_TPL.replace('HWND_PLACEHOLDER', hwndVal.toString())
-  const encoded  = Buffer.from(script, 'utf16le').toString('base64')
+  const hwndVal = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
+  const script  = MTP_SESSION_SCRIPT_TPL.replace('HWND_PLACEHOLDER', hwndVal.toString())
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
 
-  // c7783d4 와 동일: windowsHide:true, -WindowStyle Hidden 없음
-  const proc    = spawn(
+  const proc = spawn(
     'powershell.exe',
     ['-STA', '-NoProfile', '-EncodedCommand', encoded],
     { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
@@ -224,31 +234,102 @@ async function createMtpSession(hwnd) {
 
   const send = (cmd) => { proc.stdin.write(cmd + '\n') }
 
-  // BrowseForFolder 는 스크립트 시작과 동시에 실행 → 결과를 기다리기만 한다
   const browseResult = await readLine()
-
-  if (browseResult === 'CANCEL') {
-    send('QUIT')
-    return null
-  }
-  if (browseResult !== 'READY') {
-    send('QUIT')
-    throw new Error(`폴더 선택 오류: ${browseResult}`)
-  }
+  if (browseResult === 'CANCEL') { send('QUIT'); return null }
+  if (browseResult !== 'READY')  { send('QUIT'); throw new Error(`폴더 선택 오류: ${browseResult}`) }
 
   return {
-    sendFile: async (filePath) => {
-      send(`SEND:${filePath}`)
-      const result = await readLine()
-      if (result === 'OK')      return 'ok'
-      if (result === 'TIMEOUT') return 'timeout'
+    /** CopyHere + Poll */
+    sendFile: async (filePath, timeoutSec) => {
+      send(`SEND:${timeoutSec}:${filePath}`)
+      const r = await readLine()
+      if (r === 'OK') return 'ok'
+      if (r === 'TIMEOUT') return 'timeout'
       return 'error'
     },
+    /** Poll only (CopyHere 없음) — "계속 대기" 용도 */
+    pollFile: async (filePath, timeoutSec) => {
+      send(`POLL:${timeoutSec}:${filePath}`)
+      const r = await readLine()
+      return r === 'OK' ? 'ok' : 'timeout'
+    },
     close: () => {
-      try { send('QUIT') } catch { /* 무시 */ }
+      try { send('QUIT') }    catch { /* 무시 */ }
       try { proc.stdin.end() } catch { /* 무시 */ }
     },
   }
 }
 
-module.exports = { copyFilesToClipboard, createMtpSession }
+/**
+ * MTP 안정 모드(일괄 전송) 세션.
+ * 모든 파일을 한 번에 CopyHere 로 전달하고 Windows 복사 창에 위임한다.
+ * 앱 내부 진행률 없음.
+ *
+ * @param {number}   hwnd
+ * @param {string[]} filePaths
+ * @returns {Promise<MtpBulkSession|null>}  null = 취소
+ */
+async function createMtpBulkSession(hwnd, filePaths) {
+  const hwndVal     = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
+  const tmpFileName = `acp-bulk-${crypto.randomBytes(6).toString('hex')}.txt`
+  const tmpFile     = path.join(os.tmpdir(), tmpFileName)
+  const bom         = Buffer.from([0xEF, 0xBB, 0xBF])
+  fs.writeFileSync(tmpFile, Buffer.concat([bom, Buffer.from(filePaths.join('\n'), 'utf8')]))
+
+  const tmpSafe = tmpFile.replace(/'/g, "''")
+  const script  = `
+$ErrorActionPreference = 'Continue'
+$shell = New-Object -ComObject Shell.Application
+$paths = @(Get-Content -LiteralPath '${tmpSafe}' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue
+$dest = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)
+if (-not $dest) { [Console]::WriteLine('CANCEL'); exit 0 }
+foreach ($p in $paths) { $dest.CopyHere($p, 0) }
+[Console]::WriteLine('STARTED')
+$reader = [System.Console]::In
+while ($true) {
+  $l = $reader.ReadLine()
+  if ($null -eq $l -or $l.Trim() -eq 'QUIT') { break }
+}
+`.trim()
+
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  const proc    = spawn(
+    'powershell.exe',
+    ['-STA', '-NoProfile', '-EncodedCommand', encoded],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
+  )
+
+  let stdoutBuf = ''
+  let closed    = false
+  proc.on('close', () => { closed = true })
+  proc.stderr.on('data', () => {})
+  proc.stdout.on('data', (d) => { stdoutBuf += d.toString('utf8') })
+
+  const firstLine = await new Promise((resolve, reject) => {
+    const check = () => {
+      if (closed && !stdoutBuf.includes('\n')) return reject(new Error('프로세스 종료'))
+      const idx = stdoutBuf.indexOf('\n')
+      if (idx !== -1) { resolve(stdoutBuf.slice(0, idx).trim()); stdoutBuf = stdoutBuf.slice(idx + 1) }
+      else setTimeout(check, 50)
+    }
+    check()
+  })
+
+  try { fs.unlinkSync(tmpFile) } catch { /* 무시 */ }
+
+  if (firstLine === 'CANCEL') {
+    try { proc.stdin.write('QUIT\n') } catch { /* 무시 */ }
+    try { proc.stdin.end() }           catch { /* 무시 */ }
+    return null
+  }
+
+  return {
+    close: () => {
+      try { proc.stdin.write('QUIT\n') } catch { /* 무시 */ }
+      try { proc.stdin.end() }           catch { /* 무시 */ }
+    },
+  }
+}
+
+module.exports = { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec }

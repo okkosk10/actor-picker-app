@@ -2,7 +2,8 @@
  * src/components/FileCopyModal.jsx
  * 파일 복사 모달
  *   - 클립보드 복사 (CF_HDROP + Preferred DropEffect)
- *   - MTP 직접 전송 (Shell.Application.CopyHere, 1개씩 순차 큐, 앱 내부 진행 UI)
+ *   - MTP 큐 전송 (1개씩 순차, needsCheck 일시정지 + 조치 UI)
+ *   - MTP 안정 모드 (Windows 복사 창 위임)
  */
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { message }                                           from 'antd'
@@ -13,6 +14,8 @@ const IDLE_STATE = {
   currentIndex:    0,
   total:           0,
   currentFileName: '',
+  fileSize:        0,
+  timeoutSec:      0,
   doneCount:       0,
   failedCount:     0,
   failedFiles:     [],
@@ -20,24 +23,26 @@ const IDLE_STATE = {
 }
 
 const STATUS_LABEL = {
-  idle:      '',
-  selecting: '📂 폴더 선택 중…',
-  copying:   '📤 전송 중…',
-  completed: '✅ 파일 완료',
-  failed:    '❌ 파일 실패',
-  timeout:   '⏱ 시간 초과',
-  cancelled: '취소됨',
-  done:      '🎉 전송 완료',
+  idle:        '',
+  selecting:   '📂 폴더 선택 중…',
+  copying:     '📤 전송 중…',
+  completed:   '✅ 파일 완료',
+  needsCheck:  '⚠️ 확인 필요 — 일시정지됨',
+  skipped:     '⏭ 건너뜀',
+  cancelled:   '취소됨',
+  done:        '🎉 전송 완료',
 }
 
 export default function FileCopyModal({ videos, selectedIds, onClose }) {
-  const overlayRef              = useRef(null)
-  const [copying,    setCopying]     = useState(false)
-  const [copyResult, setCopyResult]  = useState(null)
-  const [transfer,   setTransfer]    = useState(IDLE_STATE)
-  const [retryFiles, setRetryFiles]  = useState(null) // null = 초기, string[] = 재시도 대상
+  const overlayRef = useRef(null)
+  const [copying,    setCopying]    = useState(false)
+  const [copyResult, setCopyResult] = useState(null)
+  const [transfer,   setTransfer]   = useState(IDLE_STATE)
+  const [retryFiles, setRetryFiles] = useState(null)
+  const [bulkStatus, setBulkStatus] = useState(null) // null | 'running' | 'done' | 'cancelled'
 
-  const isTransferring = ['selecting', 'copying'].includes(transfer.status)
+  const isTransferring = ['selecting', 'copying', 'needsCheck'].includes(transfer.status)
+  const isNeedsCheck   = transfer.status === 'needsCheck'
 
   // ── 복사 대상 영상 결정 ────────────────────────────────────────
   const targetVideos = useMemo(() => {
@@ -50,7 +55,7 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
     )
   }, [videos, selectedIds])
 
-  const totalSize      = useMemo(() => targetVideos.reduce((s, v) => s + (v.size || 0), 0), [targetVideos])
+  const totalSize       = useMemo(() => targetVideos.reduce((s, v) => s + (v.size || 0), 0), [targetVideos])
   const isSelectionMode = selectedIds && selectedIds.size > 0
 
   // ── progress 이벤트 구독 ───────────────────────────────────────
@@ -92,7 +97,7 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
     }
   }
 
-  // ── MTP 직접 전송 (큐) ─────────────────────────────────────────
+  // ── MTP 큐 전송 ───────────────────────────────────────────────
   const handleDeviceTransfer = useCallback(async (paths) => {
     if (!paths || paths.length === 0 || isTransferring) return
     setTransfer(IDLE_STATE)
@@ -112,18 +117,47 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
 
   const handleRetry = () => {
     if (!retryFiles || retryFiles.length === 0 || isTransferring) return
-    // 실패 파일명 → 원본 경로 복원
     const retryPaths = retryFiles
-      .map((name) => targetVideos.find((v) => v.file_path?.endsWith(name) || v.file_path?.endsWith('\\' + name) || v.file_path?.endsWith('/' + name)))
+      .map((name) => targetVideos.find(
+        (v) => v.file_path?.endsWith(name) || v.file_path?.endsWith('\\' + name) || v.file_path?.endsWith('/' + name)
+      ))
       .filter(Boolean)
       .map((v) => v.file_path)
     handleDeviceTransfer(retryPaths)
   }
 
+  // ── needsCheck 액션 ────────────────────────────────────────────
+  const sendAction = (action) => {
+    const api = window.electronAPI ?? window.api
+    api?.sendDeviceCopyAction?.(action)
+  }
+
+  // ── MTP 안정 모드 (일괄 전송) ─────────────────────────────────
+  const handleBulkTransfer = async () => {
+    if (isTransferring || bulkStatus === 'running') return
+    setBulkStatus('running')
+    const api      = window.electronAPI ?? window.api
+    const paths    = targetVideos.map((v) => v.file_path)
+    try {
+      const result = await api.copyFilesToDeviceBulk(paths)
+      if (result.action === 'cancelled') {
+        setBulkStatus('cancelled')
+      } else if (result.success) {
+        setBulkStatus('done')
+      } else {
+        setBulkStatus(null)
+        message.error(result.error || '일괄 전송 시작 실패')
+      }
+    } catch (err) {
+      setBulkStatus(null)
+      message.error('안정 모드 오류: ' + err.message)
+    }
+  }
+
   // ── 전송 중 닫기 경고 ──────────────────────────────────────────
   const handleClose = () => {
     if (isTransferring) {
-      message.warning('전송 중에는 창을 닫을 수 없습니다. 전송이 완료될 때까지 기다려 주세요.')
+      message.warning('전송 중에는 창을 닫을 수 없습니다. 전송을 완료하거나 "전체 중단"을 누르세요.')
       return
     }
     onClose()
@@ -134,7 +168,9 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
     ? Math.round(((transfer.doneCount + transfer.failedCount) / transfer.total) * 100)
     : 0
 
-  const isDone = transfer.status === 'done'
+  const isDone       = transfer.status === 'done'
+  const timeoutLabel = transfer.timeoutSec ? `${Math.round(transfer.timeoutSec / 60)}분` : ''
+  const fileSizeLabel = transfer.fileSize  ? formatFileSize(transfer.fileSize) : ''
 
   return (
     <div
@@ -184,7 +220,6 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
               >
                 {copying ? '복사 중…' : `📋 클립보드에 복사 (${targetVideos.length}개 · ${formatFileSize(totalSize)})`}
               </button>
-
               {copyResult?.success && (
                 <div className="fcr-ok">
                   ✅ {copyResult.count}개 클립보드 등록 완료 — 탐색기에서 <kbd>Ctrl+V</kbd>로 붙여넣으세요.
@@ -197,12 +232,11 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
 
             <div className="file-copy-divider" />
 
-            {/* ── ② MTP 직접 전송 섹션 ───────────────────── */}
+            {/* ── ② MTP 큐 전송 섹션 ──────────────────────── */}
             <div className="file-copy-section">
               <p className="file-copy-hint file-copy-hint--mtp">
-                클립보드 붙여넣기가 휴대폰에서 안 될 때 사용합니다.
-                폴더 선택 창에서 <strong>이 PC &gt; 휴대폰 폴더</strong>를 선택하면
-                파일이 1개씩 순차 전송됩니다.
+                폴더 선택 창에서 <strong>이 PC &gt; 휴대폰 폴더</strong>를 선택하면 파일이 1개씩 순차 전송됩니다.
+                timeout 발생 시 자동으로 다음 파일로 넘어가지 않고 <strong>일시정지</strong>되며, 조치 버튼이 표시됩니다.
                 <br />
                 <strong>전송 중에는 휴대폰 연결을 해제하지 마세요.</strong>
               </p>
@@ -211,19 +245,20 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                 className="btn-file-copy-direct"
                 type="button"
                 onClick={handleStartTransfer}
-                disabled={isTransferring || isDone}
+                disabled={isTransferring || isDone || bulkStatus === 'running'}
               >
-                {isTransferring ? '전송 중… (폴더 선택 또는 전송 진행 중)' : `📱 휴대폰으로 전송 (${targetVideos.length}개)`}
+                {isTransferring ? '전송 진행 중…' : `📱 휴대폰으로 전송 (${targetVideos.length}개)`}
               </button>
 
-              {/* 전송 진행 UI */}
+              {/* ── 전송 진행 UI ─────────────────────────── */}
               {transfer.status !== 'idle' && (
-                <div className="mtp-transfer-box">
+                <div className={`mtp-transfer-box${isNeedsCheck ? ' mtp-transfer-box--paused' : ''}`}>
+
                   {/* 상태 헤더 */}
                   <div className="mtp-transfer-status">
                     <span className="mtp-status-label">{STATUS_LABEL[transfer.status] || transfer.status}</span>
                     <span className="mtp-status-count">
-                      성공 <strong>{transfer.doneCount}</strong> · 실패 <strong>{transfer.failedCount}</strong> / 전체 <strong>{transfer.total}</strong>
+                      성공 <strong>{transfer.doneCount}</strong> · 건너뜀 <strong>{transfer.failedCount}</strong> / 전체 <strong>{transfer.total}</strong>
                     </span>
                   </div>
 
@@ -238,10 +273,12 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                     </div>
                   )}
 
-                  {/* 현재 파일명 */}
+                  {/* 현재 파일 + 용량 */}
                   {transfer.currentFileName && (
                     <div className="mtp-current-file" title={transfer.currentFileName}>
                       {transfer.currentFileName}
+                      {fileSizeLabel && <span className="mtp-file-size"> ({fileSizeLabel})</span>}
+                      {timeoutLabel  && <span className="mtp-file-timeout"> · 최대 {timeoutLabel}</span>}
                     </div>
                   )}
 
@@ -250,28 +287,82 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                     <div className="mtp-message">{transfer.message}</div>
                   )}
 
-                  {/* 실패 파일 목록 */}
+                  {/* ── needsCheck 조치 패널 ──────────────── */}
+                  {isNeedsCheck && (
+                    <div className="mtp-needs-check-panel">
+                      <p className="mtp-needs-check-desc">
+                        대상 폴더에서 파일이 확인되지 않았습니다.<br />
+                        실제로 파일이 전송 중이거나 이미 완료됐을 수 있습니다. 조치를 선택해 주세요.
+                      </p>
+                      <div className="mtp-action-buttons">
+                        <button className="btn-mtp-action btn-mtp-continue" onClick={() => sendAction('continue')}>
+                          ⏳ 계속 대기
+                          <span className="btn-sub">추가 10분 폴링</span>
+                        </button>
+                        <button className="btn-mtp-action btn-mtp-retry" onClick={() => sendAction('retry')}>
+                          🔄 이 파일 재시도
+                          <span className="btn-sub">CopyHere 재실행</span>
+                        </button>
+                        <button className="btn-mtp-action btn-mtp-skip" onClick={() => sendAction('skip')}>
+                          ⏭ 이 파일 건너뛰기
+                          <span className="btn-sub">다음 파일로 이동</span>
+                        </button>
+                        <button className="btn-mtp-action btn-mtp-abort" onClick={() => sendAction('abort')}>
+                          ⛔ 전체 중단
+                          <span className="btn-sub">세션 종료</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 건너뜀 파일 목록 */}
                   {transfer.failedFiles.length > 0 && (
                     <details className="mtp-failed-list">
-                      <summary>⚠ 실패 파일 {transfer.failedFiles.length}개 (펼치기)</summary>
+                      <summary>⚠ 건너뜀 파일 {transfer.failedFiles.length}개 (펼치기)</summary>
                       <ul>
                         {transfer.failedFiles.map((f) => <li key={f} title={f}>{f}</li>)}
                       </ul>
                     </details>
                   )}
 
-                  {/* 재시도 버튼 */}
+                  {/* 전체 재시도 버튼 */}
                   {isDone && retryFiles && retryFiles.length > 0 && (
                     <button
-                      className="btn-mtp-retry"
+                      className="btn-mtp-action btn-mtp-retry-all"
                       type="button"
                       onClick={handleRetry}
                       disabled={isTransferring}
                     >
-                      🔄 실패 파일 {retryFiles.length}개 재시도
+                      🔄 건너뜀 파일 {retryFiles.length}개 재전송
                     </button>
                   )}
                 </div>
+              )}
+            </div>
+
+            <div className="file-copy-divider" />
+
+            {/* ── ③ 안정 모드 섹션 ────────────────────────── */}
+            <div className="file-copy-section">
+              <p className="file-copy-hint file-copy-hint--mtp">
+                <strong>안정 모드: Windows 복사 창에 맡기기</strong><br />
+                모든 파일을 한 번에 Windows Shell에 전달합니다.
+                앱 내부 진행률은 없으며 Windows 기본 복사 진행 창으로 확인하세요.
+                대용량 파일에서 큐 모드가 불안정할 때 사용하세요.
+              </p>
+              {bulkStatus === 'done' ? (
+                <div className="fcr-ok">✅ Windows 복사 창이 열렸습니다. 진행 상황을 그 창에서 확인하세요.</div>
+              ) : bulkStatus === 'cancelled' ? (
+                <div className="fcr-err">취소됨</div>
+              ) : (
+                <button
+                  className="btn-file-copy-bulk"
+                  type="button"
+                  onClick={handleBulkTransfer}
+                  disabled={isTransferring || bulkStatus === 'running'}
+                >
+                  {bulkStatus === 'running' ? '폴더 선택 중…' : `🪟 안정 모드로 전송 (${targetVideos.length}개)`}
+                </button>
               )}
             </div>
           </>
