@@ -1,7 +1,7 @@
 {
   "name": "actor-picker-app",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -10,10 +10,12 @@
     "start": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
     "dist": "vite build && electron-builder",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@eslint/js": "^10.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -39,13 +41,15 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json",
-      "!node_modules/**/*"
+      "package.json"
     ],
-    "npmRebuild": false,
+    "npmRebuild": true,
     "win": {
       "target": "portable",
       "icon": "build/icon.ico"
     }
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0"
   }
 }

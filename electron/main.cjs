@@ -1,110 +1,66 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+'use strict'
+
+/**
+ * electron/main.cjs
+ * Electron 메인 프로세스 엔트리 포인트
+ *
+ * 책임:
+ *   - BrowserWindow 생성 및 관리
+ *   - IPC 핸들러 등록 (ipc.cjs 에 위임)
+ *   - DB 초기화 (db.cjs 가 최초 getDb() 호출 시 자동 처리)
+ *   - 앱 종료 시 DB 연결 정리
+ */
+
+const { app, BrowserWindow } = require('electron')
 const path = require('path')
-const fs = require('fs')
+const { registerIpcHandlers } = require('./ipc.cjs')
+const { closeDb }             = require('./db.cjs')
 
-const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi'])
-
-// 폴더를 재귀적으로 스캔해 영상 파일 목록 반환
-function scanVideos(dir) {
-  let results = []
-  let entries
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return results
-  }
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      results = results.concat(scanVideos(fullPath))
-    } else if (entry.isFile()) {
-      const ext = path.extname(entry.name).toLowerCase()
-      if (VIDEO_EXTS.has(ext)) {
-        results.push({ fileName: entry.name, fullPath })
-      }
-    }
-  }
-  return results
-}
-
-// 파일명에서 배우명(괄호 안)과 품번(괄호 앞) 추출
-function parseFileName(fileName) {
-  const match = fileName.match(/^(.+?)\((.+?)\)/)
-  if (!match) return null
-  return {
-    code: match[1].trim(),
-    actor: match[2].trim(),
-  }
-}
-
-ipcMain.handle('scan-folder', async (_event, folderPath) => {
-  const videos = scanVideos(folderPath)
-
-  // 배우별 그룹화
-  const groups = {}
-  for (const video of videos) {
-    const parsed = parseFileName(video.fileName)
-    if (!parsed) continue
-    const { actor, code } = parsed
-    if (!groups[actor]) groups[actor] = []
-    groups[actor].push({ actor, code, fileName: video.fileName, fullPath: video.fullPath })
-  }
-
-  // 배우별 랜덤 1개 선택
-  const pickedList = Object.values(groups).map((items) => {
-    const idx = Math.floor(Math.random() * items.length)
-    return items[idx]
-  })
-
-  const searchText = pickedList.map((p) => p.code).join(' OR ')
-
-  return {
-    totalFiles: videos.length,
-    actorCount: Object.keys(groups).length,
-    pickedCount: pickedList.length,
-    searchText,
-    pickedList,
-  }
-})
-
+/**
+ * 메인 BrowserWindow를 생성한다.
+ * 개발 환경: Vite dev server (http://localhost:5173) 로드
+ * 배포 환경: dist/index.html 로드
+ */
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    width:  1200,
+    height: 800,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
+      preload:          path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,   // 보안: Renderer에서 Node.js API 직접 접근 차단
+      nodeIntegration:  false,  // 보안: Renderer에서 require() 사용 불가
     },
   })
 
   const isDev = !app.isPackaged
 
   if (isDev) {
+    // 개발 환경: Vite HMR dev server
     win.loadURL('http://localhost:5173')
-    win.webContents.openDevTools() // 개발 환경에서만 열기
+    win.webContents.openDevTools()
   } else {
+    // 배포 환경: 빌드된 정적 파일
     const indexPath = path.join(__dirname, '..', 'dist', 'index.html')
     win.loadFile(indexPath)
   }
 }
 
-ipcMain.handle('select-folder', async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ['openDirectory'],
-  })
-  if (result.canceled || result.filePaths.length === 0) return null
-  return result.filePaths[0]
-})
-
+// ── 앱 초기화 ────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  // IPC 핸들러 등록 (DB는 첫 번째 IPC 호출 시 자동 초기화)
+  registerIpcHandlers()
   createWindow()
 
+  // macOS: Dock 클릭 시 창이 없으면 새로 생성
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
+// ── 앱 종료 처리 ─────────────────────────────────────────────────
 app.on('window-all-closed', () => {
+  // DB 연결 안전하게 닫기
+  closeDb()
   if (process.platform !== 'darwin') app.quit()
 })
+
