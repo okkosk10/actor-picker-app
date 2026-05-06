@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── 동영상 검색 ───────────────────────────────────────────────
   // @param query   {string}
-  // @param options {{ sortBy?: string, hideMissing?: boolean }}
+  // @param options {{ sortBy?: string, hideMissing?: boolean, currentFolder?: string|null }}
   // 반환: Video[]
   searchVideos: (query, options) =>
     ipcRenderer.invoke('search-videos', query, options),
@@ -63,7 +63,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── 랜덤 추천 ────────────────────────────────────────────────
   // @param query   {string}
-  // @param options {{ hideMissing?: boolean }}
+  // @param options {{ hideMissing?: boolean, currentFolder?: string|null }}
   // 반환: { totalFiles, actorCount, pickedCount, searchText, pickedList }
   randomPick: (query, options) =>
     ipcRenderer.invoke('random-pick', query, options),
@@ -71,20 +71,29 @@ contextBridge.exposeInMainWorld('api', {
   // ── 배우별 1개 랜덤 추출 ─────────────────────────────────────
   // grade='삭제요망'/missing/deleted 및 code·actor_name 없는 항목 제외
   // @param query   {string}  - 검색어 (빈 문자열이면 전체)
-  // @param options {{ hideMissing?: boolean }}
+  // @param options {{ hideMissing?: boolean, currentFolder?: string|null }}
   // 반환: { count, orText, items }
   pickOnePerActor: (query, options) =>
     ipcRenderer.invoke('pick-one-per-actor', query, options),
 
+  // ── 스캔된 폴더 목록 조회 ────────────────────────────────────
+  // 반환: { library: FolderStat, folders: FolderStat[] }
+  //   library.total / recommended_count / delete_count : 전체 라이브러리 합계
+  //   folders[i].root_path / total / recommended_count / delete_count
+  getFolderList: () =>
+    ipcRenderer.invoke('get-folder-list'),
+
   // ── 삭제요망 파일 목록 조회 ───────────────────────────────────
+  // @param currentFolder {string|null} - 폴더 필터 (null이면 전체)
   // 반환: { total, totalSize, items }
-  getDeleteCandidates: () =>
-    ipcRenderer.invoke('get-delete-candidates'),
+  getDeleteCandidates: (currentFolder) =>
+    ipcRenderer.invoke('get-delete-candidates', currentFolder),
 
   // ── 삭제요망 파일 일괄 삭제 ───────────────────────────────────
   // grade='삭제요망' 파일만 삭제, 결과 리포트 반환
+  // @param currentFolder {string|null} - 폴더 필터 (null이면 전체)
   // 반환: { total, deleted, failed, failedItems }
-  deleteGradeTargets: () =>
-    ipcRenderer.invoke('delete-grade-targets'),
+  deleteGradeTargets: (currentFolder) =>
+    ipcRenderer.invoke('delete-grade-targets', currentFolder),
 })
 

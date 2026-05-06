@@ -74,6 +74,14 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_videos_recommended ON videos (recommended);
     CREATE INDEX IF NOT EXISTS idx_videos_rating      ON videos (rating);
     CREATE INDEX IF NOT EXISTS idx_videos_grade       ON videos (grade);
+    CREATE INDEX IF NOT EXISTS idx_videos_folder      ON videos (folder_path);
+
+    -- 사용자가 스캔한 루트 폴더 목록 (폴더 패널용)
+    CREATE TABLE IF NOT EXISTS scanned_roots (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      root_path  TEXT    NOT NULL UNIQUE,
+      scanned_at TEXT    DEFAULT CURRENT_TIMESTAMP
+    );
   `)
 
   // ── 기존 DB 마이그레이션: 새 컬럼 추가 ────────────────────────

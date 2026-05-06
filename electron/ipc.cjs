@@ -59,6 +59,32 @@ function getSortClause(key) {
   return SORT_CLAUSES[key] || SORT_CLAUSES.created_desc
 }
 
+// ── LIKE 이스케이프 헬퍼 ───────────────────────────────────────
+// SQLite LIKE 에서 특수 의미를 갖는 %, _, ! 를 '!' 로 이스케이프한다.
+// Windows 경로에서 흔히 사용하는 \는 SQLite LIKE의 특수문자가 아니므로 안전하다.
+function escapeLike(str) {
+  return str.replace(/!/g, '!!').replace(/%/g, '!%').replace(/_/g, '!_')
+}
+
+/**
+ * currentFolder 기반 SQL 폴더 필터 조건과 파라미터를 반환한다.
+ *
+ * currentFolder가 null이면 전체 조회 (빈 clause/params 반환).
+ * Windows(\) 및 Unix(/) 경로 구분자를 모두 커버한다.
+ *
+ * @param {string|null} currentFolder - 필터링할 루트 폴더 경로
+ * @returns {{ clause: string, params: string[] }}
+ */
+function buildFolderFilter(currentFolder) {
+  if (!currentFolder) return { clause: '', params: [] }
+  const safe = escapeLike(currentFolder)
+  return {
+    // 정확 일치(root 디렉토리 파일) + Windows 하위(\) + Unix 하위(/) 패턴
+    clause: `AND (folder_path = ? OR folder_path LIKE ? ESCAPE '!' OR folder_path LIKE ? ESCAPE '!')`,
+    params: [currentFolder, safe + '\\%', safe + '/%'],
+  }
+}
+
 /**
  * 모든 IPC 핸들러를 등록한다.
  * app.whenReady() 콜백 내부에서 호출해야 한다.
@@ -152,6 +178,13 @@ function registerIpcHandlers() {
       }
     })()
 
+    // ③ 스캔한 루트 폴더를 scanned_roots 테이블에 기록 (폴더 패널용)
+    db.prepare(`
+      INSERT INTO scanned_roots (root_path, scanned_at)
+      VALUES (?, CURRENT_TIMESTAMP)
+      ON CONFLICT(root_path) DO UPDATE SET scanned_at = CURRENT_TIMESTAMP
+    `).run(folderPath)
+
     return {
       totalFiles:    files.length,
       missingCount,
@@ -160,12 +193,70 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
+  // 스캔된 폴더 목록 조회 (get-folder-list)
+  //
+  // scanned_roots 테이블의 루트 폴더별로 아래 통계를 반환한다.
+  //   total             : 해당 루트 하위 전체 영상 수 (deleted 제외)
+  //   recommended_count : 추천작 수
+  //   delete_count      : 삭제요망(grade) 중 실제 파일 있는 수
+  //
+  // 반환: { library: {...}, folders: FolderStat[] }
+  //   library : 전체 라이브러리 합계 통계
+  //   folders : 루트 폴더별 통계 배열 (root_path 오름차순)
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-folder-list', async () => {
+    const db = getDb()
+
+    // 전체 라이브러리 통계 (status='deleted' 제외)
+    const library = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN recommended = 1 THEN 1 ELSE 0 END)                                                                           AS recommended_count,
+        SUM(CASE WHEN grade = '삭제요망' AND status != 'missing' AND status != 'deleted' THEN 1 ELSE 0 END) AS delete_count
+      FROM videos
+      WHERE status != 'deleted'
+    `).get()
+
+    // 루트 폴더 목록 (scanned_roots 테이블)
+    const roots = db.prepare(`
+      SELECT root_path, scanned_at FROM scanned_roots ORDER BY root_path ASC
+    `).all()
+
+    // 각 루트별 통계 (folder_path 하위 파일 집계)
+    const countStmt = db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN recommended = 1 THEN 1 ELSE 0 END)                                                                           AS recommended_count,
+        SUM(CASE WHEN grade = '삭제요망' AND status != 'missing' AND status != 'deleted' THEN 1 ELSE 0 END) AS delete_count
+      FROM videos
+      WHERE status != 'deleted'
+        AND (folder_path = ? OR folder_path LIKE ? ESCAPE '!' OR folder_path LIKE ? ESCAPE '!')
+    `)
+
+    const folders = roots.map((row) => {
+      const safe  = escapeLike(row.root_path)
+      const stats = countStmt.get(row.root_path, safe + '\\%', safe + '/%')
+      return {
+        root_path:         row.root_path,
+        scanned_at:        row.scanned_at,
+        total:             stats.total,
+        recommended_count: stats.recommended_count,
+        delete_count:      stats.delete_count,
+      }
+    })
+
+    return { library, folders }
+  })
+
+  // ══════════════════════════════════════════════════════════════
   // 동영상 검색
   //
   // @param query  {string}  - 검색 키워드 (빈 문자열 = 전체)
-  // @param options {object} - { sortBy: string, hideMissing: boolean }
-  //   sortBy      : SORT_CLAUSES 키 (기본: 'created_desc')
-  //   hideMissing : true 이면 status='missing' 제외 (기본: true)
+  // @param options {object} - {
+  //   sortBy:        string  - SORT_CLAUSES 키 (기본: 'created_desc')
+  //   hideMissing:   boolean - true이면 status='missing' 제외 (기본: true)
+  //   currentFolder: string|null - 폴더 필터 (null이면 전체 라이브러리)
+  // }
   //
   // 반환: Video[]
   // ══════════════════════════════════════════════════════════════
@@ -177,12 +268,15 @@ function registerIpcHandlers() {
     // 삭제 파일 숨김 조건 (hideMissing=true 이면 missing 제외)
     const missingFilter = hideMissing ? `AND status != 'missing'` : ''
 
+    // 폴더 필터 (currentFolder가 null이면 전체 조회)
+    const { clause: folderClause, params: folderParams } = buildFolderFilter(options.currentFolder || null)
+
     if (!query || query.trim() === '') {
       return db.prepare(`
         SELECT * FROM videos
-        WHERE 1=1 ${missingFilter}
+        WHERE 1=1 ${missingFilter} ${folderClause}
         ORDER BY ${orderClause}
-      `).all()
+      `).all(...folderParams)
     }
 
     const q = `%${query.trim()}%`
@@ -194,9 +288,9 @@ function registerIpcHandlers() {
          OR actor_name LIKE ?
          OR memo       LIKE ?
          OR tags       LIKE ?
-      ) ${missingFilter}
+      ) ${missingFilter} ${folderClause}
       ORDER BY ${orderClause}
-    `).all(q, q, q, q, q)
+    `).all(q, q, q, q, q, ...folderParams)
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -304,6 +398,7 @@ function registerIpcHandlers() {
   // 랜덤 추천 (DB 기반)
   //
   // - hideMissing=true 이면 missing 파일 제외
+  // - currentFolder 지정 시 해당 폴더 하위만 대상
   // - 배우별 그룹화 후 각 그룹에서 랜덤 1개 선택
   //
   // 반환: { totalFiles, actorCount, pickedCount, searchText, pickedList }
@@ -312,19 +407,20 @@ function registerIpcHandlers() {
     const db          = getDb()
     const hideMissing = options.hideMissing !== false
     const missingFilter = hideMissing ? `AND status != 'missing'` : ''
+    const { clause: folderClause, params: folderParams } = buildFolderFilter(options.currentFolder || null)
 
     let videos
     if (!query || query.trim() === '') {
       videos = db.prepare(`
-        SELECT * FROM videos WHERE 1=1 ${missingFilter}
-      `).all()
+        SELECT * FROM videos WHERE 1=1 ${missingFilter} ${folderClause}
+      `).all(...folderParams)
     } else {
       const q = `%${query.trim()}%`
       videos = db.prepare(`
         SELECT * FROM videos
         WHERE (file_name LIKE ? OR code LIKE ? OR actor_name LIKE ? OR memo LIKE ? OR tags LIKE ?)
-          ${missingFilter}
-      `).all(q, q, q, q, q)
+          ${missingFilter} ${folderClause}
+      `).all(q, q, q, q, q, ...folderParams)
     }
 
     if (videos.length === 0) {
@@ -367,7 +463,7 @@ function registerIpcHandlers() {
   //   - status = 'missing' 또는 'deleted'
   //
   // @param query   {string}  - 검색어 (빈 문자열이면 전체)
-  // @param options {{ hideMissing?: boolean }} - 검색 필터 옵션
+  // @param options {{ hideMissing?: boolean, currentFolder?: string|null }}
   //
   // 반환: { count, orText, items }
   //   count   : 선택된 배우 수 (= 추출된 영상 수)
@@ -376,6 +472,7 @@ function registerIpcHandlers() {
   // ══════════════════════════════════════════════════════════════
   ipcMain.handle('pick-one-per-actor', async (_event, query, options = {}) => {
     const db = getDb()
+    const { clause: folderClause, params: folderParams } = buildFolderFilter(options.currentFolder || null)
 
     // 기본 제외 조건: code/actor_name 필수, 삭제요망·missing·deleted 제외
     const baseFilter = `
@@ -388,10 +485,10 @@ function registerIpcHandlers() {
 
     let videos
     if (!query || query.trim() === '') {
-      // 쿼리 없으면 전체 대상
+      // 쿼리 없으면 전체 대상 (폴더 필터 적용)
       videos = db.prepare(`
-        SELECT * FROM videos WHERE ${baseFilter}
-      `).all()
+        SELECT * FROM videos WHERE ${baseFilter} ${folderClause}
+      `).all(...folderParams)
     } else {
       // 쿼리 있으면 file_name / code / actor_name / memo / tags LIKE 검색
       const q = `%${query.trim()}%`
@@ -399,7 +496,8 @@ function registerIpcHandlers() {
         SELECT * FROM videos
         WHERE ${baseFilter}
           AND (file_name LIKE ? OR code LIKE ? OR actor_name LIKE ? OR memo LIKE ? OR tags LIKE ?)
-      `).all(q, q, q, q, q)
+          ${folderClause}
+      `).all(q, q, q, q, q, ...folderParams)
     }
 
     if (videos.length === 0) {
@@ -430,21 +528,25 @@ function registerIpcHandlers() {
   // grade = '삭제요망' 이고 아직 삭제되지 않은 (status != missing/deleted)
   // 파일 목록을 반환한다.
   //
+  // @param currentFolder {string|null} - 폴더 필터 (null이면 전체 라이브러리)
+  //
   // 반환: { total, totalSize, items }
   //   total     : 대상 파일 수
   //   totalSize : 총 파일 크기 (bytes)
   //   items     : Video 레코드 배열
   // ══════════════════════════════════════════════════════════════
-  ipcMain.handle('get-delete-candidates', async () => {
+  ipcMain.handle('get-delete-candidates', async (_event, currentFolder) => {
     const db = getDb()
+    const { clause: folderClause, params: folderParams } = buildFolderFilter(currentFolder || null)
 
     const items = db.prepare(`
       SELECT * FROM videos
       WHERE grade = '삭제요망'
         AND status != 'missing'
         AND status != 'deleted'
+        ${folderClause}
       ORDER BY size DESC
-    `).all()
+    `).all(...folderParams)
 
     const totalSize = items.reduce((sum, r) => sum + (r.size || 0), 0)
 
@@ -457,8 +559,10 @@ function registerIpcHandlers() {
   // grade = '삭제요망' 인 파일을 실제 디스크에서 삭제하고
   // DB status를 'deleted' 로 업데이트한다.
   //
+  // @param currentFolder {string|null} - 폴더 필터 (null이면 전체 라이브러리)
+  //
   // 보안:
-  //   - grade = '삭제요망' 인 파일만 대상
+  //   - grade = '삭제요망' 인 파일만 대상 (재검증)
   //   - fs.existsSync로 파일 존재 확인 후 삭제
   //   - 파일 삭제 실패 시 전체 중단 없이 failedItems에 기록
   //   - grade != '삭제요망' 파일은 절대 삭제하지 않음
@@ -469,16 +573,18 @@ function registerIpcHandlers() {
   //   failed      : 삭제 실패 수
   //   failedItems : [{ file_path, reason }]
   // ══════════════════════════════════════════════════════════════
-  ipcMain.handle('delete-grade-targets', async () => {
+  ipcMain.handle('delete-grade-targets', async (_event, currentFolder) => {
     const db = getDb()
+    const { clause: folderClause, params: folderParams } = buildFolderFilter(currentFolder || null)
 
-    // 삭제 대상 재조회 (grade 조건 다시 검증 — 보안)
+    // 삭제 대상 재조회 (grade 조건 다시 검증 — 보안) + 폴더 필터
     const targets = db.prepare(`
       SELECT * FROM videos
       WHERE grade = '삭제요망'
         AND status != 'missing'
         AND status != 'deleted'
-    `).all()
+        ${folderClause}
+    `).all(...folderParams)
 
     let deleted = 0
     let failed  = 0

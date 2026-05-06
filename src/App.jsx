@@ -3,8 +3,9 @@
  * 최상위 컴포넌트 — 상태 연결과 레이아웃만 담당
  *
  * 레이아웃:
- *   header → SearchBar → (scan-info) → (error) → app-content[VideoList | DetailPanel]
- *   RandomPanel 모달 (필요 시)
+ *   header → SearchBar → (scan-info) → (error)
+ *   → app-content[ FolderPanel | VideoList | DetailPanel ]
+ *   RandomPanel 모달, ActorPickPanel 모달, DeleteCleanupModal 모달
  */
 import { useState } from 'react'
 import { Alert, message } from 'antd'
@@ -17,14 +18,16 @@ import DetailPanel           from './components/DetailPanel.jsx'
 import RandomPanel           from './components/RandomPanel.jsx'
 import ActorPickPanel        from './components/ActorPickPanel.jsx'
 import DeleteCleanupModal    from './components/DeleteCleanupModal.jsx'
+import FolderPanel           from './components/FolderPanel.jsx'
 
 export default function App() {
-  // ── 동영상 목록 검색/정렬 상태 (hook) ─────────────────────────
+  // ── 동영상 목록 검색/정렬/폴더 상태 (hook) ─────────────────────
   const {
     videos, setVideos,
     searchQuery, search,
     sortBy, changeSort,
     hideMissing, toggleHideMissing,
+    currentFolder, changeFolder,
     loading, error, setError,
     refresh,
   } = useVideoSearch()
@@ -40,6 +43,8 @@ export default function App() {
   const [actorPicking,     setActorPicking]     = useState(false)
   // 삭제요망 정리 모달 표시 여부
   const [showDeleteModal,  setShowDeleteModal]  = useState(false)
+  // FolderPanel 새로고침 트리거 (스캔/삭제 완료 시 증가)
+  const [folderRefreshKey, setFolderRefreshKey] = useState(0)
 
   // ── 폴더 선택 ─────────────────────────────────────────────────
   const handleSelectFolder = async () => {
@@ -63,7 +68,9 @@ export default function App() {
     try {
       const result = await window.api.scanFolder(folderPath)
       setScanInfo(result)
-      refresh()
+      // 스캔 완료: 해당 폴더 보기로 전환 + 폴더 패널 새로고침
+      changeFolder(result.scannedFolder)
+      setFolderRefreshKey((k) => k + 1)
     } catch (e) {
       setError('스캔 중 오류: ' + e.message)
     } finally {
@@ -71,21 +78,27 @@ export default function App() {
     }
   }
 
-  // ── 랜덤 추천 ─────────────────────────────────────────────────
+  // ── 랜덤 추천 (현재 폴더 기준) ────────────────────────────────
   const handleRandomPick = async () => {
     try {
-      const result = await window.api.randomPick(searchQuery, { hideMissing })
+      const result = await window.api.randomPick(searchQuery, {
+        hideMissing,
+        currentFolder,
+      })
       setRandomResult(result)
     } catch (e) {
       setError('랜덤 추천 실패: ' + e.message)
     }
   }
 
-  // ── 배우별 1개 추출 ───────────────────────────────────────────
+  // ── 배우별 1개 추출 (현재 폴더 기준) ──────────────────────────
   const handleActorPick = async () => {
     setActorPicking(true)
     try {
-      const result = await window.api.pickOnePerActor(searchQuery, { hideMissing })
+      const result = await window.api.pickOnePerActor(searchQuery, {
+        hideMissing,
+        currentFolder,
+      })
       setActorPickResult(result)
     } catch (e) {
       setError('배우별 추출 실패: ' + e.message)
@@ -94,7 +107,7 @@ export default function App() {
     }
   }
 
-  // ── 검색 결과 OR문 복사 ────────────────────────────────────────
+  // ── 검색 결과 OR문 복사 (현재 화면 기준) ──────────────────────
   const handleCopyOrText = async () => {
     const validVideos = videos.filter(
       (v) =>
@@ -114,11 +127,22 @@ export default function App() {
     message.success(`${codes.length}개 품번 OR문을 복사했습니다.`)
   }
 
+  // ── 삭제 완료 후 처리 ─────────────────────────────────────────
+  const handleDeleted = () => {
+    refresh()
+    setFolderRefreshKey((k) => k + 1) // 폴더 패널 통계 갱신
+  }
+
   // ── 메타 업데이트 동기화 ──────────────────────────────────────
   const handleVideoUpdated = (updated) => {
     setVideos((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
     setSelectedVideo(updated)
   }
+
+  // ── 현재 보기 레이블 ──────────────────────────────────────────
+  const viewLabel = currentFolder
+    ? currentFolder
+    : '전체 라이브러리'
 
   // ──────────────────────────────────────────────────────────────
   return (
@@ -189,6 +213,12 @@ export default function App() {
         count={videos.length}
       />
 
+      {/* 현재 보기 기준 표시 바 */}
+      <div className="view-indicator">
+        <span className="view-indicator-label">현재 보기</span>
+        <span className="view-indicator-path" title={viewLabel}>{viewLabel}</span>
+      </div>
+
       {/* 스캔 결과 알림 — closable Alert (X 닫기 + 신규 스캔 시 재표시) */}
       {scanInfo && (
         <Alert
@@ -222,8 +252,17 @@ export default function App() {
         />
       )}
 
-      {/* 메인 콘텐츠 (2컬럼) */}
+      {/* 메인 콘텐츠 (폴더패널 + 목록 + 상세) */}
       <div className="app-content">
+
+        {/* 좌측: 스캔 폴더 목록 패널 */}
+        <FolderPanel
+          currentFolder={currentFolder}
+          onSelectFolder={changeFolder}
+          refreshKey={folderRefreshKey}
+        />
+
+        {/* 중앙: 영상 목록 */}
         <VideoList
           videos={videos}
           selectedId={selectedVideo?.id}
@@ -231,6 +270,7 @@ export default function App() {
           loading={loading}
         />
 
+        {/* 우측: 상세 정보 */}
         <div className="detail-panel-wrap">
           {selectedVideo ? (
             <DetailPanel
@@ -264,11 +304,12 @@ export default function App() {
         />
       )}
 
-      {/* 삭제요망 정리 모달 */}
+      {/* 삭제요망 정리 모달 (현재 폴더 기준) */}
       {showDeleteModal && (
         <DeleteCleanupModal
           onClose={() => setShowDeleteModal(false)}
-          onDeleted={refresh}
+          onDeleted={handleDeleted}
+          currentFolder={currentFolder}
         />
       )}
     </div>

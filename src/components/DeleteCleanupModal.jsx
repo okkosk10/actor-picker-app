@@ -3,8 +3,9 @@
  * 삭제요망 파일 일괄 삭제 확인 모달
  *
  * Props:
- *   onClose   {Function} - 모달 닫기 콜백
- *   onDeleted {Function} - 삭제 완료 후 목록 새로고침 콜백
+ *   onClose       {Function}    - 모달 닫기 콜백
+ *   onDeleted     {Function}    - 삭제 완료 후 목록 새로고침 콜백
+ *   currentFolder {string|null} - 폴더 필터 (null이면 전체 라이브러리)
  *
  * 흐름:
  *   1. 마운트 시 getDeleteCandidates API 호출 → 대상 목록 표시
@@ -31,7 +32,7 @@ const STEP = {
   ERROR:    'error',     // 조회/삭제 오류
 }
 
-export default function DeleteCleanupModal({ onClose, onDeleted }) {
+export default function DeleteCleanupModal({ onClose, onDeleted, currentFolder }) {
   const overlayRef = useRef(null)
 
   // ── 단계별 상태 ────────────────────────────────────────────
@@ -45,7 +46,7 @@ export default function DeleteCleanupModal({ onClose, onDeleted }) {
     let mounted = true
     ;(async () => {
       try {
-        const data = await window.api.getDeleteCandidates()
+        const data = await window.api.getDeleteCandidates(currentFolder)
         if (!mounted) return
         if (data.total === 0) {
           setStep(STEP.EMPTY)
@@ -66,7 +67,7 @@ export default function DeleteCleanupModal({ onClose, onDeleted }) {
   const handleDelete = async () => {
     setStep(STEP.DELETING)
     try {
-      const data = await window.api.deleteGradeTargets()
+      const data = await window.api.deleteGradeTargets(currentFolder)
       setResult(data)
       setStep(STEP.RESULT)
     } catch (e) {
