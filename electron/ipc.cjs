@@ -107,7 +107,10 @@ function registerIpcHandlers() {
   // ══════════════════════════════════════════════════════════════
   // 폴더 재귀 스캔 + DB upsert + 삭제 파일 감지
   //
-  // ① 스캔된 파일을 DB에 upsert (missing → normal 자동 복구)
+  // ① 스캔된 파일을 DB에 upsert
+  //    - 신규 파일  : INSERT → tags 자동 생성 (폴더명 + 배우명)
+  //    - 기존 파일  : UPDATE → 파일 시스템 컬럼만 갱신, tags 절대 덮어쓰지 않음
+  //    - missing → normal 자동 복구
   // ② 해당 폴더 하위 DB 레코드 중 스캔에서 누락된 파일을 fs 로 재확인
   //    → 실제로 없으면 status = 'missing' 처리
   //
@@ -117,15 +120,47 @@ function registerIpcHandlers() {
     const db    = getDb()
     const files = await scanFolder(folderPath)
 
-    // ① INSERT ... ON CONFLICT: 파일 시스템 컬럼만 UPDATE, 사용자 데이터 보존
-    //    이미 'missing' 이었던 파일이 다시 발견되면 status → 'normal' 으로 복구
+    /**
+     * 신규 파일 INSERT 시 사용할 기본 tags를 생성한다.
+     *
+     * 자동 태그 정책:
+     *   - "최초 등록 보조 기능"으로만 사용
+     *   - 폴더 마지막 세그먼트 + actor_name 으로 구성
+     *   - 중복 제거, 빈 값 제외
+     *
+     * 기존 파일 재스캔 시에는 이 함수를 사용하지 않는다.
+     * (tags는 사용자 데이터로 취급 → ON CONFLICT 시 업데이트 제외)
+     *
+     * @param {object} video - scanner.cjs 가 반환한 파일 메타데이터
+     * @returns {string}     - 콤마 + 공백으로 구분된 태그 문자열
+     */
+    function createDefaultTags(video) {
+      // path.basename: Windows(\) / Unix(/) 양쪽 처리
+      const folderName = path.basename(video.folder_path || '')
+      const actorName  = video.actor_name || ''
+      return Array.from(
+        new Set([folderName, actorName].filter(Boolean))
+      ).join(', ')
+    }
+
+    // ① INSERT ... ON CONFLICT: 신규 vs 기존 동작 분리
+    //
+    //   신규 파일 (INSERT 실행):
+    //     - tags = createDefaultTags(video)  ← 자동 태그 최초 설정
+    //     - 모든 컬럼 초기화
+    //
+    //   기존 파일 (ON CONFLICT DO UPDATE 실행):
+    //     - 파일 시스템 컬럼만 갱신 (file_name, folder_path, extension, size, modified_at, code, actor_name)
+    //     - tags 는 업데이트하지 않음 → 사용자가 수정한 태그 유지
+    //     - memo / rating / recommended / grade 도 보존 (SET 절 미포함)
+    //     - missing → normal 자동 복구
     const upsert = db.prepare(`
       INSERT INTO videos
         (file_name, file_path, folder_path, extension, size, modified_at,
-         code, actor_name, updated_at)
+         code, actor_name, tags, updated_at)
       VALUES
         (@file_name, @file_path, @folder_path, @extension, @size, @modified_at,
-         @code, @actor_name, CURRENT_TIMESTAMP)
+         @code, @actor_name, @tags, CURRENT_TIMESTAMP)
       ON CONFLICT(file_path) DO UPDATE SET
         file_name   = excluded.file_name,
         folder_path = excluded.folder_path,
@@ -134,6 +169,7 @@ function registerIpcHandlers() {
         modified_at = excluded.modified_at,
         code        = excluded.code,
         actor_name  = excluded.actor_name,
+        -- tags 컬럼은 여기에 포함하지 않음 → 사용자 데이터 보존
         -- 이전에 missing 이었으면 normal 로 복구, 그 외 상태는 보존
         status      = CASE WHEN status = 'missing' THEN 'normal' ELSE status END,
         updated_at  = CURRENT_TIMESTAMP
@@ -141,7 +177,11 @@ function registerIpcHandlers() {
 
     // 트랜잭션으로 일괄 upsert (수천 건도 빠르게 처리)
     db.transaction((fileList) => {
-      for (const file of fileList) upsert.run(file)
+      for (const file of fileList) {
+        // 신규 INSERT 시 tags 자동 생성값을 파라미터로 전달한다.
+        // ON CONFLICT DO UPDATE 경로에서는 이 값이 무시되므로 안전하다.
+        upsert.run({ ...file, tags: createDefaultTags(file) })
+      }
     })(files)
 
     // ② 삭제 파일 감지: 해당 폴더 하위 DB 레코드 vs 스캔 결과 비교
