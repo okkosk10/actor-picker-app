@@ -7,7 +7,7 @@
  *   RandomPanel 모달 (필요 시)
  */
 import { useState } from 'react'
-import { Alert } from 'antd'
+import { Alert, message } from 'antd'
 import './App.css'
 
 import { useVideoSearch }    from './hooks/useVideoSearch.js'
@@ -94,6 +94,26 @@ export default function App() {
     }
   }
 
+  // ── 검색 결과 OR문 복사 ────────────────────────────────────────
+  const handleCopyOrText = async () => {
+    const validVideos = videos.filter(
+      (v) =>
+        v.code &&
+        v.status !== 'missing' &&
+        v.status !== 'deleted' &&
+        v.grade !== '삭제요망',
+    )
+    const codes = Array.from(new Set(validVideos.map((v) => v.code)))
+
+    if (codes.length === 0) {
+      message.warning('복사할 품번이 없습니다.')
+      return
+    }
+
+    await navigator.clipboard.writeText(codes.join(' OR '))
+    message.success(`${codes.length}개 품번 OR문을 복사했습니다.`)
+  }
+
   // ── 메타 업데이트 동기화 ──────────────────────────────────────
   const handleVideoUpdated = (updated) => {
     setVideos((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
@@ -139,6 +159,14 @@ export default function App() {
             disabled={videos.length === 0 || actorPicking}
           >
             {actorPicking ? '추출 중…' : '🎯 배우별 1개 추출'}
+          </button>
+          <button
+            className="btn-or-copy"
+            type="button"
+            onClick={handleCopyOrText}
+            disabled={videos.length === 0}
+          >
+            📋 검색 결과 OR문 복사
           </button>
           <button
             className="btn-danger"
