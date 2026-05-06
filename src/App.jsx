@@ -10,11 +10,13 @@ import { useState } from 'react'
 import { Alert } from 'antd'
 import './App.css'
 
-import { useVideoSearch } from './hooks/useVideoSearch.js'
-import SearchBar          from './components/SearchBar.jsx'
-import VideoList          from './components/VideoList.jsx'
-import DetailPanel        from './components/DetailPanel.jsx'
-import RandomPanel        from './components/RandomPanel.jsx'
+import { useVideoSearch }    from './hooks/useVideoSearch.js'
+import SearchBar             from './components/SearchBar.jsx'
+import VideoList             from './components/VideoList.jsx'
+import DetailPanel           from './components/DetailPanel.jsx'
+import RandomPanel           from './components/RandomPanel.jsx'
+import ActorPickPanel        from './components/ActorPickPanel.jsx'
+import DeleteCleanupModal    from './components/DeleteCleanupModal.jsx'
 
 export default function App() {
   // ── 동영상 목록 검색/정렬 상태 (hook) ─────────────────────────
@@ -28,11 +30,16 @@ export default function App() {
   } = useVideoSearch()
 
   // ── 로컬 UI 상태 ──────────────────────────────────────────────
-  const [folderPath,    setFolderPath]    = useState(null)
-  const [selectedVideo, setSelectedVideo] = useState(null)
-  const [scanning,      setScanning]      = useState(false)
-  const [scanInfo,      setScanInfo]      = useState(null)
-  const [randomResult,  setRandomResult]  = useState(null)
+  const [folderPath,       setFolderPath]       = useState(null)
+  const [selectedVideo,    setSelectedVideo]    = useState(null)
+  const [scanning,         setScanning]         = useState(false)
+  const [scanInfo,         setScanInfo]         = useState(null)
+  const [randomResult,     setRandomResult]     = useState(null)
+  // 배우별 1개 추출 결과 모달
+  const [actorPickResult,  setActorPickResult]  = useState(null)
+  const [actorPicking,     setActorPicking]     = useState(false)
+  // 삭제요망 정리 모달 표시 여부
+  const [showDeleteModal,  setShowDeleteModal]  = useState(false)
 
   // ── 폴더 선택 ─────────────────────────────────────────────────
   const handleSelectFolder = async () => {
@@ -74,6 +81,19 @@ export default function App() {
     }
   }
 
+  // ── 배우별 1개 추출 ───────────────────────────────────────────
+  const handleActorPick = async () => {
+    setActorPicking(true)
+    try {
+      const result = await window.api.pickOnePerActor(searchQuery, { hideMissing })
+      setActorPickResult(result)
+    } catch (e) {
+      setError('배우별 추출 실패: ' + e.message)
+    } finally {
+      setActorPicking(false)
+    }
+  }
+
   // ── 메타 업데이트 동기화 ──────────────────────────────────────
   const handleVideoUpdated = (updated) => {
     setVideos((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
@@ -111,6 +131,21 @@ export default function App() {
             disabled={videos.length === 0}
           >
             🎲 랜덤 추천
+          </button>
+          <button
+            className="btn-actor-pick"
+            type="button"
+            onClick={handleActorPick}
+            disabled={videos.length === 0 || actorPicking}
+          >
+            {actorPicking ? '추출 중…' : '🎯 배우별 1개 추출'}
+          </button>
+          <button
+            className="btn-danger"
+            type="button"
+            onClick={() => setShowDeleteModal(true)}
+          >
+            🗑 삭제요망 정리
           </button>
         </div>
       </header>
@@ -190,6 +225,22 @@ export default function App() {
         <RandomPanel
           result={randomResult}
           onClose={() => setRandomResult(null)}
+        />
+      )}
+
+      {/* 배우별 1개 추출 결과 모달 */}
+      {actorPickResult && (
+        <ActorPickPanel
+          result={actorPickResult}
+          onClose={() => setActorPickResult(null)}
+        />
+      )}
+
+      {/* 삭제요망 정리 모달 */}
+      {showDeleteModal && (
+        <DeleteCleanupModal
+          onClose={() => setShowDeleteModal(false)}
+          onDeleted={refresh}
         />
       )}
     </div>

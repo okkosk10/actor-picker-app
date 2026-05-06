@@ -67,5 +67,24 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { totalFiles, actorCount, pickedCount, searchText, pickedList }
   randomPick: (query, options) =>
     ipcRenderer.invoke('random-pick', query, options),
+
+  // ── 배우별 1개 랜덤 추출 ─────────────────────────────────────
+  // grade='삭제요망'/missing/deleted 및 code·actor_name 없는 항목 제외
+  // @param query   {string}  - 검색어 (빈 문자열이면 전체)
+  // @param options {{ hideMissing?: boolean }}
+  // 반환: { count, orText, items }
+  pickOnePerActor: (query, options) =>
+    ipcRenderer.invoke('pick-one-per-actor', query, options),
+
+  // ── 삭제요망 파일 목록 조회 ───────────────────────────────────
+  // 반환: { total, totalSize, items }
+  getDeleteCandidates: () =>
+    ipcRenderer.invoke('get-delete-candidates'),
+
+  // ── 삭제요망 파일 일괄 삭제 ───────────────────────────────────
+  // grade='삭제요망' 파일만 삭제, 결과 리포트 반환
+  // 반환: { total, deleted, failed, failedItems }
+  deleteGradeTargets: () =>
+    ipcRenderer.invoke('delete-grade-targets'),
 })
 

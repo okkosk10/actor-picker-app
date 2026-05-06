@@ -354,6 +354,178 @@ function registerIpcHandlers() {
       pickedList,
     }
   })
+  // ══════════════════════════════════════════════════════════════
+  // 배우별 1개 랜덤 추출 (pick-one-per-actor)
+  //
+  // 현재 검색 쿼리 기반으로 actor_name 별 그룹화 후 각 배우에서
+  // 랜덤 1개 영상을 선택한다.
+  //
+  // 제외 조건:
+  //   - code가 없는 영상
+  //   - actor_name이 없는 영상
+  //   - grade = '삭제요망'
+  //   - status = 'missing' 또는 'deleted'
+  //
+  // @param query   {string}  - 검색어 (빈 문자열이면 전체)
+  // @param options {{ hideMissing?: boolean }} - 검색 필터 옵션
+  //
+  // 반환: { count, orText, items }
+  //   count   : 선택된 배우 수 (= 추출된 영상 수)
+  //   orText  : "SSIS-001 OR IPZZ-123 OR ..." 형태 OR 검색식
+  //   items   : 선택된 Video 레코드 배열
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('pick-one-per-actor', async (_event, query, options = {}) => {
+    const db = getDb()
+
+    // 기본 제외 조건: code/actor_name 필수, 삭제요망·missing·deleted 제외
+    const baseFilter = `
+      code IS NOT NULL AND code != ''
+      AND actor_name IS NOT NULL AND actor_name != ''
+      AND grade != '삭제요망'
+      AND status != 'missing'
+      AND status != 'deleted'
+    `
+
+    let videos
+    if (!query || query.trim() === '') {
+      // 쿼리 없으면 전체 대상
+      videos = db.prepare(`
+        SELECT * FROM videos WHERE ${baseFilter}
+      `).all()
+    } else {
+      // 쿼리 있으면 file_name / code / actor_name / memo / tags LIKE 검색
+      const q = `%${query.trim()}%`
+      videos = db.prepare(`
+        SELECT * FROM videos
+        WHERE ${baseFilter}
+          AND (file_name LIKE ? OR code LIKE ? OR actor_name LIKE ? OR memo LIKE ? OR tags LIKE ?)
+      `).all(q, q, q, q, q)
+    }
+
+    if (videos.length === 0) {
+      return { count: 0, orText: '', items: [] }
+    }
+
+    // actor_name 기준 그룹화
+    const groups = {}
+    for (const video of videos) {
+      if (!groups[video.actor_name]) groups[video.actor_name] = []
+      groups[video.actor_name].push(video)
+    }
+
+    // 각 그룹에서 랜덤 1개 선택
+    const items = Object.values(groups).map(
+      (arr) => arr[Math.floor(Math.random() * arr.length)]
+    )
+
+    // code 기준 OR 검색식 생성
+    const orText = items.map((v) => v.code).filter(Boolean).join(' OR ')
+
+    return { count: items.length, orText, items }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 삭제요망 파일 목록 조회 (get-delete-candidates)
+  //
+  // grade = '삭제요망' 이고 아직 삭제되지 않은 (status != missing/deleted)
+  // 파일 목록을 반환한다.
+  //
+  // 반환: { total, totalSize, items }
+  //   total     : 대상 파일 수
+  //   totalSize : 총 파일 크기 (bytes)
+  //   items     : Video 레코드 배열
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-delete-candidates', async () => {
+    const db = getDb()
+
+    const items = db.prepare(`
+      SELECT * FROM videos
+      WHERE grade = '삭제요망'
+        AND status != 'missing'
+        AND status != 'deleted'
+      ORDER BY size DESC
+    `).all()
+
+    const totalSize = items.reduce((sum, r) => sum + (r.size || 0), 0)
+
+    return { total: items.length, totalSize, items }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 삭제요망 파일 일괄 삭제 (delete-grade-targets)
+  //
+  // grade = '삭제요망' 인 파일을 실제 디스크에서 삭제하고
+  // DB status를 'deleted' 로 업데이트한다.
+  //
+  // 보안:
+  //   - grade = '삭제요망' 인 파일만 대상
+  //   - fs.existsSync로 파일 존재 확인 후 삭제
+  //   - 파일 삭제 실패 시 전체 중단 없이 failedItems에 기록
+  //   - grade != '삭제요망' 파일은 절대 삭제하지 않음
+  //
+  // 반환: { total, deleted, failed, failedItems }
+  //   total       : 처리 시도 파일 수
+  //   deleted     : 삭제 성공 수
+  //   failed      : 삭제 실패 수
+  //   failedItems : [{ file_path, reason }]
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('delete-grade-targets', async () => {
+    const db = getDb()
+
+    // 삭제 대상 재조회 (grade 조건 다시 검증 — 보안)
+    const targets = db.prepare(`
+      SELECT * FROM videos
+      WHERE grade = '삭제요망'
+        AND status != 'missing'
+        AND status != 'deleted'
+    `).all()
+
+    let deleted = 0
+    let failed  = 0
+    const failedItems = []
+
+    for (const video of targets) {
+      try {
+        if (fs.existsSync(video.file_path)) {
+          // 파일 존재 → 삭제 시도
+          fs.unlinkSync(video.file_path)
+
+          // 삭제 성공 → DB status = 'deleted' 처리
+          db.prepare(`
+            UPDATE videos
+            SET status     = 'deleted',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(video.id)
+
+          deleted++
+        } else {
+          // 파일이 이미 없음 → missing 처리 후 실패로 기록
+          db.prepare(`
+            UPDATE videos
+            SET status     = 'missing',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(video.id)
+
+          failedItems.push({
+            file_path: video.file_path,
+            reason: '파일이 이미 존재하지 않습니다 (missing 처리됨)',
+          })
+          failed++
+        }
+      } catch (err) {
+        // 삭제 실패 (권한 오류, 잠금 등) → 중단 없이 기록
+        failedItems.push({
+          file_path: video.file_path,
+          reason: err.message,
+        })
+        failed++
+      }
+    }
+
+    return { total: targets.length, deleted, failed, failedItems }
+  })
 }
 
 

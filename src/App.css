@@ -116,6 +116,67 @@
   cursor: not-allowed;
 }
 
+/* 배우별 1개 추출 버튼 — 보라/인디고 계열 */
+.btn-actor-pick {
+  flex-shrink: 0;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #8b5cf6;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.btn-actor-pick:hover:not(:disabled) { opacity: 0.88; }
+.btn-actor-pick:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 삭제요망 정리 버튼 / 모달 내 삭제 버튼 — 위험 빨간색 */
+.btn-danger {
+  flex-shrink: 0;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #ef4444;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.btn-danger:hover:not(:disabled) { opacity: 0.88; }
+.btn-danger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 삭제 경고 박스 */
+.delete-warn {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 6px;
+  font-size: 13px;
+  color: #fca5a5;
+  flex-shrink: 0;
+}
+
+/* 모달 액션 버튼 행 */
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+  flex-shrink: 0;
+}
+
 /* ── 검색 바 ─────────────────────────────────────────────── */
 .search-bar {
   display: flex;
