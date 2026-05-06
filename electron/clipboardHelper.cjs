@@ -2,16 +2,19 @@
 
 /**
  * electron/clipboardHelper.cjs
- * Windows 파일 클립보드 헬퍼 (CF_HDROP 방식)
+ * Windows 파일 클립보드 헬퍼 (DataObject + Preferred DropEffect 방식)
  *
  * 구현 방식:
  *   1. 파일 경로를 UTF-8 BOM 임시 텍스트 파일에 기록한다.
  *      (실제 영상 파일을 임시 폴더로 복사하지 않음)
  *   2. PowerShell -STA -EncodedCommand 를 통해
- *      System.Windows.Forms.Clipboard.SetFileDropList 를 호출한다.
- *   3. SetFileDropList 는 내부적으로 copy=true 로 OleFlushClipboard 를 호출하므로
- *      PowerShell 프로세스가 종료된 후에도 클립보드 데이터가 유지된다.
- *   4. 사용자는 Windows 탐색기(및 MTP 연결 장치 포함)에서 Ctrl+V 로 붙여넣기 가능하다.
+ *      System.Windows.Forms.DataObject 를 생성하고 아래 두 포맷을 등록한다.
+ *        - DataFormats.FileDrop  : string[] 파일 경로 목록 (CF_HDROP)
+ *        - "Preferred DropEffect": MemoryStream([1,0,0,0]) → DROPEFFECT_COPY = 1
+ *   3. Clipboard.SetDataObject(dataObject, $true) 로 클립보드에 등록한다.
+ *      copy=true 이므로 PowerShell 프로세스가 종료된 후에도 데이터가 유지된다.
+ *   4. Preferred DropEffect 포맷 덕분에 Windows Explorer 및 MTP 장치가
+ *      붙여넣기 시 "이동"이 아닌 "복사" 동작을 수행한다.
  *
  * 보안:
  *   - filePaths 입력 유효성 검사는 ipc.cjs 의 핸들러에서 수행한다.
@@ -53,14 +56,22 @@ async function copyFilesToClipboard(filePaths) {
   const psLines  = [
     `$ErrorActionPreference = 'Stop'`,
     `Add-Type -AssemblyName System.Windows.Forms`,
-    `$col = New-Object System.Collections.Specialized.StringCollection`,
-    `Get-Content -LiteralPath '${tmpSafe}' | ForEach-Object {`,
-    `  $f = $_.Trim()`,
-    `  if ($f -ne '') { [void]$col.Add($f) }`,
-    `}`,
-    `[System.Windows.Forms.Clipboard]::SetFileDropList($col)`,
+    // 파일 경로 읽기 → 빈 줄 제거 → string[] 로 강제 변환
+    `$paths = @(Get-Content -LiteralPath '${tmpSafe}' |`,
+    `  ForEach-Object { $_.Trim() } |`,
+    `  Where-Object { $_ -ne '' })`,
+    // DataObject 생성
+    `$dataObj = New-Object System.Windows.Forms.DataObject`,
+    // FileDrop 포맷 등록 (CF_HDROP) – autoConvert=$false
+    `$dataObj.SetData([System.Windows.Forms.DataFormats]::FileDrop, $false, [string[]]$paths)`,
+    // Preferred DropEffect = DROPEFFECT_COPY (1) 를 MemoryStream 으로 등록
+    // CFSTR_PREFERREDDROPEFFECT 포맷: Little-Endian 4바이트 정수
+    `$ms = New-Object System.IO.MemoryStream(,[byte[]](1,0,0,0))`,
+    `$dataObj.SetData('Preferred DropEffect', $false, $ms)`,
+    // 클립보드에 등록 – copy=$true → OleFlushClipboard → 프로세스 종료 후에도 유지
+    `[System.Windows.Forms.Clipboard]::SetDataObject($dataObj, $true)`,
     `Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue`,
-    `Write-Output "OK:$($col.Count)"`,
+    `Write-Output "OK:$($paths.Count)"`,
   ]
   const psScript = psLines.join('\r\n')
 
