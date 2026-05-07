@@ -543,11 +543,23 @@
 
 .actor-name {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   color: var(--text-h);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 대표 배우 강조 */
+.actor-primary {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* 나머지 배우 — 일반 스타일 */
+.actor-secondary {
+  font-weight: 400;
+  color: var(--text-muted);
 }
 
 .vi-filename {

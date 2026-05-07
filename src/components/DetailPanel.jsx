@@ -21,7 +21,7 @@ import { useState, useEffect } from 'react'
 import { Switch, Tag, Select, message } from 'antd'
 import StarRating from './StarRating.jsx'
 import { useVideoMeta } from '../hooks/useVideoMeta.js'
-import { formatFileSize, formatDate, GRADES, GRADE_COLORS, STATUS_LABELS, RATING_BY_GRADE, GRADE_BY_RATING } from '../utils/format.js'
+import { formatFileSize, formatDate, GRADES, GRADE_COLORS, STATUS_LABELS, RATING_BY_GRADE, GRADE_BY_RATING, parseActors } from '../utils/format.js'
 
 const { Option } = Select
 
@@ -148,7 +148,20 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
         </div>
         <div className="meta-row">
           <span className="meta-label">배우</span>
-          <span className="meta-value">{video.actor_name || '-'}</span>
+          <span className="meta-value">
+            {(() => {
+              const actors = parseActors(video.actor_name)
+              if (actors.length === 0) return '-'
+              return (
+                <>
+                  <span className="actor-primary">{actors[0]}</span>
+                  {actors.length > 1 && (
+                    <span className="actor-secondary">, {actors.slice(1).join(', ')}</span>
+                  )}
+                </>
+              )
+            })()}
+          </span>
         </div>
         <div className="meta-row">
           <span className="meta-label">폴더</span>

@@ -18,7 +18,7 @@
  */
 import { Tag }      from 'antd'
 import StarRating   from './StarRating.jsx'
-import { GRADE_COLORS } from '../utils/format.js'
+import { GRADE_COLORS, parseActors } from '../utils/format.js'
 
 const STATUS_MISSING_COLOR = 'red'
 
@@ -28,6 +28,8 @@ export default function VideoItem({ video, selected, onClick, checked, onToggle 
   const tagList = video.tags
     ? video.tags.split(',').map((t) => t.trim()).filter(Boolean)
     : []
+
+  const actors = parseActors(video.actor_name)
 
   return (
     <div
@@ -62,7 +64,15 @@ export default function VideoItem({ video, selected, onClick, checked, onToggle 
             : <span className="code-badge code-badge--empty">-</span>
           }
           <span className="actor-name">
-            {video.actor_name || '(배우 미상)'}
+            {actors.length === 0
+              ? '(배우 미상)'
+              : <>
+                  <span className="actor-primary">{actors[0]}</span>
+                  {actors.length > 1 && (
+                    <span className="actor-secondary">, {actors.slice(1).join(', ')}</span>
+                  )}
+                </>
+            }
           </span>
         </div>
       </div>

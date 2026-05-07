@@ -48,6 +48,30 @@ export const GRADE_COLORS = {
   '삭제요망':   'red',
 }
 
+// ── 배우명 파싱 ───────────────────────────────────────────────
+
+/**
+ * actor_name 문자열을 쉼표 기준으로 분리하여 배우명 배열로 반환.
+ * null / undefined / 빈 문자열은 빈 배열을 반환한다.
+ * @param {string|null|undefined} actorName
+ * @returns {string[]}
+ */
+export function parseActors(actorName) {
+  if (!actorName || typeof actorName !== 'string') return []
+  return actorName.split(',').map((a) => a.trim()).filter(Boolean)
+}
+
+/**
+ * actor_name 문자열에서 대표 배우(첫 번째)만 반환.
+ * 값이 없으면 null을 반환한다.
+ * @param {string|null|undefined} actorName
+ * @returns {string|null}
+ */
+export function getPrimaryActor(actorName) {
+  const actors = parseActors(actorName)
+  return actors[0] ?? null
+}
+
 // ── 등급 ↔ 별점 연동 매핑 ────────────────────────────────────
 // 등급 변경 시 자동 반영할 별점값
 export const RATING_BY_GRADE = {
