@@ -134,6 +134,55 @@ const MIGRATIONS = [
       `)
     },
   },
+
+  {
+    version: '006_add_video_activity_columns',
+    description: 'videos 테이블에 대시보드/사용 기록용 컬럼 추가',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+
+      const additions = [
+        { name: 'play_count',        def: 'INTEGER DEFAULT 0' },
+        { name: 'last_played_at',    def: 'TEXT' },
+        { name: 'last_requested_at', def: 'TEXT' },
+        { name: 'favorite',          def: 'INTEGER DEFAULT 0' },
+      ]
+
+      for (const col of additions) {
+        if (!cols.includes(col.name)) {
+          db.exec(`ALTER TABLE videos ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+
+      // 인덱스는 IF NOT EXISTS로 중복 생성 방지
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_videos_play_count        ON videos (play_count);
+        CREATE INDEX IF NOT EXISTS idx_videos_last_played_at    ON videos (last_played_at);
+        CREATE INDEX IF NOT EXISTS idx_videos_last_requested_at ON videos (last_requested_at);
+        CREATE INDEX IF NOT EXISTS idx_videos_favorite          ON videos (favorite);
+      `)
+    },
+  },
+
+  {
+    version: '007_create_video_activity_logs',
+    description: 'video_activity_logs 테이블 생성',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS video_activity_logs (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          video_id    INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+          action_type TEXT    NOT NULL,
+          created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          meta_json   TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_val_video_id    ON video_activity_logs (video_id);
+        CREATE INDEX IF NOT EXISTS idx_val_action_type ON video_activity_logs (action_type);
+        CREATE INDEX IF NOT EXISTS idx_val_created_at  ON video_activity_logs (created_at);
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────
