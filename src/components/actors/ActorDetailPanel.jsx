@@ -13,7 +13,6 @@ import { useState, useEffect } from 'react'
 const EMPTY_FORM = {
   name:       '',
   image_path: '',
-  category:   '',
   agency:     '',
   tags:       '',
   rating:     0,
@@ -25,7 +24,6 @@ function formFromActor(actor) {
   return {
     name:       actor.name       || '',
     image_path: actor.image_path || '',
-    category:   actor.category   || '',
     agency:     actor.agency     || '',
     tags:       actor.tags       || '',
     rating:     actor.rating     || 0,
@@ -139,28 +137,16 @@ export default function ActorDetailPanel({ actor, videos = [], onSaved, onArchiv
           />
         </label>
 
-        <div className="actor-detail__row">
-          <label className="actor-detail__field actor-detail__field--half">
-            <span className="actor-detail__label">카테고리</span>
-            <input
-              className="actor-detail__input"
-              type="text"
-              value={form.category}
-              onChange={set('category')}
-              placeholder="예: 전속, 프리"
-            />
-          </label>
-          <label className="actor-detail__field actor-detail__field--half">
-            <span className="actor-detail__label">소속사</span>
-            <input
-              className="actor-detail__input"
-              type="text"
-              value={form.agency}
-              onChange={set('agency')}
-              placeholder="소속사명"
-            />
-          </label>
-        </div>
+        <label className="actor-detail__field">
+          <span className="actor-detail__label">소속사</span>
+          <input
+            className="actor-detail__input"
+            type="text"
+            value={form.agency}
+            onChange={set('agency')}
+            placeholder="소속사명"
+          />
+        </label>
 
         <label className="actor-detail__field">
           <span className="actor-detail__label">태그</span>
@@ -169,7 +155,7 @@ export default function ActorDetailPanel({ actor, videos = [], onSaved, onArchiv
             type="text"
             value={form.tags}
             onChange={set('tags')}
-            placeholder="쉼표로 구분"
+            placeholder="예: 슬랜더, 장신, 프리 (쉼표로 구분)"
           />
         </label>
 

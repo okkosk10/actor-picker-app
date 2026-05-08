@@ -317,7 +317,7 @@ export default function App() {
             className={`app-tab-btn ${appTab === 'library' ? 'app-tab-btn--active' : ''}`}
             onClick={() => setAppTab('library')}
           >
-            바다
+            영상 관리
           </button>
           <button
             type="button"

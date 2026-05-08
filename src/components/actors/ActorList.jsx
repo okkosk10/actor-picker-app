@@ -52,10 +52,8 @@ export default function ActorList({ actors, selectedId, onSelect, loading }) {
                 <span className="actor-list__archive-badge">archived</span>
               )}
             </span>
-            {(actor.category || actor.agency) && (
-              <span className="actor-list__meta">
-                {[actor.category, actor.agency].filter(Boolean).join(' · ')}
-              </span>
+            {actor.agency && (
+              <span className="actor-list__meta">{actor.agency}</span>
             )}
           </div>
 
