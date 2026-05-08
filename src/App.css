@@ -2161,33 +2161,6 @@
 }
 .actor-detail__textarea:focus { border-color: var(--accent); }
 
-.actor-detail__rating-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.actor-detail__star {
-  font-size: 20px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--border);
-  padding: 0;
-  line-height: 1;
-  transition: color 0.1s;
-}
-.actor-detail__star--on { color: #f59e0b; }
-.actor-detail__star:hover { color: #f59e0b; opacity: 0.7; }
-.actor-detail__star-clear {
-  font-size: 12px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted);
-  padding: 0 4px;
-  margin-left: 4px;
-}
-
 .actor-detail__error {
   font-size: 13px;
   color: #ef4444;

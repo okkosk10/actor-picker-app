@@ -9,6 +9,7 @@
  *   onArchived {Function}   - 아카이브/복구 완료 콜백 (updatedActor)
  */
 import { useState, useEffect } from 'react'
+import StarRating from '../common/StarRating.jsx'
 
 const EMPTY_FORM = {
   name:       '',
@@ -161,27 +162,11 @@ export default function ActorDetailPanel({ actor, videos = [], onSaved, onArchiv
 
         <label className="actor-detail__field">
           <span className="actor-detail__label">별점</span>
-          <div className="actor-detail__rating-row">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={`actor-detail__star ${n <= form.rating ? 'actor-detail__star--on' : ''}`}
-                onClick={() => setForm((p) => ({ ...p, rating: n === p.rating ? 0 : n }))}
-              >
-                ★
-              </button>
-            ))}
-            {form.rating > 0 && (
-              <button
-                type="button"
-                className="actor-detail__star-clear"
-                onClick={() => setForm((p) => ({ ...p, rating: 0 }))}
-              >
-                ✕
-              </button>
-            )}
-          </div>
+          <StarRating
+            value={form.rating}
+            onChange={(n) => setForm((p) => ({ ...p, rating: n }))}
+            size="md"
+          />
         </label>
 
         <label className="actor-detail__field">
