@@ -25,7 +25,7 @@
 const path = require('path')
 const fs   = require('fs')
 const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
-const { getDb }               = require('./db.cjs')
+const { getDb, recordVideoActivity } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
 
@@ -594,6 +594,19 @@ function registerIpcHandlers() {
   ipcMain.handle('open-video', async (_event, filePath) => {
     const err = await shell.openPath(filePath)
     if (err) throw new Error(`파일을 열 수 없습니다: ${err}`)
+    try {
+      const db    = getDb()
+      const video = db.prepare('SELECT id, file_name FROM videos WHERE file_path = ?').get(filePath)
+      if (video) {
+        recordVideoActivity(video.id, 'open', {
+          filePath,
+          title:       video.file_name,
+          requestedAt: new Date().toISOString(),
+        })
+      }
+    } catch (e) {
+      console.warn('[open-video] 활동 기록 실패:', e.message)
+    }
     return { success: true }
   })
 
@@ -902,6 +915,23 @@ function registerIpcHandlers() {
 
     try {
       const { count } = await copyFilesToClipboard(validPaths)
+      try {
+        const db          = getDb()
+        const requestedAt = new Date().toISOString()
+        for (const fp of validPaths) {
+          const video = db.prepare('SELECT id, file_name FROM videos WHERE file_path = ?').get(fp)
+          if (video) {
+            recordVideoActivity(video.id, 'copy_to_clipboard', {
+              filePath:       fp,
+              title:          video.file_name,
+              copiedFileCount: count,
+              requestedAt,
+            })
+          }
+        }
+      } catch (e) {
+        console.warn('[copy-files-to-clipboard] 활동 기록 실패:', e.message)
+      }
       return { success: true, count, totalSize, failedPaths }
     } catch (err) {
       return { success: false, error: err.message, count: 0, totalSize, failedPaths }
@@ -1008,6 +1038,19 @@ function registerIpcHandlers() {
           doneCount++
           mtpLog(`OK | ${fileName} | elapsed: ${elapsedMin}min`)
           sendProgress('completed', i, fileName, `완료 (${doneCount}/${total})`, extra)
+          try {
+            const db    = getDb()
+            const video = db.prepare('SELECT id, file_name FROM videos WHERE file_path = ?').get(fp)
+            if (video) {
+              recordVideoActivity(video.id, 'copy_to_device', {
+                filePath:     fp,
+                title:        video.file_name,
+                requestedAt:  new Date().toISOString(),
+              })
+            }
+          } catch (e) {
+            console.warn('[copy-files-to-device] 활동 기록 실패:', e.message)
+          }
           fileResolved = true
           if (i < fileInfos.length - 1) await new Promise(r => setTimeout(r, 3000))
 
@@ -1034,6 +1077,19 @@ function registerIpcHandlers() {
                 const em = Math.round((Date.now() - startTs) / 60000)
                 mtpLog(`OK (continue) | ${fileName} | total: ${em}min`)
                 sendProgress('completed', i, fileName, `완료 (${doneCount}/${total})`, xtra)
+                try {
+                  const db    = getDb()
+                  const video = db.prepare('SELECT id, file_name FROM videos WHERE file_path = ?').get(fp)
+                  if (video) {
+                    recordVideoActivity(video.id, 'copy_to_device', {
+                      filePath:    fp,
+                      title:       video.file_name,
+                      requestedAt: new Date().toISOString(),
+                    })
+                  }
+                } catch (e) {
+                  console.warn('[copy-files-to-device] 활동 기록 실패:', e.message)
+                }
                 fileResolved = true
                 if (i < fileInfos.length - 1) await new Promise(r => setTimeout(r, 3000))
                 break actionLoop
