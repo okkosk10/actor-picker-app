@@ -100,6 +100,40 @@ function buildFolderFilter(currentFolder) {
 }
 
 /**
+ * video_id 기준으로 actors / video_actors를 동기화한다.
+ *
+ * - actors 테이블에 없는 배우는 자동 INSERT
+ * - 해당 video_id의 video_actors 기존 매핑을 삭제 후 재삽입
+ * - 첫 번째 배우: is_main = 1, 나머지: is_main = 0
+ * - 트랜잭션 없음 → 호출 측에서 트랜잭션 래핑 필요
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {number}  videoId
+ * @param {string}  actorName  - "(배우1, 배우2)" 또는 "배우1, 배우2" 형태
+ */
+function syncVideoActors(db, videoId, actorName) {
+  const raw   = actorName.replace(/^\(|\)$/g, '').trim()
+  const names = raw.split(',').map((n) => n.trim()).filter((n) => n.length > 0)
+  if (names.length === 0) return
+
+  const insertActor  = db.prepare('INSERT INTO actors (name) VALUES (?) ON CONFLICT(name) DO NOTHING')
+  const getActor     = db.prepare('SELECT id FROM actors WHERE name = ?')
+  const deleteLinks  = db.prepare('DELETE FROM video_actors WHERE video_id = ?')
+  const insertLink   = db.prepare(`
+    INSERT INTO video_actors (video_id, actor_id, is_main, order_index)
+    VALUES (?, ?, ?, ?)
+  `)
+
+  deleteLinks.run(videoId)
+  names.forEach((name, idx) => {
+    insertActor.run(name)
+    const actor = getActor.get(name)
+    if (!actor) return
+    insertLink.run(videoId, actor.id, idx === 0 ? 1 : 0, idx)
+  })
+}
+
+/**
  * 모든 IPC 핸들러를 등록한다.
  * app.whenReady() 콜백 내부에서 호출해야 한다.
  */
@@ -199,6 +233,19 @@ function registerIpcHandlers() {
         upsert.run({ ...file, tags: createDefaultTags(file) })
       }
     })(files)
+
+    // ④ actors / video_actors 동기화
+    // actor_name이 있는 파일만 대상으로, upsert 후 확정된 video id를 조회해 동기화한다.
+    const filesWithActor = files.filter((f) => f.actor_name && f.actor_name.trim())
+    if (filesWithActor.length > 0) {
+      const getVideoId = db.prepare('SELECT id FROM videos WHERE file_path = ?')
+      db.transaction(() => {
+        for (const file of filesWithActor) {
+          const row = getVideoId.get(file.file_path)
+          if (row) syncVideoActors(db, row.id, file.actor_name)
+        }
+      })()
+    }
 
     // ② 삭제 파일 감지: 해당 폴더 하위 DB 레코드 vs 스캔 결과 비교
     const scannedPaths = new Set(files.map((f) => f.file_path))
