@@ -25,7 +25,7 @@ function parseFileName(fileName) {
   // 품번은 영문자로 시작하는 영숫자+하이픈 조합
   // 괄호 앞에 공백이 있어도 매칭
   // 예: SSIS-001(배우명) / SSIS-001 (배우명) / stars456(홍길동)
-  const matchFull = baseName.match(/^([A-Za-z][A-Za-z0-9\-_]*)\s*\(([^)]+)\)/)
+  const matchFull = baseName.match(/^(\d*[A-Za-z][A-Za-z0-9\-_]*)\s*\(([^)]+)\)/)
   if (matchFull) {
     return {
       code:       matchFull[1].trim().toUpperCase(),
@@ -35,7 +35,7 @@ function parseFileName(fileName) {
 
   // ── 패턴 2: CODE만 존재 (괄호 없음) ────────────────────────────
   // 예: SSIS-001.mp4 / ABP123.mkv
-  const matchCode = baseName.match(/^([A-Za-z]{2,6}[-_]?\d{3,5})\b/)
+  const matchCode = baseName.match(/^(\d*[A-Za-z]{2,6}[-_]?\d{3,5})\b/)
   if (matchCode) {
     return {
       code:       matchCode[1].trim().toUpperCase(),
