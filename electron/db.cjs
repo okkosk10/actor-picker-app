@@ -12,6 +12,7 @@
 const Database = require('better-sqlite3')
 const path = require('path')
 const { app } = require('electron')
+const { runMigrations } = require('./migrations.cjs')
 
 /** 싱글톤 DB 인스턴스 (최초 getDb() 호출 시 초기화) */
 let db = null
@@ -88,6 +89,9 @@ function initSchema() {
   // better-sqlite3 는 ALTER TABLE ... IF NOT EXISTS 미지원이므로
   // PRAGMA table_info 로 컬럼 존재 여부를 먼저 확인한다.
   migrateSchema()
+
+  // ── 버전 기반 마이그레이션 실행 ──────────────────────────────
+  runMigrations(db)
 }
 
 /**
