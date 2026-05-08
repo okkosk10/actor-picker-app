@@ -151,5 +151,42 @@ contextBridge.exposeInMainWorld('api', {
   // 사용자가 Windows 복사 창 완료 후 클릭하면 PS 프로세스를 종료한다.
   sendBulkCopyClose: () =>
     ipcRenderer.send('bulk-copy-close'),
+
+  // ── 배우 목록 조회 ────────────────────────────────────────────
+  // @param options {{ query?, category?, agency?, minRating?, archived? }}
+  // 반환: Actor[]
+  getActors: (options) =>
+    ipcRenderer.invoke('get-actors', options),
+
+  // ── 배우 상세 조회 ────────────────────────────────────────────
+  // @param id {number}
+  // 반환: { actor: Actor, videos: Video[] } | null
+  getActorDetail: (id) =>
+    ipcRenderer.invoke('get-actor-detail', id),
+
+  // ── 배우 생성 ─────────────────────────────────────────────────
+  // @param data {{ name, image_path?, category?, agency?, tags?, rating?, memo? }}
+  // 반환: 생성된 Actor 레코드
+  createActor: (data) =>
+    ipcRenderer.invoke('create-actor', data),
+
+  // ── 배우 수정 ─────────────────────────────────────────────────
+  // @param id   {number}
+  // @param data {{ name?, image_path?, category?, agency?, tags?, rating?, memo? }}
+  // 반환: 수정된 Actor 레코드
+  updateActor: (id, data) =>
+    ipcRenderer.invoke('update-actor', id, data),
+
+  // ── 배우 아카이브 (숨김 처리, 삭제 아님) ─────────────────────
+  // @param id {number}
+  // 반환: { success: true }
+  archiveActor: (id) =>
+    ipcRenderer.invoke('archive-actor', id),
+
+  // ── 아카이브된 배우 복구 ──────────────────────────────────────
+  // @param id {number}
+  // 반환: { success: true }
+  restoreActor: (id) =>
+    ipcRenderer.invoke('restore-actor', id),
 })
 

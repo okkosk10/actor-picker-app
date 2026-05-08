@@ -1137,6 +1137,192 @@ function registerIpcHandlers() {
       try { fs.appendFileSync(logPath, `[${ts}] STABLE_USER_DONE\n`, 'utf8') } catch { /* 무시 */ }
     }
   })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 목록 조회 (get-actors)
+  //
+  // @param options {object} - {
+  //   query?:    string  - name LIKE 검색
+  //   category?: string  - 카테고리 필터
+  //   agency?:   string  - 소속사 필터
+  //   minRating?: number - 최소 별점
+  //   archived?:  boolean - true면 is_archived=1만 조회 (기본: false)
+  // }
+  // 반환: Actor[]
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-actors', async (_event, options = {}) => {
+    const db         = getDb()
+    const conditions = []
+    const params     = []
+
+    // 아카이브 필터 (기본: 활성 배우만)
+    const archived = options.archived === true ? 1 : 0
+    conditions.push('is_archived = ?')
+    params.push(archived)
+
+    // 이름 검색
+    if (options.query && options.query.trim()) {
+      conditions.push(`name LIKE ? ESCAPE '!'`)
+      params.push('%' + escapeLike(options.query.trim()) + '%')
+    }
+
+    // 카테고리 필터
+    if (options.category && options.category.trim()) {
+      conditions.push('category = ?')
+      params.push(options.category.trim())
+    }
+
+    // 소속사 필터
+    if (options.agency && options.agency.trim()) {
+      conditions.push('agency = ?')
+      params.push(options.agency.trim())
+    }
+
+    // 최소 별점
+    if (typeof options.minRating === 'number' && options.minRating > 0) {
+      conditions.push('rating >= ?')
+      params.push(options.minRating)
+    }
+
+    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : ''
+    return db.prepare(`SELECT * FROM actors ${where} ORDER BY name ASC`).all(...params)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 상세 조회 (get-actor-detail)
+  //
+  // @param id {number} - actor id
+  // 반환: { actor: Actor, videos: Video[] } | null
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-actor-detail', async (_event, id) => {
+    const db    = getDb()
+    const actor = db.prepare('SELECT * FROM actors WHERE id = ?').get(id)
+    if (!actor) return null
+
+    const videos = db.prepare(`
+      SELECT v.*
+      FROM   videos v
+      JOIN   video_actors va ON va.video_id = v.id
+      WHERE  va.actor_id = ?
+      ORDER  BY va.is_main DESC, va.order_index ASC, v.created_at DESC
+    `).all(id)
+
+    return { actor, videos }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 생성 (create-actor)
+  //
+  // @param data {object} - { name(필수), image_path, category, agency, tags, rating, memo }
+  // 반환: 생성된 Actor 레코드
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('create-actor', async (_event, data) => {
+    const db   = getDb()
+    const name = (data.name || '').trim()
+    if (!name) throw new Error('배우 이름은 필수입니다.')
+
+    const existing = db.prepare('SELECT id FROM actors WHERE name = ?').get(name)
+    if (existing) throw new Error(`이미 존재하는 배우입니다: ${name}`)
+
+    const info = db.prepare(`
+      INSERT INTO actors (name, image_path, category, agency, tags, rating, memo)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      name,
+      (data.image_path || '').trim(),
+      (data.category   || '').trim(),
+      (data.agency     || '').trim(),
+      (data.tags       || '').trim(),
+      typeof data.rating === 'number' ? data.rating : 0,
+      (data.memo       || '').trim(),
+    )
+
+    return db.prepare('SELECT * FROM actors WHERE id = ?').get(info.lastInsertRowid)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 수정 (update-actor)
+  //
+  // @param id   {number}
+  // @param data {object} - { name?, image_path?, category?, agency?, tags?, rating?, memo? }
+  // 반환: 수정된 Actor 레코드
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('update-actor', async (_event, id, data) => {
+    const db    = getDb()
+    const actor = db.prepare('SELECT * FROM actors WHERE id = ?').get(id)
+    if (!actor) throw new Error(`존재하지 않는 배우 id: ${id}`)
+
+    const name = data.name !== undefined ? (data.name || '').trim() : actor.name
+    if (!name) throw new Error('배우 이름은 필수입니다.')
+
+    // 이름 변경 시 중복 체크 (자기 자신 제외)
+    if (name !== actor.name) {
+      const dup = db.prepare('SELECT id FROM actors WHERE name = ? AND id != ?').get(name, id)
+      if (dup) throw new Error(`이미 존재하는 배우 이름입니다: ${name}`)
+    }
+
+    db.prepare(`
+      UPDATE actors
+      SET name       = ?,
+          image_path = ?,
+          category   = ?,
+          agency     = ?,
+          tags       = ?,
+          rating     = ?,
+          memo       = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name,
+      data.image_path !== undefined ? (data.image_path || '').trim() : actor.image_path,
+      data.category   !== undefined ? (data.category   || '').trim() : actor.category,
+      data.agency     !== undefined ? (data.agency     || '').trim() : actor.agency,
+      data.tags       !== undefined ? (data.tags       || '').trim() : actor.tags,
+      data.rating     !== undefined ? data.rating                    : actor.rating,
+      data.memo       !== undefined ? (data.memo       || '').trim() : actor.memo,
+      id,
+    )
+
+    return db.prepare('SELECT * FROM actors WHERE id = ?').get(id)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 아카이브 (archive-actor)
+  // 실제 삭제 금지 — is_archived = 1 처리
+  //
+  // @param id {number}
+  // 반환: { success: true }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('archive-actor', async (_event, id) => {
+    const db = getDb()
+    const actor = db.prepare('SELECT id FROM actors WHERE id = ?').get(id)
+    if (!actor) throw new Error(`존재하지 않는 배우 id: ${id}`)
+
+    db.prepare(`
+      UPDATE actors SET is_archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(id)
+
+    return { success: true }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 복구 (restore-actor)
+  // is_archived = 0으로 복구
+  //
+  // @param id {number}
+  // 반환: { success: true }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('restore-actor', async (_event, id) => {
+    const db = getDb()
+    const actor = db.prepare('SELECT id FROM actors WHERE id = ?').get(id)
+    if (!actor) throw new Error(`존재하지 않는 배우 id: ${id}`)
+
+    db.prepare(`
+      UPDATE actors SET is_archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(id)
+
+    return { success: true }
+  })
 }
 
 
