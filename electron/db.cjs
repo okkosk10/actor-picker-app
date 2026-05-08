@@ -131,4 +131,76 @@ function closeDb() {
   }
 }
 
-module.exports = { getDb, closeDb }
+// ── 활동 로그 ────────────────────────────────────────────────────
+
+/**
+ * 영상 활동을 video_activity_logs에 기록하고,
+ * actionType에 따라 videos 테이블의 통계 컬럼도 함께 갱신한다.
+ *
+ * @param {number} videoId     - videos.id
+ * @param {string} actionType  - 'open' | 'copy_to_clipboard' | 'copy_to_device' | 기타
+ * @param {object|null} meta   - 추가 메타데이터 (JSON 직렬화 후 meta_json에 저장)
+ */
+function recordVideoActivity(videoId, actionType, meta = null) {
+  if (!videoId || typeof videoId !== 'number') {
+    console.warn('[recordVideoActivity] 유효하지 않은 videoId:', videoId)
+    return
+  }
+  if (!actionType || typeof actionType !== 'string') {
+    console.warn('[recordVideoActivity] 유효하지 않은 actionType:', actionType)
+    return
+  }
+
+  const database = getDb()
+
+  // 영상 존재 여부 확인
+  const exists = database.prepare('SELECT id FROM videos WHERE id = ?').get(videoId)
+  if (!exists) {
+    console.warn('[recordVideoActivity] 존재하지 않는 videoId:', videoId)
+    return
+  }
+
+  const metaJson = meta != null ? JSON.stringify(meta) : null
+
+  const run = database.transaction(() => {
+    // 1. 활동 로그 INSERT
+    database
+      .prepare(`
+        INSERT INTO video_activity_logs (video_id, action_type, meta_json)
+        VALUES (?, ?, ?)
+      `)
+      .run(videoId, actionType, metaJson)
+
+    // 2. actionType에 따라 videos 통계 컬럼 갱신
+    if (actionType === 'open') {
+      database
+        .prepare(`
+          UPDATE videos
+          SET play_count     = play_count + 1,
+              last_played_at = CURRENT_TIMESTAMP,
+              is_new         = 0
+          WHERE id = ?
+        `)
+        .run(videoId)
+    } else if (actionType === 'copy_to_clipboard' || actionType === 'copy_to_device') {
+      database
+        .prepare(`
+          UPDATE videos
+          SET play_count          = play_count + 1,
+              last_requested_at   = CURRENT_TIMESTAMP,
+              is_new              = 0
+          WHERE id = ?
+        `)
+        .run(videoId)
+    }
+  })
+
+  try {
+    run()
+  } catch (err) {
+    console.error('[recordVideoActivity] 활동 기록 실패 — rollback 완료')
+    console.error(err)
+  }
+}
+
+module.exports = { getDb, closeDb, recordVideoActivity }
