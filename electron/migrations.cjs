@@ -115,7 +115,9 @@ const MIGRATIONS = [
         { name: 'rating',      def: 'INTEGER DEFAULT 0' },
         { name: 'memo',        def: "TEXT DEFAULT ''" },
         { name: 'is_archived', def: 'INTEGER DEFAULT 0' },
-        { name: 'updated_at',  def: 'TEXT DEFAULT CURRENT_TIMESTAMP' },
+        // SQLite는 ALTER TABLE ADD COLUMN DEFAULT CURRENT_TIMESTAMP 미지원
+        // → DEFAULT '' 로 추가 후 별도 UPDATE로 채운다
+        { name: 'updated_at',  def: "TEXT DEFAULT ''" },
       ]
 
       for (const col of additions) {
@@ -123,6 +125,13 @@ const MIGRATIONS = [
           db.exec(`ALTER TABLE actors ADD COLUMN ${col.name} ${col.def}`)
         }
       }
+
+      // updated_at이 비어 있는 기존 row를 현재 시각으로 초기화
+      db.exec(`
+        UPDATE actors
+        SET updated_at = CURRENT_TIMESTAMP
+        WHERE updated_at IS NULL OR updated_at = ''
+      `)
     },
   },
 ]
