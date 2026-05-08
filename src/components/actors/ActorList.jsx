@@ -8,6 +8,8 @@
  *   onSelect   {Function} - 배우 선택 콜백 (actor)
  *   loading    {boolean}
  */
+import ActorImage from '../common/ActorImage.jsx'
+
 export default function ActorList({ actors, selectedId, onSelect, loading }) {
   if (loading) {
     return <div className="actor-list actor-list--loading">불러오는 중…</div>
@@ -38,11 +40,12 @@ export default function ActorList({ actors, selectedId, onSelect, loading }) {
         >
           {/* 썸네일 placeholder */}
           <div className="actor-list__thumb">
-            {actor.image_path ? (
-              <img src={actor.image_path} alt={actor.name} className="actor-list__thumb-img" />
-            ) : (
-              <span className="actor-list__thumb-placeholder">👤</span>
-            )}
+            <ActorImage
+              fileName={actor.image_path}
+              alt={actor.name}
+              className="actor-list__thumb-img"
+              placeholderClass="actor-list__thumb-placeholder"
+            />
           </div>
 
           <div className="actor-list__info">

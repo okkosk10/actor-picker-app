@@ -1323,6 +1323,76 @@ function registerIpcHandlers() {
 
     return { success: true }
   })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 이미지 업로드 (upload-actor-image)
+  //
+  // OS 파일 선택 다이얼로그를 열어 jpg/png/webp 이미지를
+  // userData/actors/ 폴더로 복사하고 파일명을 반환한다.
+  //
+  // @param actorId {number} - 배우 ID (신규 생성 전이면 0)
+  // 반환: { fileName: string } | null (취소 시)
+  //
+  // 보안:
+  //   - 확장자 화이트리스트 검증 (jpg/jpeg/png/webp)
+  //   - 파일명에 actorId + timestamp로 충돌 방지
+  //   - 경로 조작 방지: path.basename 사용
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('upload-actor-image', async (_event, actorId) => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title:      '배우 이미지 선택',
+      filters:    [{ name: '이미지', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+      properties: ['openFile'],
+    })
+
+    if (canceled || filePaths.length === 0) return null
+
+    const src = filePaths[0]
+    const rawExt = path.extname(src).toLowerCase().slice(1)  // '.jpg' → 'jpg'
+    const ALLOWED = ['jpg', 'jpeg', 'png', 'webp']
+    if (!ALLOWED.includes(rawExt)) throw new Error(`지원하지 않는 이미지 형식: ${rawExt}`)
+
+    // userData/actors 폴더 자동 생성
+    const actorsDir = path.join(app.getPath('userData'), 'actors')
+    if (!fs.existsSync(actorsDir)) fs.mkdirSync(actorsDir, { recursive: true })
+
+    // 파일명: actor_{id}_{timestamp}.{ext} — 충돌 방지
+    const safeId   = Number.isInteger(actorId) && actorId > 0 ? actorId : 0
+    const fileName = `actor_${safeId}_${Date.now()}.${rawExt}`
+    const dest     = path.join(actorsDir, fileName)
+
+    fs.copyFileSync(src, dest)
+
+    return { fileName }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 이미지 조회 (get-actor-image)
+  //
+  // userData/actors/{fileName} 파일을 읽어 base64 data URL 로 반환한다.
+  // Renderer에서 <img src> 에 직접 사용 가능.
+  //
+  // @param fileName {string} - 파일명 (경로 아님)
+  // 반환: string (data URL) | null (파일 없거나 오류)
+  //
+  // 보안: path.basename 으로 경로 탐색 공격 방지
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-actor-image', (_event, fileName) => {
+    if (!fileName) return null
+    const safe     = path.basename(fileName)  // 경로 탐색 방지
+    const filePath = path.join(app.getPath('userData'), 'actors', safe)
+    try {
+      const buf  = fs.readFileSync(filePath)
+      const ext  = path.extname(safe).toLowerCase().slice(1)
+      const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }
+      const mime = MIME[ext] || 'image/jpeg'
+      return `data:${mime};base64,${buf.toString('base64')}`
+    } catch {
+      return null
+    }
+  })
 }
 
 

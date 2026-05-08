@@ -188,5 +188,19 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { success: true }
   restoreActor: (id) =>
     ipcRenderer.invoke('restore-actor', id),
+
+  // ── 배우 이미지 업로드 ────────────────────────────────────────
+  // OS 파일 선택 다이얼로그 → userData/actors/ 에 복사
+  // @param actorId {number} - 배우 ID (신규 생성 전이면 0)
+  // 반환: { fileName: string } | null (취소 시)
+  uploadActorImage: (actorId) =>
+    ipcRenderer.invoke('upload-actor-image', actorId),
+
+  // ── 배우 이미지 조회 (base64 data URL) ───────────────────────
+  // userData/actors/{fileName} → data:image/...;base64,... 반환
+  // @param fileName {string} - 파일명 (경로 아님)
+  // 반환: string | null
+  getActorImage: (fileName) =>
+    ipcRenderer.invoke('get-actor-image', fileName),
 })
 

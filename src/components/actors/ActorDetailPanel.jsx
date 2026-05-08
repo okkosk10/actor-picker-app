@@ -10,6 +10,7 @@
  */
 import { useState, useEffect } from 'react'
 import StarRating from '../common/StarRating.jsx'
+import ActorImage from '../common/ActorImage.jsx'
 
 const EMPTY_FORM = {
   name:       '',
@@ -33,11 +34,12 @@ function formFromActor(actor) {
 }
 
 export default function ActorDetailPanel({ actor, videos = [], onSaved, onArchived }) {
-  const [form,    setForm]    = useState(formFromActor(actor))
-  const [saving,  setSaving]  = useState(false)
+  const [form,      setForm]      = useState(formFromActor(actor))
+  const [saving,    setSaving]    = useState(false)
   const [archiving, setArchiving] = useState(false)
-  const [error,   setError]   = useState(null)
-  const [success, setSuccess] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [error,     setError]     = useState(null)
+  const [success,   setSuccess]   = useState(null)
 
   // 선택 배우 변경 시 폼 초기화
   useEffect(() => {
@@ -80,6 +82,21 @@ export default function ActorDetailPanel({ actor, videos = [], onSaved, onArchiv
     }
   }
 
+  const handleImageUpload = async () => {
+    setUploading(true)
+    setError(null)
+    try {
+      const result = await window.api.uploadActorImage(actor?.id ?? 0)
+      if (result) {
+        setForm((prev) => ({ ...prev, image_path: result.fileName }))
+      }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
   const handleArchive = async () => {
     if (!actor) return
     setArchiving(true)
@@ -101,17 +118,25 @@ export default function ActorDetailPanel({ actor, videos = [], onSaved, onArchiv
 
   return (
     <div className="actor-detail">
-      {/* 이미지 영역 */}
-      <div className="actor-detail__image-wrap">
-        {form.image_path ? (
-          <img
-            src={form.image_path}
-            alt={form.name || '배우'}
-            className="actor-detail__image"
-          />
-        ) : (
-          <div className="actor-detail__image-placeholder">👤</div>
-        )}
+      {/* 이미지 영역 — 클릭하여 업로드 */}
+      <div
+        className="actor-detail__image-wrap actor-detail__image-wrap--clickable"
+        onClick={handleImageUpload}
+        title="클릭하여 이미지 업로드 (jpg · png · webp)"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && handleImageUpload()}
+      >
+        <ActorImage
+          fileName={form.image_path}
+          alt={form.name || '배우'}
+          className="actor-detail__image"
+          placeholderClass="actor-detail__image-placeholder"
+        />
+        {uploading
+          ? <div className="actor-detail__image-uploading">⏳</div>
+          : <div className="actor-detail__image-overlay">📷</div>
+        }
       </div>
 
       {/* 폼 */}
@@ -124,17 +149,6 @@ export default function ActorDetailPanel({ actor, videos = [], onSaved, onArchiv
             value={form.name}
             onChange={set('name')}
             placeholder="배우 이름"
-          />
-        </label>
-
-        <label className="actor-detail__field">
-          <span className="actor-detail__label">이미지 경로</span>
-          <input
-            className="actor-detail__input"
-            type="text"
-            value={form.image_path}
-            onChange={set('image_path')}
-            placeholder="이미지 파일 경로 (추후 업로드 지원 예정)"
           />
         </label>
 
