@@ -23,9 +23,10 @@ import DeleteCleanupModal    from './components/DeleteCleanupModal.jsx'
 import FolderPanel           from './components/FolderPanel.jsx'
 import FileCopyModal         from './components/FileCopyModal.jsx'
 import ActorsPage            from './pages/Actors/index.jsx'
+import DashboardPage         from './pages/Dashboard/index.jsx'
 
 export default function App() {
-  // ── 앱 레벨 페이지 탭 ('library' | 'actors') ─────────────
+  // ── 앱 레벨 페이지 탭 ('library' | 'actors' | 'dashboard') ─────────────
   const [appTab, setAppTab] = useState('library')
 
   // ── 동영상 목록 검색/정렬/폴더 상태 (hook) ─────────────────────
@@ -326,6 +327,13 @@ export default function App() {
           >
             배우 관리
           </button>
+          <button
+            type="button"
+            className={`app-tab-btn ${appTab === 'dashboard' ? 'app-tab-btn--active' : ''}`}
+            onClick={() => setAppTab('dashboard')}
+          >
+            대시보드
+          </button>
         </div>
 
         <div className="header-actions">
@@ -381,6 +389,9 @@ export default function App() {
 
       {/* 배우 관리 페이지 */}
       {appTab === 'actors' && <ActorsPage />}
+
+      {/* 대시보드 페이지 */}
+      {appTab === 'dashboard' && <DashboardPage />}
 
       {/* 라이브러리 페이지 (탭변경 시 여기서만 렌더링) */}
       {appTab === 'library' && (

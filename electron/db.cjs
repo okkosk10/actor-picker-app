@@ -219,8 +219,10 @@ function recordVideoActivity(videoId, actionType, meta = null) {
  */
 function getDashboardStats() {
   const database = getDb()
+  console.time('[getDashboardStats] total')
 
   // ── 1. summary ──────────────────────────────────────────────
+  console.time('[getDashboardStats] summary')
   const summaryRow = database.prepare(`
     SELECT
       COUNT(*)                                       AS totalVideos,
@@ -246,8 +248,10 @@ function getDashboardStats() {
     favoriteCount: summaryRow.favoriteCount ?? 0,
     watchedCount:  summaryRow.watchedCount  ?? 0,
   }
+  console.timeEnd('[getDashboardStats] summary')
 
   // ── 2. topActors (play_count 합계 기준 상위 20명) ────────────
+  console.time('[getDashboardStats] topActors')
   const topActors = database.prepare(`
     SELECT
       a.id                                        AS actorId,
@@ -270,8 +274,10 @@ function getDashboardStats() {
     averageRating: r.averageRating  ?? 0,
     playCount:     r.playCount      ?? 0,
   }))
+  console.timeEnd('[getDashboardStats] topActors')
 
   // ── 3. recentVideos (최근 추가/수정 10개) ───────────────────
+  console.time('[getDashboardStats] recentVideos')
   const recentVideos = database.prepare(`
     SELECT id, file_name, actor_name, code, rating, grade, play_count,
            last_played_at, created_at, updated_at
@@ -280,9 +286,11 @@ function getDashboardStats() {
     ORDER BY updated_at DESC, created_at DESC
     LIMIT 10
   `).all()
+  console.timeEnd('[getDashboardStats] recentVideos')
 
   // ── 4. recentActivities (최근 활동 로그 20개) ───────────────
   // video_activity_logs 테이블이 없는 구버전 DB를 위해 안전하게 처리
+  console.time('[getDashboardStats] recentActivities')
   let recentActivities = []
   try {
     recentActivities = database.prepare(`
@@ -312,8 +320,10 @@ function getDashboardStats() {
   } catch {
     // video_activity_logs 미존재 시 빈 배열 반환
   }
+  console.timeEnd('[getDashboardStats] recentActivities')
 
   // ── 5. ratingDistribution ───────────────────────────────────
+  console.time('[getDashboardStats] ratingDistribution')
   const ratingDistribution = database.prepare(`
     SELECT rating, COUNT(*) AS count
     FROM videos
@@ -321,8 +331,10 @@ function getDashboardStats() {
     GROUP BY rating
     ORDER BY rating ASC
   `).all().map((r) => ({ rating: r.rating ?? 0, count: r.count }))
+  console.timeEnd('[getDashboardStats] ratingDistribution')
 
   // ── 6. tagStats (JS에서 쉼표 분리 후 집계) ──────────────────
+  console.time('[getDashboardStats] tagStats')
   const tagRows = database.prepare(`
     SELECT tags FROM videos
     WHERE status != 'missing' AND tags IS NOT NULL AND trim(tags) != ''
@@ -338,7 +350,9 @@ function getDashboardStats() {
   const tagStats = Object.entries(tagMap)
     .map(([tag, count]) => ({ tag, count }))
     .sort((a, b) => b.count - a.count)
+  console.timeEnd('[getDashboardStats] tagStats')
 
+  console.timeEnd('[getDashboardStats] total')
   return {
     summary,
     topActors,
