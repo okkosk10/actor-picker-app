@@ -25,7 +25,7 @@
 const path = require('path')
 const fs   = require('fs')
 const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
-const { getDb, recordVideoActivity } = require('./db.cjs')
+const { getDb, recordVideoActivity, getDashboardStats } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
 
@@ -1448,6 +1448,16 @@ function registerIpcHandlers() {
     } catch {
       return null
     }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 대시보드 통계 조회
+  //
+  // 반환: { summary, topActors, recentVideos, recentActivities,
+  //         ratingDistribution, tagStats }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-dashboard-stats', async () => {
+    return getDashboardStats()
   })
 }
 

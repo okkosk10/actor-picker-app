@@ -202,5 +202,11 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: string | null
   getActorImage: (fileName) =>
     ipcRenderer.invoke('get-actor-image', fileName),
+
+  // ── 대시보드 통계 조회 ────────────────────────────────────────
+  // 반환: { summary, topActors, recentVideos, recentActivities,
+  //         ratingDistribution, tagStats }
+  getDashboardStats: () =>
+    ipcRenderer.invoke('get-dashboard-stats'),
 })
 

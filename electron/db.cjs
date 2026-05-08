@@ -203,4 +203,150 @@ function recordVideoActivity(videoId, actionType, meta = null) {
   }
 }
 
-module.exports = { getDb, closeDb, recordVideoActivity }
+// ── 대시보드 통계 ────────────────────────────────────────────────
+
+/**
+ * 대시보드 화면에 필요한 통계 데이터를 한 번에 조회해 반환한다.
+ *
+ * @returns {{
+ *   summary:           object,
+ *   topActors:         object[],
+ *   recentVideos:      object[],
+ *   recentActivities:  object[],
+ *   ratingDistribution: object[],
+ *   tagStats:          object[],
+ * }}
+ */
+function getDashboardStats() {
+  const database = getDb()
+
+  // ── 1. summary ──────────────────────────────────────────────
+  const summaryRow = database.prepare(`
+    SELECT
+      COUNT(*)                                       AS totalVideos,
+      COALESCE(SUM(size), 0)                         AS totalSize,
+      ROUND(AVG(CASE WHEN rating > 0 THEN rating END), 2) AS averageRating,
+      SUM(CASE WHEN is_new    = 1 THEN 1 ELSE 0 END) AS newCount,
+      SUM(CASE WHEN favorite  = 1 THEN 1 ELSE 0 END) AS favoriteCount,
+      SUM(CASE WHEN play_count > 0 THEN 1 ELSE 0 END) AS watchedCount
+    FROM videos
+    WHERE status != 'missing'
+  `).get()
+
+  const actorCountRow = database.prepare(`
+    SELECT COUNT(*) AS totalActors FROM actors
+  `).get()
+
+  const summary = {
+    totalVideos:   summaryRow.totalVideos   ?? 0,
+    totalActors:   actorCountRow.totalActors ?? 0,
+    totalSize:     summaryRow.totalSize     ?? 0,
+    averageRating: summaryRow.averageRating ?? 0,
+    newCount:      summaryRow.newCount      ?? 0,
+    favoriteCount: summaryRow.favoriteCount ?? 0,
+    watchedCount:  summaryRow.watchedCount  ?? 0,
+  }
+
+  // ── 2. topActors (play_count 합계 기준 상위 20명) ────────────
+  const topActors = database.prepare(`
+    SELECT
+      a.id                                        AS actorId,
+      a.name                                      AS actorName,
+      COUNT(va.video_id)                          AS videoCount,
+      SUM(CASE WHEN va.is_main = 1 THEN 1 ELSE 0 END) AS mainVideoCount,
+      ROUND(AVG(CASE WHEN v.rating > 0 THEN v.rating END), 2) AS averageRating,
+      COALESCE(SUM(v.play_count), 0)              AS playCount
+    FROM actors a
+    LEFT JOIN video_actors va ON va.actor_id = a.id
+    LEFT JOIN videos        v  ON v.id = va.video_id AND v.status != 'missing'
+    GROUP BY a.id
+    ORDER BY playCount DESC, videoCount DESC
+    LIMIT 20
+  `).all().map((r) => ({
+    actorId:       r.actorId,
+    actorName:     r.actorName,
+    videoCount:    r.videoCount     ?? 0,
+    mainVideoCount: r.mainVideoCount ?? 0,
+    averageRating: r.averageRating  ?? 0,
+    playCount:     r.playCount      ?? 0,
+  }))
+
+  // ── 3. recentVideos (최근 추가/수정 10개) ───────────────────
+  const recentVideos = database.prepare(`
+    SELECT id, file_name, actor_name, code, rating, grade, play_count,
+           last_played_at, created_at, updated_at
+    FROM videos
+    WHERE status != 'missing'
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 10
+  `).all()
+
+  // ── 4. recentActivities (최근 활동 로그 20개) ───────────────
+  // video_activity_logs 테이블이 없는 구버전 DB를 위해 안전하게 처리
+  let recentActivities = []
+  try {
+    recentActivities = database.prepare(`
+      SELECT
+        al.id,
+        al.video_id,
+        al.action_type,
+        al.created_at,
+        al.meta_json,
+        v.file_name,
+        v.actor_name,
+        v.code
+      FROM video_activity_logs al
+      LEFT JOIN videos v ON v.id = al.video_id
+      ORDER BY al.created_at DESC
+      LIMIT 20
+    `).all().map((r) => ({
+      id:         r.id,
+      videoId:    r.video_id,
+      actionType: r.action_type,
+      createdAt:  r.created_at,
+      meta:       r.meta_json ? (() => { try { return JSON.parse(r.meta_json) } catch { return null } })() : null,
+      fileName:   r.file_name   ?? null,
+      actorName:  r.actor_name  ?? null,
+      code:       r.code        ?? null,
+    }))
+  } catch {
+    // video_activity_logs 미존재 시 빈 배열 반환
+  }
+
+  // ── 5. ratingDistribution ───────────────────────────────────
+  const ratingDistribution = database.prepare(`
+    SELECT rating, COUNT(*) AS count
+    FROM videos
+    WHERE status != 'missing'
+    GROUP BY rating
+    ORDER BY rating ASC
+  `).all().map((r) => ({ rating: r.rating ?? 0, count: r.count }))
+
+  // ── 6. tagStats (JS에서 쉼표 분리 후 집계) ──────────────────
+  const tagRows = database.prepare(`
+    SELECT tags FROM videos
+    WHERE status != 'missing' AND tags IS NOT NULL AND trim(tags) != ''
+  `).all()
+
+  const tagMap = {}
+  for (const row of tagRows) {
+    const parts = row.tags.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+    for (const tag of parts) {
+      tagMap[tag] = (tagMap[tag] ?? 0) + 1
+    }
+  }
+  const tagStats = Object.entries(tagMap)
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count)
+
+  return {
+    summary,
+    topActors,
+    recentVideos,
+    recentActivities,
+    ratingDistribution,
+    tagStats,
+  }
+}
+
+module.exports = { getDb, closeDb, recordVideoActivity, getDashboardStats }
