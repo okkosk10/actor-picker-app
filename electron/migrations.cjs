@@ -100,6 +100,31 @@ const MIGRATIONS = [
       }
     },
   },
+
+  {
+    version: '005_extend_actors_profile',
+    description: 'actors 테이블에 프로필 관련 컬럼 추가',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(actors)').all().map((c) => c.name)
+
+      const additions = [
+        { name: 'image_path',  def: "TEXT DEFAULT ''" },
+        { name: 'category',    def: "TEXT DEFAULT ''" },
+        { name: 'agency',      def: "TEXT DEFAULT ''" },
+        { name: 'tags',        def: "TEXT DEFAULT ''" },
+        { name: 'rating',      def: 'INTEGER DEFAULT 0' },
+        { name: 'memo',        def: "TEXT DEFAULT ''" },
+        { name: 'is_archived', def: 'INTEGER DEFAULT 0' },
+        { name: 'updated_at',  def: 'TEXT DEFAULT CURRENT_TIMESTAMP' },
+      ]
+
+      for (const col of additions) {
+        if (!cols.includes(col.name)) {
+          db.exec(`ALTER TABLE actors ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────
