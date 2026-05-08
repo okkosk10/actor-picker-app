@@ -22,8 +22,12 @@ import ActorPickPanel        from './components/ActorPickPanel.jsx'
 import DeleteCleanupModal    from './components/DeleteCleanupModal.jsx'
 import FolderPanel           from './components/FolderPanel.jsx'
 import FileCopyModal         from './components/FileCopyModal.jsx'
+import ActorsPage            from './pages/Actors/index.jsx'
 
 export default function App() {
+  // ── 앱 레벨 페이지 탭 ('library' | 'actors') ─────────────
+  const [appTab, setAppTab] = useState('library')
+
   // ── 동영상 목록 검색/정렬/폴더 상태 (hook) ─────────────────────
   const {
     videos, setVideos,
@@ -305,6 +309,25 @@ export default function App() {
         <div className="header-brand">
           <h1 className="app-title">Actor Picker</h1>
         </div>
+
+        {/* 앱 레벨 탭 전환 */}
+        <div className="app-tab-switcher">
+          <button
+            type="button"
+            className={`app-tab-btn ${appTab === 'library' ? 'app-tab-btn--active' : ''}`}
+            onClick={() => setAppTab('library')}
+          >
+            바다
+          </button>
+          <button
+            type="button"
+            className={`app-tab-btn ${appTab === 'actors' ? 'app-tab-btn--active' : ''}`}
+            onClick={() => setAppTab('actors')}
+          >
+            배우 관리
+          </button>
+        </div>
+
         <div className="header-actions">
           <button className="btn-primary" type="button" onClick={handleSelectFolder}>
             폴더 선택
@@ -356,8 +379,14 @@ export default function App() {
         </div>
       </header>
 
-      {/* 탭 바 */}
-      <TabBar
+      {/* 배우 관리 페이지 */}
+      {appTab === 'actors' && <ActorsPage />}
+
+      {/* 라이브러리 페이지 (탭변경 시 여기서만 렌더링) */}
+      {appTab === 'library' && (
+        <>
+          {/* 탭 바 */}
+          <TabBar
         tabMode={tabMode}
         onTabChange={changeTab}
         newCount={newCount}
@@ -472,6 +501,8 @@ export default function App() {
           )}
         </div>
       </div>
+      </>
+      )}
 
       {/* 랜덤 추천 모달 */}
       {randomResult && (

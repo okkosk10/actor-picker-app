@@ -1863,5 +1863,404 @@
   word-break: break-all;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   앱 레벨 탭 전환 (라이브러리 ↔ 배우 관리)
+   ═══════════════════════════════════════════════════════════ */
+.app-tab-switcher {
+  display: flex;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px;
+  flex-shrink: 0;
+}
 
+.app-tab-btn {
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.app-tab-btn:hover { color: var(--text); }
+.app-tab-btn--active {
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   배우 관리 페이지
+   ═══════════════════════════════════════════════════════════ */
+.actors-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.actors-page__body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* 좌측 목록 래퍼 */
+.actors-page__list-wrap {
+  width: 280px;
+  min-width: 200px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+/* 우측 상세 래퍼 */
+.actors-page__detail-wrap {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.actors-page__detail-loading,
+.actors-page__detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 14px;
+  gap: 8px;
+  text-align: center;
+  padding: 40px;
+}
+.actors-page__detail-empty-icon { font-size: 36px; }
+
+/* ── 배우 툴바 ────────────────────────────────────────────── */
+.actor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.actor-toolbar__search {
+  flex: 1;
+  min-width: 160px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  outline: none;
+}
+.actor-toolbar__search:focus {
+  border-color: var(--accent);
+}
+
+.actor-toolbar__archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.actor-toolbar__new-btn {
+  margin-left: auto;
+}
+
+/* ── 배우 목록 ────────────────────────────────────────────── */
+.actor-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.actor-list--loading,
+.actor-list--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  gap: 6px;
+}
+.actor-list__empty-hint { font-size: 12px; }
+
+.actor-list__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+.actor-list__item:last-child { border-bottom: none; }
+.actor-list__item:hover { background: var(--bg); }
+.actor-list__item--active {
+  background: rgba(99, 102, 241, 0.1);
+  border-left: 3px solid var(--accent);
+}
+.actor-list__item--archived { opacity: 0.5; }
+
+.actor-list__thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.actor-list__thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.actor-list__thumb-placeholder { font-size: 18px; }
+
+.actor-list__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.actor-list__name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-h);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.actor-list__archive-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.actor-list__meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actor-list__rating {
+  font-size: 12px;
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+/* ── 배우 상세 패널 ───────────────────────────────────────── */
+.actor-detail {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 640px;
+}
+
+.actor-detail__image-wrap {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.actor-detail__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.actor-detail__image-placeholder { font-size: 48px; }
+
+.actor-detail__form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.actor-detail__row {
+  display: flex;
+  gap: 12px;
+}
+.actor-detail__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+.actor-detail__field--half { flex: 1; }
+
+.actor-detail__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.actor-detail__required { color: #ef4444; }
+
+.actor-detail__input {
+  padding: 7px 10px;
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  outline: none;
+  width: 100%;
+}
+.actor-detail__input:focus { border-color: var(--accent); }
+
+.actor-detail__textarea {
+  padding: 7px 10px;
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  outline: none;
+  resize: vertical;
+  font-family: var(--sans);
+  width: 100%;
+}
+.actor-detail__textarea:focus { border-color: var(--accent); }
+
+.actor-detail__rating-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.actor-detail__star {
+  font-size: 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--border);
+  padding: 0;
+  line-height: 1;
+  transition: color 0.1s;
+}
+.actor-detail__star--on { color: #f59e0b; }
+.actor-detail__star:hover { color: #f59e0b; opacity: 0.7; }
+.actor-detail__star-clear {
+  font-size: 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0 4px;
+  margin-left: 4px;
+}
+
+.actor-detail__error {
+  font-size: 13px;
+  color: #ef4444;
+  margin: 0;
+}
+.actor-detail__success {
+  font-size: 13px;
+  color: #22c55e;
+  margin: 0;
+}
+
+.actor-detail__actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* 연결 작품 목록 */
+.actor-detail__videos {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.actor-detail__videos-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.actor-detail__videos-count {
+  font-size: 12px;
+  padding: 1px 6px;
+  background: var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.actor-detail__videos-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.actor-detail__video-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.actor-detail__video-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  padding: 5px 8px;
+  background: var(--surface);
+  border-radius: 5px;
+  border: 1px solid var(--border);
+}
+.actor-detail__video-code {
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--accent);
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.actor-detail__video-name {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
