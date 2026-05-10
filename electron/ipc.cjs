@@ -448,26 +448,87 @@ function registerIpcHandlers() {
       ? 'AND ' + filterConditions.join(' AND ')
       : ''
 
+    // 폴더 필터 절을 v. 접두사 버전으로 변환 (JOIN 쿼리에서 사용)
+    const folderClauseV = folderClause.replace(/folder_path/g, 'v.folder_path')
+
+    // ── Step 1: 매칭되는 video id 목록 조회 (배우 테이블 JOIN 포함) ──
+    let matchedIds
     if (!query || query.trim() === '') {
-      return db.prepare(`
-        SELECT * FROM videos
-        WHERE 1=1 ${tabClause} ${filterClause} ${folderClause}
-        ORDER BY ${orderClause}
-      `).all(...filterParams, ...folderParams)
+      matchedIds = db.prepare(`
+        SELECT DISTINCT v.id
+        FROM videos v
+        LEFT JOIN video_actors va ON va.video_id = v.id
+        LEFT JOIN actors a ON a.id = va.actor_id
+        WHERE 1=1 ${tabClause} ${filterClause} ${folderClauseV}
+      `).all(...filterParams, ...folderParams).map((r) => r.id)
+    } else {
+      const q = `%${escapeLike(query.trim())}%`
+      matchedIds = db.prepare(`
+        SELECT DISTINCT v.id
+        FROM videos v
+        LEFT JOIN video_actors va ON va.video_id = v.id
+        LEFT JOIN actors a ON a.id = va.actor_id
+        WHERE (
+              v.file_name   LIKE ? ESCAPE '!'
+           OR v.code        LIKE ? ESCAPE '!'
+           OR v.actor_name  LIKE ? ESCAPE '!'
+           OR v.memo        LIKE ? ESCAPE '!'
+           OR v.tags        LIKE ? ESCAPE '!'
+           OR a.name        LIKE ? ESCAPE '!'
+           OR a.aliases     LIKE ? ESCAPE '!'
+           OR a.tags        LIKE ? ESCAPE '!'
+           OR a.memo        LIKE ? ESCAPE '!'
+           OR a.agency      LIKE ? ESCAPE '!'
+        ) ${tabClause} ${filterClause} ${folderClauseV}
+      `).all(q, q, q, q, q, q, q, q, q, q, ...filterParams, ...folderParams).map((r) => r.id)
     }
 
-    const q = `%${query.trim()}%`
-    return db.prepare(`
-      SELECT * FROM videos
-      WHERE (
-            file_name  LIKE ?
-         OR code       LIKE ?
-         OR actor_name LIKE ?
-         OR memo       LIKE ?
-         OR tags       LIKE ?
-      ) ${tabClause} ${filterClause} ${folderClause}
-      ORDER BY ${orderClause}
-    `).all(q, q, q, q, q, ...filterParams, ...folderParams)
+    if (matchedIds.length === 0) return []
+
+    // SQLite IN 절 파라미터 제한(999) 초과 방지: 청크 처리
+    const MAX_PARAMS = 990
+    let videos = []
+    for (let i = 0; i < matchedIds.length; i += MAX_PARAMS) {
+      const chunk = matchedIds.slice(i, i + MAX_PARAMS)
+      const placeholders = chunk.map(() => '?').join(',')
+      const chunk_videos = db.prepare(`
+        SELECT * FROM videos WHERE id IN (${placeholders}) ORDER BY ${orderClause}
+      `).all(...chunk)
+      videos = videos.concat(chunk_videos)
+    }
+
+    // ── Step 2: 매칭된 영상들의 배우 정보 조회 ──────────────────────
+    const actorsByVideoId = {}
+    for (let i = 0; i < matchedIds.length; i += MAX_PARAMS) {
+      const chunk = matchedIds.slice(i, i + MAX_PARAMS)
+      const placeholders = chunk.map(() => '?').join(',')
+      const actorRows = db.prepare(`
+        SELECT va.video_id, a.id AS actor_id, a.name, a.rating, a.tags,
+               a.agency, a.image_path, a.aliases
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id IN (${placeholders})
+        ORDER BY va.video_id, va.order_index ASC
+      `).all(...chunk)
+      for (const row of actorRows) {
+        if (!actorsByVideoId[row.video_id]) actorsByVideoId[row.video_id] = []
+        actorsByVideoId[row.video_id].push(row)
+      }
+    }
+
+    // 전체 결과를 orderClause 기준으로 재정렬 (청크 분리 후 순서 복원)
+    const idOrder = new Map(matchedIds.map((id, idx) => [id, idx]))
+    videos.sort((a, b) => {
+      // orderClause 기반 정렬은 이미 각 청크에서 처리됨
+      // 여러 청크가 있으면 원래 매칭 순서를 따름
+      if (matchedIds.length > MAX_PARAMS) return (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0)
+      return 0
+    })
+
+    return videos.map((v) => ({
+      ...v,
+      actorsList: actorsByVideoId[v.id] || [],
+    }))
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -1213,35 +1274,81 @@ function registerIpcHandlers() {
 
     // 아카이브 필터 (기본: 활성 배우만)
     const archived = options.archived === true ? 1 : 0
-    conditions.push('is_archived = ?')
+    conditions.push('a.is_archived = ?')
     params.push(archived)
 
-    // 이름 검색
+    // 통합 검색 (이름 + 별칭 + 태그 + 메모 + 소속사)
     if (options.query && options.query.trim()) {
-      conditions.push(`name LIKE ? ESCAPE '!'`)
-      params.push('%' + escapeLike(options.query.trim()) + '%')
+      const q = '%' + escapeLike(options.query.trim()) + '%'
+      conditions.push(`(
+        a.name    LIKE ? ESCAPE '!'
+        OR a.aliases LIKE ? ESCAPE '!'
+        OR a.tags    LIKE ? ESCAPE '!'
+        OR a.memo    LIKE ? ESCAPE '!'
+        OR a.agency  LIKE ? ESCAPE '!'
+      )`)
+      params.push(q, q, q, q, q)
     }
 
     // 카테고리 필터
     if (options.category && options.category.trim()) {
-      conditions.push('category = ?')
+      conditions.push('a.category = ?')
       params.push(options.category.trim())
     }
 
     // 소속사 필터
     if (options.agency && options.agency.trim()) {
-      conditions.push('agency = ?')
-      params.push(options.agency.trim())
+      conditions.push(`a.agency LIKE ? ESCAPE '!'`)
+      params.push('%' + escapeLike(options.agency.trim()) + '%')
+    }
+
+    // 태그 필터
+    if (options.tag && options.tag.trim()) {
+      conditions.push(`a.tags LIKE ? ESCAPE '!'`)
+      params.push('%' + escapeLike(options.tag.trim()) + '%')
     }
 
     // 최소 별점
     if (typeof options.minRating === 'number' && options.minRating > 0) {
-      conditions.push('rating >= ?')
+      conditions.push('a.rating >= ?')
       params.push(options.minRating)
     }
 
+    // 최소 작품 수 필터
+    if (typeof options.minVideoCount === 'number' && options.minVideoCount > 0) {
+      conditions.push('(SELECT COUNT(*) FROM video_actors va2 WHERE va2.actor_id = a.id) >= ?')
+      params.push(options.minVideoCount)
+    }
+
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : ''
-    return db.prepare(`SELECT * FROM actors ${where} ORDER BY name ASC`).all(...params)
+
+    // 정렬 기준 (SQL Injection 방지: 화이트리스트)
+    const SORT_ACTORS = {
+      name_asc:          'a.name ASC',
+      name_desc:         'a.name DESC',
+      rating_desc:       'a.rating DESC, a.name ASC',
+      video_count_desc:  'video_count DESC, a.name ASC',
+      open_count_desc:   'open_count DESC, a.name ASC',
+      copy_count_desc:   'copy_count DESC, a.name ASC',
+      updated_desc:      'a.updated_at DESC',
+    }
+    const sortClause = SORT_ACTORS[options.sortBy] || 'a.name ASC'
+
+    return db.prepare(`
+      SELECT
+        a.*,
+        COUNT(DISTINCT va.video_id) AS video_count,
+        COALESCE(SUM(CASE WHEN val.action_type = 'open'              THEN 1 ELSE 0 END), 0) AS open_count,
+        COALESCE(SUM(CASE WHEN val.action_type = 'copy_to_clipboard' THEN 1 ELSE 0 END), 0) AS copy_clipboard_count,
+        COALESCE(SUM(CASE WHEN val.action_type = 'copy_to_device'    THEN 1 ELSE 0 END), 0) AS copy_device_count,
+        COALESCE(SUM(CASE WHEN val.action_type IN ('copy_to_clipboard','copy_to_device') THEN 1 ELSE 0 END), 0) AS copy_count
+      FROM actors a
+      LEFT JOIN video_actors va  ON va.actor_id  = a.id
+      LEFT JOIN video_activity_logs val ON val.video_id = va.video_id
+      ${where}
+      GROUP BY a.id
+      ORDER BY ${sortClause}
+    `).all(...params)
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -1255,15 +1362,325 @@ function registerIpcHandlers() {
     const actor = db.prepare('SELECT * FROM actors WHERE id = ?').get(id)
     if (!actor) return null
 
+    // 연결 작품 (정렬: 대표배우 우선, 별점 높은 순)
     const videos = db.prepare(`
       SELECT v.*
       FROM   videos v
       JOIN   video_actors va ON va.video_id = v.id
       WHERE  va.actor_id = ?
-      ORDER  BY va.is_main DESC, va.order_index ASC, v.created_at DESC
+      ORDER  BY va.is_main DESC, v.rating DESC, va.order_index ASC, v.created_at DESC
     `).all(id)
 
-    return { actor, videos }
+    // 배우 활동 통계
+    const stats = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN val.action_type = 'open'              THEN 1 ELSE 0 END), 0) AS open_count,
+        COALESCE(SUM(CASE WHEN val.action_type = 'copy_to_clipboard' THEN 1 ELSE 0 END), 0) AS copy_clipboard_count,
+        COALESCE(SUM(CASE WHEN val.action_type = 'copy_to_device'    THEN 1 ELSE 0 END), 0) AS copy_device_count
+      FROM video_activity_logs val
+      JOIN video_actors va ON va.video_id = val.video_id
+      WHERE va.actor_id = ?
+    `).get(id) || { open_count: 0, copy_clipboard_count: 0, copy_device_count: 0 }
+
+    // 대표 작품 3개 (별점 + 추천 기준)
+    const topVideos = db.prepare(`
+      SELECT v.id, v.file_name, v.code, v.rating, v.recommended, v.grade
+      FROM videos v
+      JOIN video_actors va ON va.video_id = v.id
+      WHERE va.actor_id = ? AND v.status != 'missing' AND v.status != 'deleted'
+      ORDER BY v.recommended DESC, v.rating DESC
+      LIMIT 3
+    `).all(id)
+
+    return { actor, videos, stats, topVideos }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 영상 목록 조회 (배우 클릭 후 빠른 필터용)
+  //
+  // @param actorId {number} - 배우 ID
+  // @param options {object} - {
+  //   quickFilter: 'all' | 'high_rated' | 'new' | 'recommended' | 'not_copied'
+  //   sortBy:      string  - 정렬 기준
+  // }
+  // 반환: Video[]
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-actor-videos', async (_event, actorId, options = {}) => {
+    const db = getDb()
+    const orderClause = getSortClause(options.sortBy)
+    const qf = options.quickFilter || 'all'
+
+    const conditions = [`va.actor_id = ?`]
+    const params = [actorId]
+
+    if (qf === 'high_rated') {
+      conditions.push(`v.rating >= 4`)
+    } else if (qf === 'new') {
+      conditions.push(`v.is_new = 1`)
+    } else if (qf === 'recommended') {
+      conditions.push(`v.recommended = 1`)
+    } else if (qf === 'not_copied') {
+      conditions.push(`
+        NOT EXISTS (
+          SELECT 1 FROM video_activity_logs val2
+          WHERE val2.video_id = v.id
+            AND val2.action_type IN ('copy_to_clipboard', 'copy_to_device')
+        )
+      `)
+    }
+
+    const where = 'WHERE ' + conditions.join(' AND ')
+    return db.prepare(`
+      SELECT v.*
+      FROM videos v
+      JOIN video_actors va ON va.video_id = v.id
+      ${where}
+        AND v.status != 'missing'
+        AND v.status != 'deleted'
+      ORDER BY ${orderClause}
+    `).all(...params)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우-영상 동기화 (sync-actor-videos)
+  //
+  // videos.actor_name 기반으로 video_actors 테이블을 재동기화한다.
+  // 반환: { synced: number }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('sync-actor-videos', async () => {
+    const db     = getDb()
+    const videos = db.prepare(`
+      SELECT id, actor_name FROM videos
+      WHERE actor_name IS NOT NULL AND trim(actor_name) != ''
+    `).all()
+
+    let synced = 0
+    db.transaction(() => {
+      for (const video of videos) {
+        try {
+          syncVideoActors(db, video.id, video.actor_name)
+          synced++
+        } catch (e) {
+          console.warn(`[sync-actor-videos] video ${video.id} 동기화 실패:`, e.message)
+        }
+      }
+    })()
+
+    return { success: true, synced }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 추천 영상 조회 (get-recommendations)
+  //
+  // @param preset {string}  - 추천 프리셋 이름
+  // @param params {object}  - 프리셋별 추가 파라미터 (tag 등)
+  // 반환: Video[] (actorsList 포함)
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-recommendations', async (_event, preset, extraParams = {}) => {
+    const db   = getDb()
+    const LIMIT = extraParams.limit || 50
+
+    const BASE_COND = `v.status != 'missing' AND v.status != 'deleted'`
+
+    // ── 프리셋별 쿼리 ─────────────────────────────────────────
+    let videoIds = []
+
+    if (preset === 'top_actor_videos') {
+      // 별점 4+ 배우의 작품
+      videoIds = db.prepare(`
+        SELECT DISTINCT v.id
+        FROM videos v
+        JOIN video_actors va ON va.video_id = v.id
+        JOIN actors a ON a.id = va.actor_id AND a.rating >= 4
+        WHERE ${BASE_COND}
+        ORDER BY a.rating DESC, v.rating DESC
+        LIMIT ?
+      `).all(LIMIT).map((r) => r.id)
+
+    } else if (preset === 'top_rated_videos') {
+      // 별점 높은 영상
+      videoIds = db.prepare(`
+        SELECT id FROM videos WHERE ${BASE_COND} AND rating >= 4
+        ORDER BY rating DESC, updated_at DESC
+        LIMIT ?
+      `).all(LIMIT).map((r) => r.id)
+
+    } else if (preset === 'new_top_actor') {
+      // NEW 파일 중 별점 3+ 배우 포함
+      videoIds = db.prepare(`
+        SELECT DISTINCT v.id
+        FROM videos v
+        JOIN video_actors va ON va.video_id = v.id
+        JOIN actors a ON a.id = va.actor_id AND a.rating >= 3
+        WHERE ${BASE_COND} AND v.is_new = 1
+        ORDER BY a.rating DESC
+        LIMIT ?
+      `).all(LIMIT).map((r) => r.id)
+
+    } else if (preset === 'tag_actor_videos') {
+      // 특정 태그 배우의 작품
+      const tag = (extraParams.tag || '').trim()
+      if (!tag) return []
+      const q = '%' + escapeLike(tag) + '%'
+      videoIds = db.prepare(`
+        SELECT DISTINCT v.id
+        FROM videos v
+        JOIN video_actors va ON va.video_id = v.id
+        JOIN actors a ON a.id = va.actor_id AND (a.tags LIKE ? ESCAPE '!')
+        WHERE ${BASE_COND}
+        ORDER BY v.rating DESC, v.updated_at DESC
+        LIMIT ?
+      `).all(q, LIMIT).map((r) => r.id)
+
+    } else if (preset === 'recent_copied_actor') {
+      // 최근 많이 복사한 배우의 작품
+      videoIds = db.prepare(`
+        SELECT DISTINCT v.id
+        FROM videos v
+        JOIN video_actors va ON va.video_id = v.id
+        WHERE ${BASE_COND} AND va.actor_id IN (
+          SELECT DISTINCT va2.actor_id
+          FROM video_activity_logs val
+          JOIN video_actors va2 ON va2.video_id = val.video_id
+          WHERE val.action_type IN ('copy_to_clipboard', 'copy_to_device')
+          ORDER BY val.created_at DESC
+          LIMIT 5
+        )
+        ORDER BY RANDOM()
+        LIMIT ?
+      `).all(LIMIT).map((r) => r.id)
+
+    } else if (preset === 'recent_played_actor') {
+      // 최근 많이 재생한 배우의 작품
+      videoIds = db.prepare(`
+        SELECT DISTINCT v.id
+        FROM videos v
+        JOIN video_actors va ON va.video_id = v.id
+        WHERE ${BASE_COND} AND va.actor_id IN (
+          SELECT DISTINCT va2.actor_id
+          FROM video_activity_logs val
+          JOIN video_actors va2 ON va2.video_id = val.video_id
+          WHERE val.action_type = 'open'
+          ORDER BY val.created_at DESC
+          LIMIT 5
+        )
+        ORDER BY RANDOM()
+        LIMIT ?
+      `).all(LIMIT).map((r) => r.id)
+
+    } else if (preset === 'not_copied_high_rated') {
+      // 복사하지 않은 고평점 작품 (rating >= 4)
+      videoIds = db.prepare(`
+        SELECT v.id FROM videos v
+        WHERE ${BASE_COND} AND v.rating >= 4
+          AND NOT EXISTS (
+            SELECT 1 FROM video_activity_logs val
+            WHERE val.video_id = v.id
+              AND val.action_type IN ('copy_to_clipboard', 'copy_to_device')
+          )
+        ORDER BY v.rating DESC, v.updated_at DESC
+        LIMIT ?
+      `).all(LIMIT).map((r) => r.id)
+
+    } else if (preset === 'random_by_actor') {
+      // 배우 기준 랜덤 — 별점 3+ 배우에서 각 1개
+      const actorRows = db.prepare(`
+        SELECT a.id FROM actors a
+        WHERE a.rating >= 3 AND a.is_archived = 0
+        ORDER BY RANDOM()
+        LIMIT ?
+      `).all(Math.min(LIMIT, 30))
+
+      for (const aRow of actorRows) {
+        const pick = db.prepare(`
+          SELECT v.id FROM videos v
+          JOIN video_actors va ON va.video_id = v.id
+          WHERE va.actor_id = ? AND ${BASE_COND}
+          ORDER BY RANDOM() LIMIT 1
+        `).get(aRow.id)
+        if (pick) videoIds.push(pick.id)
+      }
+
+    } else if (preset === 'similar_tag_actor') {
+      // 자주 복사한 배우와 비슷한 태그의 다른 배우 작품
+      const recentActors = db.prepare(`
+        SELECT DISTINCT a.id, a.tags
+        FROM video_activity_logs val
+        JOIN video_actors va ON va.video_id = val.video_id
+        JOIN actors a ON a.id = va.actor_id AND trim(a.tags) != ''
+        WHERE val.action_type IN ('copy_to_clipboard', 'copy_to_device')
+        ORDER BY val.created_at DESC
+        LIMIT 3
+      `).all()
+
+      // 최근 배우들의 태그를 합산
+      const tagSet = new Set()
+      for (const ra of recentActors) {
+        const tags = (ra.tags || '').split(',').map((t) => t.trim()).filter(Boolean)
+        tags.forEach((t) => tagSet.add(t))
+      }
+      const recentActorIds = new Set(recentActors.map((r) => r.id))
+
+      if (tagSet.size > 0) {
+        // 같은 태그를 가진 다른 배우의 영상
+        const tagConditions = Array.from(tagSet).map(() => `a.tags LIKE ? ESCAPE '!'`)
+        const tagParams = Array.from(tagSet).map((t) => '%' + escapeLike(t) + '%')
+        const excludeIds = Array.from(recentActorIds)
+
+        videoIds = db.prepare(`
+          SELECT DISTINCT v.id
+          FROM videos v
+          JOIN video_actors va ON va.video_id = v.id
+          JOIN actors a ON a.id = va.actor_id
+          WHERE ${BASE_COND}
+            AND (${tagConditions.join(' OR ')})
+            ${excludeIds.length > 0 ? `AND a.id NOT IN (${excludeIds.map(() => '?').join(',')})` : ''}
+          ORDER BY v.rating DESC, RANDOM()
+          LIMIT ?
+        `).all(...tagParams, ...excludeIds, LIMIT).map((r) => r.id)
+      }
+
+    } else {
+      return []
+    }
+
+    if (videoIds.length === 0) return []
+
+    // 영상 데이터 + actorsList 조회
+    const MAX_PARAMS = 990
+    let videos = []
+    for (let i = 0; i < videoIds.length; i += MAX_PARAMS) {
+      const chunk = videoIds.slice(i, i + MAX_PARAMS)
+      const ph = chunk.map(() => '?').join(',')
+      const rows = db.prepare(`SELECT * FROM videos WHERE id IN (${ph})`).all(...chunk)
+      videos = videos.concat(rows)
+    }
+
+    const actorsByVideoId = {}
+    for (let i = 0; i < videoIds.length; i += MAX_PARAMS) {
+      const chunk = videoIds.slice(i, i + MAX_PARAMS)
+      const ph = chunk.map(() => '?').join(',')
+      const actorRows = db.prepare(`
+        SELECT va.video_id, a.id AS actor_id, a.name, a.rating, a.tags,
+               a.agency, a.image_path, a.aliases
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id IN (${ph})
+        ORDER BY va.video_id, va.order_index ASC
+      `).all(...chunk)
+      for (const row of actorRows) {
+        if (!actorsByVideoId[row.video_id]) actorsByVideoId[row.video_id] = []
+        actorsByVideoId[row.video_id].push(row)
+      }
+    }
+
+    const idOrder = new Map(videoIds.map((id, idx) => [id, idx]))
+    videos.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0))
+
+    return videos.map((v) => ({
+      ...v,
+      actorsList: actorsByVideoId[v.id] || [],
+    }))
   })
 
   // ══════════════════════════════════════════════════════════════

@@ -183,6 +183,22 @@ const MIGRATIONS = [
       `)
     },
   },
+
+  {
+    version: '008_add_actor_aliases',
+    description: 'actors 테이블에 aliases 컬럼 추가 (별칭/다른 이름으로 배우 검색 지원)',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(actors)').all().map((c) => c.name)
+      if (!cols.includes('aliases')) {
+        db.exec(`ALTER TABLE actors ADD COLUMN aliases TEXT DEFAULT ''`)
+      }
+      // video_activity_logs에 actor_id 컬럼 추가 (배우별 통계 고속 집계용)
+      const logCols = db.prepare('PRAGMA table_info(video_activity_logs)').all().map((c) => c.name)
+      if (!logCols.includes('actor_id')) {
+        db.exec(`ALTER TABLE video_activity_logs ADD COLUMN actor_id INTEGER`)
+      }
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

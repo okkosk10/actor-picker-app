@@ -236,17 +236,35 @@ function getDashboardStats() {
   `).get()
 
   const actorCountRow = database.prepare(`
-    SELECT COUNT(*) AS totalActors FROM actors
+    SELECT COUNT(*) AS totalActors FROM actors WHERE is_archived = 0
   `).get()
 
+  // 활동 로그 집계 (복사/재생 총 횟수)
+  let openTotal = 0, copyClipTotal = 0, copyDeviceTotal = 0
+  try {
+    const actSummary = database.prepare(`
+      SELECT
+        SUM(CASE WHEN action_type = 'open'              THEN 1 ELSE 0 END) AS open_total,
+        SUM(CASE WHEN action_type = 'copy_to_clipboard' THEN 1 ELSE 0 END) AS copy_clip_total,
+        SUM(CASE WHEN action_type = 'copy_to_device'    THEN 1 ELSE 0 END) AS copy_device_total
+      FROM video_activity_logs
+    `).get()
+    openTotal      = actSummary.open_total       ?? 0
+    copyClipTotal  = actSummary.copy_clip_total  ?? 0
+    copyDeviceTotal= actSummary.copy_device_total ?? 0
+  } catch { /* 로그 테이블 없는 구버전 */ }
+
   const summary = {
-    totalVideos:   summaryRow.totalVideos   ?? 0,
-    totalActors:   actorCountRow.totalActors ?? 0,
-    totalSize:     summaryRow.totalSize     ?? 0,
-    averageRating: summaryRow.averageRating ?? 0,
-    newCount:      summaryRow.newCount      ?? 0,
-    favoriteCount: summaryRow.favoriteCount ?? 0,
-    watchedCount:  summaryRow.watchedCount  ?? 0,
+    totalVideos:    summaryRow.totalVideos   ?? 0,
+    totalActors:    actorCountRow.totalActors ?? 0,
+    totalSize:      summaryRow.totalSize     ?? 0,
+    averageRating:  summaryRow.averageRating ?? 0,
+    newCount:       summaryRow.newCount      ?? 0,
+    favoriteCount:  summaryRow.favoriteCount ?? 0,
+    watchedCount:   summaryRow.watchedCount  ?? 0,
+    openTotal,
+    copyClipTotal,
+    copyDeviceTotal,
   }
   console.timeEnd('[getDashboardStats] summary')
 
@@ -256,6 +274,7 @@ function getDashboardStats() {
     SELECT
       a.id                                        AS actorId,
       a.name                                      AS actorName,
+      a.rating                                    AS actorRating,
       COUNT(va.video_id)                          AS videoCount,
       SUM(CASE WHEN va.is_main = 1 THEN 1 ELSE 0 END) AS mainVideoCount,
       ROUND(AVG(CASE WHEN v.rating > 0 THEN v.rating END), 2) AS averageRating,
@@ -263,18 +282,61 @@ function getDashboardStats() {
     FROM actors a
     LEFT JOIN video_actors va ON va.actor_id = a.id
     LEFT JOIN videos        v  ON v.id = va.video_id AND v.status != 'missing'
+    WHERE a.is_archived = 0
     GROUP BY a.id
     ORDER BY playCount DESC, videoCount DESC
     LIMIT 20
   `).all().map((r) => ({
     actorId:       r.actorId,
     actorName:     r.actorName,
-    videoCount:    r.videoCount     ?? 0,
+    actorRating:   r.actorRating   ?? 0,
+    videoCount:    r.videoCount    ?? 0,
     mainVideoCount: r.mainVideoCount ?? 0,
     averageRating: r.averageRating  ?? 0,
     playCount:     r.playCount      ?? 0,
   }))
   console.timeEnd('[getDashboardStats] topActors')
+
+  // ── 2b. topCopyActors (복사 횟수 기준 상위 10명) ─────────────
+  console.time('[getDashboardStats] topCopyActors')
+  let topCopyActors = []
+  try {
+    topCopyActors = database.prepare(`
+      SELECT
+        a.id   AS actorId,
+        a.name AS actorName,
+        a.rating AS actorRating,
+        COUNT(DISTINCT va.video_id) AS videoCount,
+        COALESCE(SUM(CASE WHEN val.action_type IN ('copy_to_clipboard','copy_to_device') THEN 1 ELSE 0 END), 0) AS copyCount,
+        COALESCE(SUM(CASE WHEN val.action_type = 'open' THEN 1 ELSE 0 END), 0) AS openCount
+      FROM actors a
+      LEFT JOIN video_actors va ON va.actor_id = a.id
+      LEFT JOIN video_activity_logs val ON val.video_id = va.video_id
+      WHERE a.is_archived = 0
+      GROUP BY a.id
+      HAVING copyCount > 0
+      ORDER BY copyCount DESC
+      LIMIT 10
+    `).all().map((r) => ({
+      actorId:    r.actorId,
+      actorName:  r.actorName,
+      actorRating: r.actorRating ?? 0,
+      videoCount: r.videoCount  ?? 0,
+      copyCount:  r.copyCount   ?? 0,
+      openCount:  r.openCount   ?? 0,
+    }))
+  } catch { /* 로그 테이블 없는 구버전 */ }
+  console.timeEnd('[getDashboardStats] topCopyActors')
+
+  // ── 2c. actorRatingDistribution ──────────────────────────────
+  console.time('[getDashboardStats] actorRatingDist')
+  const actorRatingDistribution = database.prepare(`
+    SELECT rating, COUNT(*) AS count
+    FROM actors WHERE is_archived = 0
+    GROUP BY rating ORDER BY rating ASC
+  `).all().map((r) => ({ rating: r.rating ?? 0, count: r.count }))
+
+  console.timeEnd('[getDashboardStats] actorRatingDist')
 
   // ── 3. recentVideos (최근 추가/수정 10개) ───────────────────
   console.time('[getDashboardStats] recentVideos')
@@ -352,14 +414,35 @@ function getDashboardStats() {
     .sort((a, b) => b.count - a.count)
   console.timeEnd('[getDashboardStats] tagStats')
 
+  // ── 7. actorTagStats (배우 태그별 배우 수) ──────────────────
+  console.time('[getDashboardStats] actorTagStats')
+  const actorTagRows = database.prepare(`
+    SELECT tags FROM actors WHERE is_archived = 0 AND tags IS NOT NULL AND trim(tags) != ''
+  `).all()
+  const actorTagMap = {}
+  for (const row of actorTagRows) {
+    const parts = row.tags.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+    for (const tag of parts) {
+      actorTagMap[tag] = (actorTagMap[tag] ?? 0) + 1
+    }
+  }
+  const actorTagStats = Object.entries(actorTagMap)
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 20)
+  console.timeEnd('[getDashboardStats] actorTagStats')
+
   console.timeEnd('[getDashboardStats] total')
   return {
     summary,
     topActors,
+    topCopyActors,
+    actorRatingDistribution,
     recentVideos,
     recentActivities,
     ratingDistribution,
     tagStats,
+    actorTagStats,
   }
 }
 

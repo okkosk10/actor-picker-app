@@ -1,35 +1,48 @@
 /**
  * src/pages/Actors/index.jsx
- * 배우 관리 페이지
- *
- * 레이아웃: ActorToolbar / [ ActorList | ActorDetailPanel ]
+ * 배우 탐색 허브 — 검색·필터·통계·상세 패널 통합
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import ActorToolbar     from '../../components/actors/ActorToolbar.jsx'
 import ActorList        from '../../components/actors/ActorList.jsx'
 import ActorDetailPanel from '../../components/actors/ActorDetailPanel.jsx'
+
+const DEFAULT_FILTERS = {
+  minRating:     0,
+  agency:        '',
+  tag:           '',
+  minVideoCount: 0,
+  sortBy:        'name_asc',
+}
 
 export default function ActorsPage() {
   const [actors,       setActors]       = useState([])
   const [loading,      setLoading]      = useState(false)
   const [query,        setQuery]        = useState('')
+  const [filters,      setFilters]      = useState(DEFAULT_FILTERS)
   const [showArchived, setShowArchived] = useState(false)
+  const [syncStatus,   setSyncStatus]   = useState(null)
 
-  // 선택된 배우 (null = 신규 생성 모드 아님, 선택 없음)
   const [selectedActor, setSelectedActor] = useState(null)
-  // 상세 조회 결과 (연결 작품 포함)
   const [actorDetail,   setActorDetail]   = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
-  // 신규 생성 모드
   const [isCreating,    setIsCreating]    = useState(false)
 
+  // 디바운스 타이머
+  const debounceRef = useRef(null)
+
   // ── 배우 목록 조회 ──────────────────────────────────────────
-  const fetchActors = useCallback(async () => {
+  const fetchActors = useCallback(async (q, flt, arch) => {
     setLoading(true)
     try {
       const result = await window.api.getActors({
-        query:    query.trim() || undefined,
-        archived: showArchived ? undefined : false,
+        query:         q.trim() || undefined,
+        archived:      arch ? undefined : false,
+        minRating:     flt.minRating  || undefined,
+        agency:        flt.agency     || undefined,
+        tag:           flt.tag        || undefined,
+        minVideoCount: flt.minVideoCount || undefined,
+        sortBy:        flt.sortBy,
       })
       setActors(result)
     } catch (e) {
@@ -37,9 +50,21 @@ export default function ActorsPage() {
     } finally {
       setLoading(false)
     }
-  }, [query, showArchived])
+  }, [])
 
-  useEffect(() => { fetchActors() }, [fetchActors])
+  // 검색어/필터 변경 시 디바운스 조회
+  useEffect(() => {
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      fetchActors(query, filters, showArchived)
+    }, 300)
+    return () => clearTimeout(debounceRef.current)
+  }, [query, filters, showArchived, fetchActors])
+
+  // ── 필터 패치 ───────────────────────────────────────────────
+  const handleFiltersChange = (patch) => {
+    setFilters((prev) => ({ ...prev, ...patch }))
+  }
 
   // ── 배우 선택 → 상세 조회 ───────────────────────────────────
   const handleSelect = useCallback(async (actor) => {
@@ -66,8 +91,7 @@ export default function ActorsPage() {
 
   // ── 저장/생성 완료 ──────────────────────────────────────────
   const handleSaved = async (savedActor) => {
-    await fetchActors()
-    // 저장 후 해당 배우 선택 상태로 전환
+    await fetchActors(query, filters, showArchived)
     setIsCreating(false)
     setSelectedActor(savedActor)
     setDetailLoading(true)
@@ -75,7 +99,7 @@ export default function ActorsPage() {
       const detail = await window.api.getActorDetail(savedActor.id)
       setActorDetail(detail)
     } catch {
-      setActorDetail({ actor: savedActor, videos: [] })
+      setActorDetail({ actor: savedActor, videos: [], stats: {}, topVideos: [] })
     } finally {
       setDetailLoading(false)
     }
@@ -83,31 +107,61 @@ export default function ActorsPage() {
 
   // ── 아카이브/복구 완료 ──────────────────────────────────────
   const handleArchived = async (updated) => {
-    await fetchActors()
+    await fetchActors(query, filters, showArchived)
     setSelectedActor(updated)
     setActorDetail((prev) =>
-      prev ? { ...prev, actor: updated } : { actor: updated, videos: [] }
+      prev ? { ...prev, actor: updated } : { actor: updated, videos: [], stats: {}, topVideos: [] }
     )
   }
 
-  // 표시할 패널 결정
+  // ── 배우-영상 동기화 ─────────────────────────────────────────
+  const handleSync = async () => {
+    setSyncStatus('동기화 중…')
+    try {
+      const result = await window.api.syncActorVideos()
+      setSyncStatus(`완료 — ${result.synced}개 영상 동기화됨`)
+      await fetchActors(query, filters, showArchived)
+      if (selectedActor) {
+        const detail = await window.api.getActorDetail(selectedActor.id)
+        setActorDetail(detail)
+      }
+    } catch (e) {
+      setSyncStatus('동기화 실패: ' + e.message)
+    }
+    setTimeout(() => setSyncStatus(null), 4000)
+  }
+
   const showPanel   = isCreating || selectedActor !== null
   const panelActor  = isCreating ? null : (actorDetail?.actor ?? selectedActor)
-  const panelVideos = actorDetail?.videos ?? []
+  const panelVideos = actorDetail?.videos   ?? []
+  const panelStats  = actorDetail?.stats    ?? {}
+  const panelTop    = actorDetail?.topVideos ?? []
 
   return (
     <div className="actors-page">
       <ActorToolbar
         query={query}
         onQueryChange={setQuery}
+        filters={filters}
+        onFiltersChange={handleFiltersChange}
         showArchived={showArchived}
         onToggleArchived={setShowArchived}
         onNewActor={handleNewActor}
+        onSync={handleSync}
       />
+
+      {syncStatus && (
+        <div className="actors-page__sync-status">{syncStatus}</div>
+      )}
 
       <div className="actors-page__body">
         {/* 좌측: 배우 리스트 */}
         <div className="actors-page__list-wrap">
+          <div className="actors-page__list-header">
+            <span className="actors-page__list-count">
+              {actors.length}명
+            </span>
+          </div>
           <ActorList
             actors={actors}
             selectedId={selectedActor?.id ?? null}
@@ -126,6 +180,8 @@ export default function ActorsPage() {
                 key={isCreating ? 'new' : selectedActor?.id}
                 actor={panelActor}
                 videos={panelVideos}
+                stats={panelStats}
+                topVideos={panelTop}
                 onSaved={handleSaved}
                 onArchived={handleArchived}
               />
@@ -134,6 +190,9 @@ export default function ActorsPage() {
             <div className="actors-page__detail-empty">
               <div className="actors-page__detail-empty-icon">👈</div>
               <p>배우를 선택하면 상세 정보가 표시됩니다.</p>
+              <p className="actors-page__detail-empty-hint">
+                이름·별칭·태그·소속사로 검색 가능
+              </p>
             </div>
           )}
         </div>

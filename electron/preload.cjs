@@ -208,5 +208,34 @@ contextBridge.exposeInMainWorld('api', {
   //         ratingDistribution, tagStats }
   getDashboardStats: () =>
     ipcRenderer.invoke('get-dashboard-stats'),
+
+  // ── 배우 영상 목록 조회 (빠른 필터 포함) ──────────────────────
+  // @param actorId  {number}  - 배우 ID
+  // @param options  {{ quickFilter?, sortBy? }}
+  //   quickFilter: 'all' | 'high_rated' | 'new' | 'recommended' | 'not_copied'
+  // 반환: Video[]
+  getActorVideos: (actorId, options) =>
+    ipcRenderer.invoke('get-actor-videos', actorId, options),
+
+  // ── 배우-영상 동기화 (videos.actor_name → video_actors) ───────
+  // 반환: { success: boolean, synced: number }
+  syncActorVideos: () =>
+    ipcRenderer.invoke('sync-actor-videos'),
+
+  // ── 추천 영상 조회 ─────────────────────────────────────────────
+  // @param preset {string}  - 추천 프리셋
+  //   'top_actor_videos'   : 별점 높은 배우의 작품
+  //   'top_rated_videos'   : 별점 높은 영상
+  //   'new_top_actor'      : NEW 중 고평점 배우 포함 작품
+  //   'tag_actor_videos'   : 특정 태그 배우의 작품 (params.tag 필요)
+  //   'recent_copied_actor': 최근 많이 복사한 배우의 작품
+  //   'recent_played_actor': 최근 많이 재생한 배우의 작품
+  //   'not_copied_high_rated': 아직 복사하지 않은 고평점 작품
+  //   'random_by_actor'    : 배우별 랜덤 추천
+  //   'similar_tag_actor'  : 자주 복사한 배우와 비슷한 태그의 배우 작품
+  // @param params {object}  - 프리셋별 추가 파라미터
+  // 반환: Video[] (actorsList 포함)
+  getRecommendations: (preset, params) =>
+    ipcRenderer.invoke('get-recommendations', preset, params),
 })
 
