@@ -16,20 +16,22 @@
  *                  4행: 파일명
  *                  5행: 폴더명 | 메모
  */
+import { memo, useMemo } from 'react'
 import { Tag }      from 'antd'
 import StarRating   from './StarRating.jsx'
 import { GRADE_COLORS, parseActors } from '../utils/format.js'
 
 const STATUS_MISSING_COLOR = 'red'
 
-export default function VideoItem({ video, selected, onClick, checked, onToggle }) {
+const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, onToggle }) {
   const borderClass = video.status === 'missing' ? ' video-item--missing' : ''
 
-  const tagList = video.tags
-    ? video.tags.split(',').map((t) => t.trim()).filter(Boolean)
-    : []
+  const tagList = useMemo(
+    () => video.tags ? video.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+    [video.tags]
+  )
 
-  const actors = parseActors(video.actor_name)
+  const actors = useMemo(() => parseActors(video.actor_name), [video.actor_name])
 
   return (
     <div
@@ -128,4 +130,6 @@ export default function VideoItem({ video, selected, onClick, checked, onToggle 
       </div>{/* vi-content end */}
     </div>
   )
-}
+})
+
+export default VideoItem

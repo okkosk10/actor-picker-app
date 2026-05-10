@@ -5,7 +5,7 @@
  * 앱 탭: library | actors | recommendations | dashboard
  * 라이브러리 서브탭: all | new | recommended
  */
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Alert } from 'antd'
 import './App.css'
 
@@ -55,7 +55,6 @@ export default function App() {
   const [folderRefreshKey,  setFolderRefreshKey]  = useState(0)
   const [newCount,          setNewCount]          = useState(0)
   const [isAutoScanning,    setIsAutoScanning]    = useState(false)
-  const hasAutoScannedRef = useRef(false)
 
   // ── NEW 카운트 갱신 ───────────────────────────────────────────
   const refreshNewCount = useCallback(async () => {
@@ -65,35 +64,10 @@ export default function App() {
     } catch { /* 조용히 무시 */ }
   }, [])
 
-  useEffect(() => { refreshNewCount() }, [refreshNewCount])
-
-  // ── 앱 시작 자동 스캔 ─────────────────────────────────────────
+  // 앱 시작 시 DB 조회 + NEW count만 (스캔 없음)
   useEffect(() => {
-    if (hasAutoScannedRef.current) return
-    hasAutoScannedRef.current = true
-
-    ;(async () => {
-      try {
-        setIsAutoScanning(true)
-        const { folders } = await window.api.getFolderList()
-        if (!folders || folders.length === 0) return
-        for (const folder of folders) {
-          const scanPath = folder.root_path || folder.path
-          if (!scanPath) continue
-          try { await window.api.scanFolder(scanPath) } catch (err) {
-            console.error('자동 스캔 실패:', scanPath, err)
-          }
-        }
-        await refresh()
-        await refreshNewCount()
-        setFolderRefreshKey((k) => k + 1)
-      } catch (err) {
-        console.error('앱 시작 자동 스캔 실패:', err)
-      } finally {
-        setIsAutoScanning(false)
-      }
-    })()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    refreshNewCount()
+  }, [refreshNewCount])
 
   // ── 폴더 선택 ─────────────────────────────────────────────────
   const handleSelectFolder = async () => {
@@ -168,12 +142,12 @@ export default function App() {
   const handleOpenFileCopy = useCallback(() => setShowFileCopyModal(true), [])
 
   // ── 체크박스 ──────────────────────────────────────────────────
-  const handleToggleCheck = (_e, id) => {
+  const handleToggleCheck = useCallback((_e, id) => {
     setCheckedIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
-  }
-  const handleToggleAll = (checkAll) => {
+  }, [])
+  const handleToggleAll = useCallback((checkAll) => {
     setCheckedIds(checkAll ? new Set(videos.map((v) => v.id)) : new Set())
-  }
+  }, [videos])
 
   // ── NEW 해제 ──────────────────────────────────────────────────
   const handleClearCheckedNew = async () => {
@@ -218,14 +192,14 @@ export default function App() {
   }
 
   // ── 삭제 완료 ─────────────────────────────────────────────────
-  const handleDeleted = () => { refresh(); setFolderRefreshKey((k) => k + 1) }
+  const handleDeleted = useCallback(() => { refresh(); setFolderRefreshKey((k) => k + 1) }, [refresh])
 
   // ── 메타 업데이트 ─────────────────────────────────────────────
-  const handleVideoUpdated = (updated) => {
+  const handleVideoUpdated = useCallback((updated) => {
     setVideos((prev) => prev.map((v) => (v.id === updated.id ? updated : v)))
     setSelectedVideo(updated)
     refreshNewCount()
-  }
+  }, [refreshNewCount])
 
   // ── 전체 새로고침 ─────────────────────────────────────────────
   const handleRefreshSearch = async () => {

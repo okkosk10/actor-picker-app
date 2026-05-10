@@ -59,8 +59,10 @@ export function useVideoSearch() {
    * @param {object}      flt     - 필터 조건 객체
    * @param {string}      tab     - 탭 모드 ('all' | 'new' | 'recommended')
    * @param {string|null} folder  - 폴더 필터 (null이면 전체)
+   * @param {number}      [limit]  - 최대 반환 건수 (미지정 시 전체)
+   * @param {number}      [offset] - 페이지네이션 시작 위치 (미지정 시 0)
    */
-  const loadVideos = useCallback(async (query, sort, flt, tab, folder) => {
+  const loadVideos = useCallback(async (query, sort, flt, tab, folder, limit, offset) => {
     setLoading(true)
     setError(null)
     try {
@@ -69,6 +71,8 @@ export function useVideoSearch() {
         filters:       flt,
         tabMode:       tab,
         currentFolder: folder,
+        ...(limit  !== undefined && { limit }),
+        ...(offset !== undefined && { offset }),
       })
       setVideos(result)
     } catch (e) {

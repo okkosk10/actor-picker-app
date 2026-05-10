@@ -476,9 +476,17 @@
 .video-list {
   width: 380px;
   min-width: 300px;
-  overflow-y: auto;
   border-right: 1px solid var(--border);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;  /* 스크롤은 내부 .video-list-scroll이 담당 */
+}
+
+/* 가상 스크롤 컨테이너: 남은 높이 모두 차지하고 스크롤 */
+.video-list-scroll {
+  flex: 1;
+  overflow-y: auto;
 }
 
 /* ── 빈 상태 ─────────────────────────────────────────────── */

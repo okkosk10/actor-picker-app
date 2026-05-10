@@ -450,6 +450,10 @@ function registerIpcHandlers() {
 
     // ── 단일 스캔 쿼리 (ID 중간 수집 없이 videos 직접 조회 + ORDER BY) ────
     // folderClause 는 단일 테이블이므로 접두사 없이 그대로 사용 가능
+    // limit/offset: 추후 페이지네이션 대응 (0 또는 미지정 시 전체 조회)
+    const limit  = (typeof options.limit  === 'number' && options.limit  > 0) ? options.limit  : null
+    const offset = (typeof options.offset === 'number' && options.offset >= 0) ? options.offset : 0
+    const limitClause = limit ? `LIMIT ${limit} OFFSET ${offset}` : ''
     let videos
     if (!query || query.trim() === '') {
       // 빈 검색: 조건 + 정렬을 한 번에 (두 번 스캔 제거)
@@ -457,6 +461,7 @@ function registerIpcHandlers() {
         SELECT * FROM videos
         WHERE 1=1 ${tabClause} ${filterClause} ${folderClause}
         ORDER BY ${orderClause}
+        ${limitClause}
       `).all(...filterParams, ...folderParams)
     } else {
       // 검색어: videos 필드 LIKE + 배우 필드는 EXISTS (DISTINCT 불필요)
@@ -481,6 +486,7 @@ function registerIpcHandlers() {
               )
         ) ${tabClause} ${filterClause} ${folderClause}
         ORDER BY ${orderClause}
+        ${limitClause}
       `).all(q, q, q, q, q, q, q, q, q, ...filterParams, ...folderParams)
     }
 
