@@ -440,7 +440,7 @@ export default function App() {
         <FileCopyModal
           videos={videos}
           selectedIds={checkedIds}
-          onClose={() => setShowFileCopyModal(false)}
+          onClose={() => { setShowFileCopyModal(false); setCheckedIds(new Set()) }}
         />
       )}
     </div>

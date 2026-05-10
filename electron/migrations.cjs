@@ -199,6 +199,18 @@ const MIGRATIONS = [
       }
     },
   },
+
+  {
+    version: '009_add_sort_indexes',
+    description: '정렬 성능 인덱스 추가 (created_at, updated_at, is_new+status 복합)',
+    up(db) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_videos_created_at ON videos (created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_videos_updated_at ON videos (updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_videos_is_new_status ON videos (is_new, status);
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

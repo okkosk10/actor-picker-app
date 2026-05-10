@@ -448,87 +448,64 @@ function registerIpcHandlers() {
       ? 'AND ' + filterConditions.join(' AND ')
       : ''
 
-    // 폴더 필터 절을 v. 접두사 버전으로 변환 (JOIN 쿼리에서 사용)
-    const folderClauseV = folderClause.replace(/folder_path/g, 'v.folder_path')
-
-    // ── Step 1: 매칭되는 video id 목록 조회 (배우 테이블 JOIN 포함) ──
-    let matchedIds
+    // ── 단일 스캔 쿼리 (ID 중간 수집 없이 videos 직접 조회 + ORDER BY) ────
+    // folderClause 는 단일 테이블이므로 접두사 없이 그대로 사용 가능
+    let videos
     if (!query || query.trim() === '') {
-      matchedIds = db.prepare(`
-        SELECT DISTINCT v.id
-        FROM videos v
-        LEFT JOIN video_actors va ON va.video_id = v.id
-        LEFT JOIN actors a ON a.id = va.actor_id
-        WHERE 1=1 ${tabClause} ${filterClause} ${folderClauseV}
-      `).all(...filterParams, ...folderParams).map((r) => r.id)
+      // 빈 검색: 조건 + 정렬을 한 번에 (두 번 스캔 제거)
+      videos = db.prepare(`
+        SELECT * FROM videos
+        WHERE 1=1 ${tabClause} ${filterClause} ${folderClause}
+        ORDER BY ${orderClause}
+      `).all(...filterParams, ...folderParams)
     } else {
+      // 검색어: videos 필드 LIKE + 배우 필드는 EXISTS (DISTINCT 불필요)
       const q = `%${escapeLike(query.trim())}%`
-      matchedIds = db.prepare(`
-        SELECT DISTINCT v.id
-        FROM videos v
-        LEFT JOIN video_actors va ON va.video_id = v.id
-        LEFT JOIN actors a ON a.id = va.actor_id
+      videos = db.prepare(`
+        SELECT v.* FROM videos v
         WHERE (
-              v.file_name   LIKE ? ESCAPE '!'
-           OR v.code        LIKE ? ESCAPE '!'
-           OR v.actor_name  LIKE ? ESCAPE '!'
-           OR v.memo        LIKE ? ESCAPE '!'
-           OR v.tags        LIKE ? ESCAPE '!'
-           OR a.name        LIKE ? ESCAPE '!'
-           OR a.aliases     LIKE ? ESCAPE '!'
-           OR a.tags        LIKE ? ESCAPE '!'
-           OR a.memo        LIKE ? ESCAPE '!'
-           OR a.agency      LIKE ? ESCAPE '!'
-        ) ${tabClause} ${filterClause} ${folderClauseV}
-      `).all(q, q, q, q, q, q, q, q, q, q, ...filterParams, ...folderParams).map((r) => r.id)
+              v.file_name  LIKE ? ESCAPE '!'
+           OR v.code       LIKE ? ESCAPE '!'
+           OR v.actor_name LIKE ? ESCAPE '!'
+           OR v.memo       LIKE ? ESCAPE '!'
+           OR v.tags       LIKE ? ESCAPE '!'
+           OR EXISTS (
+                SELECT 1 FROM video_actors va
+                JOIN actors a ON a.id = va.actor_id
+                WHERE va.video_id = v.id AND (
+                      a.name    LIKE ? ESCAPE '!'
+                   OR a.aliases LIKE ? ESCAPE '!'
+                   OR a.tags    LIKE ? ESCAPE '!'
+                   OR a.agency  LIKE ? ESCAPE '!'
+                )
+              )
+        ) ${tabClause} ${filterClause} ${folderClause}
+        ORDER BY ${orderClause}
+      `).all(q, q, q, q, q, q, q, q, q, ...filterParams, ...folderParams)
     }
 
-    if (matchedIds.length === 0) return []
+    if (videos.length === 0) return []
 
-    // SQLite IN 절 파라미터 제한(999) 초과 방지: 청크 처리
+    // ── 배우 정보 일괄 조회 (IN 절 999 제한 청크 처리) ────────────────
     const MAX_PARAMS = 990
-    let videos = []
-    for (let i = 0; i < matchedIds.length; i += MAX_PARAMS) {
-      const chunk = matchedIds.slice(i, i + MAX_PARAMS)
-      const placeholders = chunk.map(() => '?').join(',')
-      const chunk_videos = db.prepare(`
-        SELECT * FROM videos WHERE id IN (${placeholders}) ORDER BY ${orderClause}
-      `).all(...chunk)
-      videos = videos.concat(chunk_videos)
-    }
-
-    // ── Step 2: 매칭된 영상들의 배우 정보 조회 ──────────────────────
+    const matchedIds = videos.map((v) => v.id)
     const actorsByVideoId = {}
     for (let i = 0; i < matchedIds.length; i += MAX_PARAMS) {
       const chunk = matchedIds.slice(i, i + MAX_PARAMS)
-      const placeholders = chunk.map(() => '?').join(',')
-      const actorRows = db.prepare(`
+      const rows = db.prepare(`
         SELECT va.video_id, a.id AS actor_id, a.name, a.rating, a.tags,
-               a.agency, a.image_path, a.aliases
+               a.agency, a.image_path
         FROM video_actors va
         JOIN actors a ON a.id = va.actor_id
-        WHERE va.video_id IN (${placeholders})
+        WHERE va.video_id IN (${chunk.map(() => '?').join(',')})
         ORDER BY va.video_id, va.order_index ASC
       `).all(...chunk)
-      for (const row of actorRows) {
-        if (!actorsByVideoId[row.video_id]) actorsByVideoId[row.video_id] = []
-        actorsByVideoId[row.video_id].push(row)
+      for (const row of rows) {
+        ;(actorsByVideoId[row.video_id] ??= []).push(row)
       }
     }
 
-    // 전체 결과를 orderClause 기준으로 재정렬 (청크 분리 후 순서 복원)
-    const idOrder = new Map(matchedIds.map((id, idx) => [id, idx]))
-    videos.sort((a, b) => {
-      // orderClause 기반 정렬은 이미 각 청크에서 처리됨
-      // 여러 청크가 있으면 원래 매칭 순서를 따름
-      if (matchedIds.length > MAX_PARAMS) return (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0)
-      return 0
-    })
-
-    return videos.map((v) => ({
-      ...v,
-      actorsList: actorsByVideoId[v.id] || [],
-    }))
+    return videos.map((v) => ({ ...v, actorsList: actorsByVideoId[v.id] || [] }))
   })
 
   // ══════════════════════════════════════════════════════════════
