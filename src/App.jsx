@@ -286,7 +286,20 @@ export default function App() {
       )}
 
       {/* ── 대시보드 탭 ──────────────────────────────────── */}
-      {appTab === 'dashboard' && <DashboardPage />}
+      {appTab === 'dashboard' && (
+        <DashboardPage
+          onViewDetail={(videoId) => {
+            // 라이브러리 탭으로 이동 후 해당 영상 선택 시도
+            setAppTab('library')
+            // 영상 목록에서 찾아서 선택 (로드된 경우)
+            setSelectedVideo((prev) => {
+              const found = videos.find(v => v.id === videoId)
+              return found || prev
+            })
+          }}
+          onCopyFiles={handleOpenFileCopy}
+        />
+      )}
 
       {/* ── 영상 관리 탭 ─────────────────────────────────── */}
       {appTab === 'library' && (

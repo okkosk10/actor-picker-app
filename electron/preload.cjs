@@ -209,6 +209,12 @@ contextBridge.exposeInMainWorld('api', {
   getDashboardStats: () =>
     ipcRenderer.invoke('get-dashboard-stats'),
 
+  // ── 가중치 기반 대시보드 추천 조회 ───────────────────────────
+  // 반환: { topPicks, stalePreferences, highRatedUnderViewed,
+  //         worthRevisiting, needsMetadata, ratingReview }
+  getDashboardRecommendations: () =>
+    ipcRenderer.invoke('get-dashboard-recommendations'),
+
   // ── 배우 영상 목록 조회 (빠른 필터 포함) ──────────────────────
   // @param actorId  {number}  - 배우 ID
   // @param options  {{ quickFilter?, sortBy? }}

@@ -1879,6 +1879,317 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
+  // 가중치 기반 대시보드 추천 (get-dashboard-recommendations)
+  //
+  // 반환: { topPicks, stalePreferences, highRatedUnderViewed,
+  //         worthRevisiting, needsMetadata, ratingReview }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-dashboard-recommendations', async () => {
+    const db  = getDb()
+    const now = Date.now()
+
+    // ── 1. 배우 선호도 맵 (최근 90일 활동 기준) ─────────────────
+    const actorPrefRows = (() => {
+      try {
+        return db.prepare(`
+          SELECT va.actor_id, val.action_type, COUNT(*) AS cnt
+          FROM video_activity_logs val
+          JOIN video_actors va ON va.video_id = val.video_id
+          WHERE val.created_at >= datetime('now', '-90 days')
+          GROUP BY va.actor_id, val.action_type
+        `).all()
+      } catch { return [] }
+    })()
+
+    const actorFreq = {}
+    for (const row of actorPrefRows) {
+      const w = row.action_type === 'copy_to_device'    ? 3
+              : row.action_type === 'copy_to_clipboard' ? 2
+              : 1
+      actorFreq[row.actor_id] = (actorFreq[row.actor_id] ?? 0) + row.cnt * w
+    }
+    const maxActorFreq = Math.max(...Object.values(actorFreq), 1)
+
+    // ── 2. 태그 선호도 맵 (최근 90일 활동 기준) ─────────────────
+    const tagPrefRows = (() => {
+      try {
+        return db.prepare(`
+          SELECT DISTINCT v.id, v.tags, val.action_type
+          FROM video_activity_logs val
+          JOIN videos v ON v.id = val.video_id
+          WHERE val.created_at >= datetime('now', '-90 days')
+            AND v.tags IS NOT NULL AND trim(v.tags) != ''
+          ORDER BY val.created_at DESC
+          LIMIT 600
+        `).all()
+      } catch { return [] }
+    })()
+
+    const tagFreq = {}
+    for (const row of tagPrefRows) {
+      const w = row.action_type === 'copy_to_device'    ? 3
+              : row.action_type === 'copy_to_clipboard' ? 2
+              : 1
+      const tags = (row.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+      for (const tag of tags) {
+        tagFreq[tag] = (tagFreq[tag] ?? 0) + w
+      }
+    }
+    const maxTagFreq = Math.max(...Object.values(tagFreq), 1)
+
+    // ── 3. 전체 영상 + 활동 통계 ─────────────────────────────────
+    const videoRows = (() => {
+      try {
+        return db.prepare(`
+          SELECT
+            v.id, v.file_name, v.file_path, v.folder_path,
+            v.actor_name, v.tags, v.rating, v.grade,
+            v.recommended, v.status, v.is_new,
+            v.created_at, v.updated_at,
+            COALESCE(s.total_activity, 0)    AS total_activity,
+            COALESCE(s.copy_device_count, 0) AS copy_device_count,
+            COALESCE(s.copy_clip_count, 0)   AS copy_clip_count,
+            COALESCE(s.open_count, 0)        AS open_count,
+            COALESCE(s.recent_7d, 0)         AS recent_7d,
+            COALESCE(s.recent_30d, 0)        AS recent_30d,
+            COALESCE(s.recent_60d, 0)        AS recent_60d,
+            s.last_activity_at
+          FROM videos v
+          LEFT JOIN (
+            SELECT
+              video_id,
+              COUNT(*) AS total_activity,
+              SUM(CASE WHEN action_type = 'copy_to_device'    THEN 1 ELSE 0 END) AS copy_device_count,
+              SUM(CASE WHEN action_type = 'copy_to_clipboard' THEN 1 ELSE 0 END) AS copy_clip_count,
+              SUM(CASE WHEN action_type = 'open'              THEN 1 ELSE 0 END) AS open_count,
+              SUM(CASE WHEN created_at >= datetime('now', '-7 days')  THEN 1 ELSE 0 END) AS recent_7d,
+              SUM(CASE WHEN created_at >= datetime('now', '-30 days') THEN 1 ELSE 0 END) AS recent_30d,
+              SUM(CASE WHEN created_at >= datetime('now', '-60 days') THEN 1 ELSE 0 END) AS recent_60d,
+              MAX(created_at) AS last_activity_at
+            FROM video_activity_logs
+            GROUP BY video_id
+          ) s ON s.video_id = v.id
+          WHERE v.status NOT IN ('missing', 'deleted')
+        `).all()
+      } catch { return [] }
+    })()
+
+    // ── 4. 배우 연결 맵 ──────────────────────────────────────────
+    const actorsMap = {}
+    try {
+      const actorRows = db.prepare(`
+        SELECT va.video_id, va.actor_id, a.name AS actor_name, a.rating AS actor_rating
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        ORDER BY va.video_id, va.order_index ASC
+      `).all()
+      for (const row of actorRows) {
+        if (!actorsMap[row.video_id]) actorsMap[row.video_id] = []
+        actorsMap[row.video_id].push({ actorId: row.actor_id, name: row.actor_name, rating: row.actor_rating })
+      }
+    } catch { /* actors 테이블 없는 구버전 */ }
+
+    // ── 5. 등급별 점수 기준 ───────────────────────────────────────
+    const GRADE_SCORE = {
+      '영구소장':    25,
+      '재시청 추천': 15,
+      '만족':         8,
+      '보관':         0,
+      '애매':        -5,
+      '삭제요망':   -15,
+    }
+
+    // ── 6. 영상별 점수 계산 ───────────────────────────────────────
+    const scored = videoRows.map(v => {
+      const actors  = actorsMap[v.id] ?? []
+      const tags    = (v.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+      const lastMs  = v.last_activity_at ? new Date(v.last_activity_at).getTime() : 0
+      const lastActivityDays = lastMs ? Math.floor((now - lastMs) / 86400000) : 9999
+
+      // 1. actorPreferenceScore (0~40)
+      let actorPrefRaw = 0
+      for (const a of actors) {
+        actorPrefRaw += (actorFreq[a.actorId] ?? 0) / maxActorFreq
+      }
+      const actorPreferenceScore = Math.min(Math.round(actorPrefRaw * 40), 40)
+
+      // 2. tagPreferenceScore (0~30)
+      let tagPrefRaw = 0
+      for (const tag of tags) {
+        tagPrefRaw += (tagFreq[tag] ?? 0) / maxTagFreq
+      }
+      const tagPreferenceScore = Math.min(Math.round(tagPrefRaw * 30), 30)
+
+      // 3. ratingScore
+      const rating = v.rating ?? 0
+      const ratingScore = rating >= 5 ? 30
+                        : rating >= 4 ? 20
+                        : rating === 3 ?  5
+                        : rating === 2 ? -5
+                        : rating === 1 ? -15
+                        : 0
+
+      // 4. gradeScore
+      const gradeScore = GRADE_SCORE[v.grade] ?? 0
+
+      // 5. recommendedScore
+      const recommendedScore = v.recommended ? 15 : 0
+
+      // 6. underViewedBonus
+      const totalAct = v.total_activity ?? 0
+      const underViewedBonus = totalAct === 0 ? 20
+                             : totalAct <= 1  ? 10
+                             : totalAct <= 3  ?  5
+                             : 0
+
+      // 7. staleBonus (취향 있는데 방치)
+      const prefScore = actorPreferenceScore + tagPreferenceScore
+      const staleBonus = (prefScore > 3 && lastActivityDays > 30) ? 15 : 0
+
+      // 8. overViewedPenalty
+      const recent7d = v.recent_7d ?? 0
+      const overViewedPenalty = recent7d >= 5 ? 25
+                              : recent7d >= 3 ? 15
+                              : recent7d >= 2 ?  5
+                              : 0
+
+      // 9. missingMetadataPenalty
+      const hasActors = actors.length > 0
+      const hasTags   = tags.length > 0
+      const hasRating = rating > 0
+      const missingMetadataPenalty = (!hasActors ? 15 : 0) + (!hasTags ? 5 : 0) + (!hasRating ? 10 : 0)
+
+      const score = Math.round(
+        actorPreferenceScore + tagPreferenceScore +
+        ratingScore + gradeScore + recommendedScore +
+        underViewedBonus + staleBonus -
+        overViewedPenalty - missingMetadataPenalty
+      )
+
+      // 추천 이유
+      const reasons = []
+      if (actorPreferenceScore >= 15)      reasons.push('자주 보는 배우 출연')
+      else if (actorPreferenceScore >= 5)  reasons.push('관심 배우 출연')
+      if (tagPreferenceScore >= 10)        reasons.push('취향 태그 포함')
+      if (rating >= 4)                     reasons.push('고평점 작품')
+      if (v.grade === '영구소장')           reasons.push('영구소장 등급')
+      else if (v.grade === '재시청 추천')   reasons.push('재시청 추천 등급')
+      if (v.recommended)                   reasons.push('추천 표시')
+      if (underViewedBonus >= 15)          reasons.push('아직 한 번도 안 본 작품')
+      else if (underViewedBonus > 0)       reasons.push('덜 본 작품')
+      if (staleBonus > 0)                  reasons.push('취향인데 방치됨')
+      if (overViewedPenalty > 0)           reasons.push('최근 자주 본 작품')
+
+      // 메타데이터 이슈
+      const metadataIssues = []
+      const actorNameFromFile = (v.actor_name || '').trim()
+      if (actorNameFromFile && !hasActors) metadataIssues.push('배우 연결 필요')
+      else if (!hasActors)                 metadataIssues.push('배우 없음')
+      if (!hasTags)                        metadataIssues.push('태그 없음')
+      if (!hasRating)                      metadataIssues.push('평점 없음')
+      if (!v.recommended)                  metadataIssues.push('추천 표시 없음')
+
+      return {
+        id:                  v.id,
+        fileName:            v.file_name,
+        filePath:            v.file_path,
+        folderPath:          v.folder_path,
+        actorName:           v.actor_name || '',
+        actors,
+        tags,
+        rating,
+        grade:               v.grade || '보관',
+        recommended:         v.recommended ? true : false,
+        score,
+        actorPreferenceScore,
+        tagPreferenceScore,
+        reasons,
+        lastActivityAt:      v.last_activity_at ?? null,
+        lastActivityDays,
+        totalActivity:       totalAct,
+        copyDeviceCount:     v.copy_device_count ?? 0,
+        copyClipCount:       v.copy_clip_count   ?? 0,
+        openCount:           v.open_count        ?? 0,
+        recent7d,
+        recent30d:           v.recent_30d ?? 0,
+        hasActors,
+        hasTags,
+        hasRating,
+        metadataIssues,
+      }
+    })
+
+    // ── 7. 섹션 분류 ──────────────────────────────────────────────
+
+    // 1. 오늘 추천 TOP
+    const topPicks = [...scored]
+      .filter(v => (v.hasActors || v.rating >= 3) && v.metadataIssues.filter(i => i !== '추천 표시 없음').length < 3)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+
+    // 2. 취향은 맞는데 방치된 작품
+    const stalePreferences = [...scored]
+      .filter(v => (v.actorPreferenceScore + v.tagPreferenceScore) > 5 && v.lastActivityDays > 30)
+      .sort((a, b) => (b.actorPreferenceScore + b.tagPreferenceScore) - (a.actorPreferenceScore + a.tagPreferenceScore))
+      .slice(0, 10)
+
+    // 3. 고평점인데 덜 본 작품
+    const highRatedUnderViewed = [...scored]
+      .filter(v => v.rating >= 4 && v.totalActivity <= 2)
+      .sort((a, b) => b.rating - a.rating || a.totalActivity - b.totalActivity)
+      .slice(0, 10)
+
+    // 4. 다시 볼만한 작품 (과거 장치 복사 이력 있음, 최근 30일 활동 없음)
+    const worthRevisiting = [...scored]
+      .filter(v => v.copyDeviceCount > 0 && v.recent30d === 0 && v.lastActivityDays < 365)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+
+    // 5. 수정 추천 (메타데이터 부족)
+    const needsMetadata = [...scored]
+      .filter(v => !v.hasActors || !v.hasTags || !v.hasRating)
+      .sort((a, b) => {
+        const sw = (x) => (!x.hasActors ? 3 : 0) + (!x.hasTags ? 1 : 0) + (!x.hasRating ? 2 : 0)
+        return sw(b) - sw(a)
+      })
+      .slice(0, 20)
+
+    // 6. 평점 재검토 - A. 평점 올리기 후보
+    const ratingUpCandidates = [...scored]
+      .filter(v => v.rating <= 3 && v.totalActivity >= 3 && v.recent30d > 0)
+      .sort((a, b) => b.recent30d - a.recent30d || b.totalActivity - a.totalActivity)
+      .slice(0, 10)
+
+    // 7. 평점 재검토 - B. 평점 낮추기 후보
+    const ratingDownCandidates = [...scored]
+      .filter(v => v.rating >= 4 && v.totalActivity <= 1 && v.lastActivityDays >= 60)
+      .sort((a, b) => b.rating - a.rating || b.lastActivityDays - a.lastActivityDays)
+      .slice(0, 10)
+
+    // 8. 추천 표시 불일치
+    const ratingMismatch = [...scored]
+      .filter(v => (v.recommended && v.rating <= 2) || (!v.recommended && v.rating >= 4))
+      .sort((a, b) => {
+        const mw = (x) => (x.recommended && x.rating <= 2 ? 2 : 0) + (!x.recommended && x.rating >= 4 ? 1 : 0)
+        return mw(b) - mw(a)
+      })
+      .slice(0, 10)
+
+    return {
+      topPicks,
+      stalePreferences,
+      highRatedUnderViewed,
+      worthRevisiting,
+      needsMetadata,
+      ratingReview: {
+        upCandidates:   ratingUpCandidates,
+        downCandidates: ratingDownCandidates,
+        mismatch:       ratingMismatch,
+      },
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
   // 대시보드 통계 조회
   //
   // 반환: { summary, topActors, recentVideos, recentActivities,

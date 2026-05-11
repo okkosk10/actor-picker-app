@@ -1,8 +1,9 @@
 /**
  * src/pages/Dashboard/index.jsx
- * 대시보드 페이지 — video_activity_logs 기준 실제 사용 행동 표시
+ * 대시보드 페이지 — 통계 탭 + 스마트 추천 탭
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
+import DashboardRecommendations from './DashboardRecommendations.jsx'
 import './Dashboard.css'
 
 function formatBytes(bytes) {
@@ -171,10 +172,11 @@ function TagStats({ tags, title = '영상 태그 TOP 20' }) {
   )
 }
 
-export default function DashboardPage({ onRefresh }) {
+export default function DashboardPage({ onViewDetail, onCopyFiles }) {
   const [stats,   setStats]   = useState(null)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState(null)
+  const [dashTab, setDashTab] = useState('stats')   // 'stats' | 'recs'
   const loadingRef = useRef(false)
 
   const fetchStats = async () => {
@@ -195,39 +197,65 @@ export default function DashboardPage({ onRefresh }) {
 
   useEffect(() => { fetchStats() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (loading) return <div className="dash-loading">통계 로딩 중…</div>
-  if (error) return (
+  if (loading && !stats) return <div className="dash-loading">통계 로딩 중…</div>
+  if (error && !stats) return (
     <div className="dash-error">
       통계 로드 실패: {error}
       <button className="btn-secondary" onClick={fetchStats} style={{ marginLeft: 12 }}>재시도</button>
     </div>
   )
-  if (!stats) return null
 
   return (
     <div className="dash-root">
       <div className="dash-header">
         <h2 className="dash-title">대시보드</h2>
-        <button className="btn-secondary" type="button" onClick={fetchStats}>
-          🔄 통계 새로고침
-        </button>
+        <div className="dash-tab-row">
+          <button
+            type="button"
+            className={`dash-tab-btn ${dashTab === 'stats' ? 'dash-tab-btn--active' : ''}`}
+            onClick={() => setDashTab('stats')}
+          >
+            📈 통계
+          </button>
+          <button
+            type="button"
+            className={`dash-tab-btn ${dashTab === 'recs' ? 'dash-tab-btn--active' : ''}`}
+            onClick={() => setDashTab('recs')}
+          >
+            🎯 스마트 추천
+          </button>
+        </div>
+        {dashTab === 'stats' && (
+          <button className="btn-secondary" type="button" onClick={fetchStats}>
+            🔄 통계 새로고침
+          </button>
+        )}
       </div>
 
-      <SummaryCards summary={stats.summary} />
+      {/* 스마트 추천 탭 */}
+      {dashTab === 'recs' && (
+        <DashboardRecommendations
+          onCopyFiles={onCopyFiles}
+          onViewDetail={onViewDetail}
+        />
+      )}
 
-      <div className="dash-grid">
-        <RatingDistribution data={stats.ratingDistribution} title="영상 별점 분포" />
-        <RatingDistribution data={stats.actorRatingDistribution ?? []} title="배우 별점 분포" />
-
-        <TopActors actors={stats.topActors} title="배우 재생 TOP 10" countField="playCount" countLabel="재생" />
-        <TopActors actors={stats.topCopyActors ?? []} title="배우 복사 TOP 10" countField="copyCount" countLabel="복사" />
-
-        <TagStats tags={stats.tagStats} title="영상 태그 TOP 20" />
-        <TagStats tags={stats.actorTagStats ?? []} title="배우 태그 TOP 20" />
-
-        <RecentVideos videos={stats.recentVideos} />
-        <RecentActivities activities={stats.recentActivities} />
-      </div>
+      {/* 통계 탭 */}
+      {dashTab === 'stats' && (!stats ? null : (
+        <>
+          <SummaryCards summary={stats.summary} />
+          <div className="dash-grid">
+            <RatingDistribution data={stats.ratingDistribution} title="영상 별점 분포" />
+            <RatingDistribution data={stats.actorRatingDistribution ?? []} title="배우 별점 분포" />
+            <TopActors actors={stats.topActors} title="배우 재생 TOP 10" countField="playCount" countLabel="재생" />
+            <TopActors actors={stats.topCopyActors ?? []} title="배우 복사 TOP 10" countField="copyCount" countLabel="복사" />
+            <TagStats tags={stats.tagStats} title="영상 태그 TOP 20" />
+            <TagStats tags={stats.actorTagStats ?? []} title="배우 태그 TOP 20" />
+            <RecentVideos videos={stats.recentVideos} />
+            <RecentActivities activities={stats.recentActivities} />
+          </div>
+        </>
+      ))}
     </div>
   )
 }
