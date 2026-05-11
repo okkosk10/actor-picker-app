@@ -39,6 +39,8 @@ const dispatchAction = (action) => {
 
 // ── MTP 안정 모드 세션 참조 (사용자 완료 버튼으로 종료) ─────────
 let _bulkSession = null
+// ── bulk 복사 완료 후 활동 기록용 pending 목록 ─────────────────
+let _bulkPending = []
 
 // ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
 // 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
@@ -1223,6 +1225,8 @@ function registerIpcHandlers() {
     }
 
     _bulkSession = session
+    // bulk 완료 시 활동 기록을 위해 파일 목록을 저장 (중복 방지: Set 기반)
+    _bulkPending = [...new Set(validInfos.map(f => f.path))].map(fp => ({ filePath: fp }))
     mtpLog(`STABLE_STARTED | CopyHere 호출 완료. COM 아파트 유지 중 (사용자 완료 버튼 대기)`)
     return { success: true, action: 'bulk-started', count: validInfos.length }
   })
@@ -1235,6 +1239,29 @@ function registerIpcHandlers() {
       const logPath = path.join(app.getPath('userData'), 'mtp-transfer.log')
       const ts = new Date().toISOString().replace('T', ' ').slice(0, 19)
       try { fs.appendFileSync(logPath, `[${ts}] STABLE_USER_DONE\n`, 'utf8') } catch { /* 무시 */ }
+    }
+    // bulk 복사 활동 기록
+    if (_bulkPending.length > 0) {
+      try {
+        const db = getDb()
+        const seen = new Set()
+        for (const { filePath } of _bulkPending) {
+          if (seen.has(filePath)) continue
+          seen.add(filePath)
+          const video = db.prepare('SELECT id, file_name FROM videos WHERE file_path = ?').get(filePath)
+          if (video) {
+            recordVideoActivity(video.id, 'copy_to_device', {
+              filePath,
+              title: video.file_name,
+              mode: 'bulk',
+              recordedAt: new Date().toISOString(),
+            })
+          }
+        }
+      } catch (e) {
+        console.warn('[bulk-copy-close] 활동 기록 실패:', e.message)
+      }
+      _bulkPending = []
     }
   })
 
@@ -1463,7 +1490,8 @@ function registerIpcHandlers() {
     const db   = getDb()
     const LIMIT = extraParams.limit || 50
 
-    const BASE_COND = `v.status != 'missing' AND v.status != 'deleted'`
+    const BASE_COND   = `status != 'missing' AND status != 'deleted'`
+    const BASE_COND_V = `v.status != 'missing' AND v.status != 'deleted'`
 
     // ── 프리셋별 쿼리 ─────────────────────────────────────────
     let videoIds = []
@@ -1475,7 +1503,7 @@ function registerIpcHandlers() {
         FROM videos v
         JOIN video_actors va ON va.video_id = v.id
         JOIN actors a ON a.id = va.actor_id AND a.rating >= 4
-        WHERE ${BASE_COND}
+        WHERE ${BASE_COND_V}
         ORDER BY a.rating DESC, v.rating DESC
         LIMIT ?
       `).all(LIMIT).map((r) => r.id)
@@ -1495,7 +1523,7 @@ function registerIpcHandlers() {
         FROM videos v
         JOIN video_actors va ON va.video_id = v.id
         JOIN actors a ON a.id = va.actor_id AND a.rating >= 3
-        WHERE ${BASE_COND} AND v.is_new = 1
+        WHERE ${BASE_COND_V} AND v.is_new = 1
         ORDER BY a.rating DESC
         LIMIT ?
       `).all(LIMIT).map((r) => r.id)
@@ -1510,7 +1538,7 @@ function registerIpcHandlers() {
         FROM videos v
         JOIN video_actors va ON va.video_id = v.id
         JOIN actors a ON a.id = va.actor_id AND (a.tags LIKE ? ESCAPE '!')
-        WHERE ${BASE_COND}
+        WHERE ${BASE_COND_V}
         ORDER BY v.rating DESC, v.updated_at DESC
         LIMIT ?
       `).all(q, LIMIT).map((r) => r.id)
@@ -1521,7 +1549,7 @@ function registerIpcHandlers() {
         SELECT DISTINCT v.id
         FROM videos v
         JOIN video_actors va ON va.video_id = v.id
-        WHERE ${BASE_COND} AND va.actor_id IN (
+        WHERE ${BASE_COND_V} AND va.actor_id IN (
           SELECT DISTINCT va2.actor_id
           FROM video_activity_logs val
           JOIN video_actors va2 ON va2.video_id = val.video_id
@@ -1539,7 +1567,7 @@ function registerIpcHandlers() {
         SELECT DISTINCT v.id
         FROM videos v
         JOIN video_actors va ON va.video_id = v.id
-        WHERE ${BASE_COND} AND va.actor_id IN (
+        WHERE ${BASE_COND_V} AND va.actor_id IN (
           SELECT DISTINCT va2.actor_id
           FROM video_activity_logs val
           JOIN video_actors va2 ON va2.video_id = val.video_id
@@ -1555,7 +1583,7 @@ function registerIpcHandlers() {
       // 복사하지 않은 고평점 작품 (rating >= 4)
       videoIds = db.prepare(`
         SELECT v.id FROM videos v
-        WHERE ${BASE_COND} AND v.rating >= 4
+        WHERE ${BASE_COND_V} AND v.rating >= 4
           AND NOT EXISTS (
             SELECT 1 FROM video_activity_logs val
             WHERE val.video_id = v.id
@@ -1578,7 +1606,7 @@ function registerIpcHandlers() {
         const pick = db.prepare(`
           SELECT v.id FROM videos v
           JOIN video_actors va ON va.video_id = v.id
-          WHERE va.actor_id = ? AND ${BASE_COND}
+          WHERE va.actor_id = ? AND ${BASE_COND_V}
           ORDER BY RANDOM() LIMIT 1
         `).get(aRow.id)
         if (pick) videoIds.push(pick.id)
@@ -1615,7 +1643,7 @@ function registerIpcHandlers() {
           FROM videos v
           JOIN video_actors va ON va.video_id = v.id
           JOIN actors a ON a.id = va.actor_id
-          WHERE ${BASE_COND}
+          WHERE ${BASE_COND_V}
             AND (${tagConditions.join(' OR ')})
             ${excludeIds.length > 0 ? `AND a.id NOT IN (${excludeIds.map(() => '?').join(',')})` : ''}
           ORDER BY v.rating DESC, RANDOM()
