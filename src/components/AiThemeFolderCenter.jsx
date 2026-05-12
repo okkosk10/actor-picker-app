@@ -431,6 +431,7 @@ export default function AiThemeFolderCenter() {
       }
       setThemes(result.themes)
       setCandidateCount(result.candidateCount ?? 0)
+      setVideoMap(result.videoMap ?? {})
       // 모두 기본 체크
       setChecked(new Set(result.themes.map(t => t.folderName)))
     } catch (e) {

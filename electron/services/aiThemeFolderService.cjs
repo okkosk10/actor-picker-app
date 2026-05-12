@@ -149,10 +149,18 @@ async function generateAiThemeFolders(videos, options = {}) {
   const videoMap = new Map()
   for (const v of videos) {
     const dto = {
-      filePath:   v.filePath   ?? v.file_path   ?? '',
-      fileSize:   v.fileSize   ?? v.file_size   ?? 0,
-      rating:     v.rating     ?? 0,
-      themeScore: 0,
+      id:          Number(v.id),
+      fileName:    v.fileName    ?? v.file_name    ?? '',
+      filePath:    v.filePath    ?? v.file_path    ?? '',
+      folderName:  v.folderName  ?? v.folder_name  ?? '',
+      actors:      v.actors      ?? v.actor_name   ?? '',
+      tags:        Array.isArray(v.tags) ? v.tags : [],
+      rating:      v.rating      ?? 0,
+      grade:       v.grade       ?? '',
+      playCount:   v.playCount   ?? v.play_count   ?? 0,
+      copyCount:   v.copyCount   ?? v.copy_count   ?? 0,
+      fileSize:    v.fileSize    ?? v.file_size    ?? 0,
+      themeScore:  0,
     }
     videoMap.set(Number(v.id), dto)
   }
@@ -235,7 +243,11 @@ async function generateAiThemeFolders(videos, options = {}) {
     return { success: false, error: 'AI 응답에서 유효한 테마를 찾을 수 없습니다.' }
   }
 
-  return { success: true, themes, candidateCount: candidates.length }
+  // videoMap을 plain object로 변환해 IPC 직렬화 가능하게 반환
+  const videoMapObj = {}
+  for (const [id, dto] of videoMap) videoMapObj[id] = dto
+
+  return { success: true, themes, candidateCount: candidates.length, videoMap: videoMapObj }
 }
 
 module.exports = { generateAiThemeFolders, sanitizeFolderName, validateAiThemeFolders }
