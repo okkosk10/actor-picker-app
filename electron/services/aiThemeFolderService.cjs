@@ -187,9 +187,10 @@ async function generateAiThemeFolders(videos, options = {}) {
 - **배우 다양성**: 특정 배우 한 명을 주제로 하는 테마는 전체 테마 중 최대 1개로 제한하세요. 같은 배우가 여러 테마에 반복 등장하지 않도록 하세요.
 - 전체 테마에 걸쳐 가능한 다양한 배우, 태그, 폴더 계열이 골고루 나오도록 하세요.
 - 성인물 직접 묘사는 피하고 앱 내부 정리용 테마/태그 수준으로 표현하세요.
-- JSON만 반환하세요. 설명 문장이나 마크다운 코드 블록은 출력하지 마세요.
+- [사용자 요청]이 있으면 그 내용을 최우선으로 반영하세요. 요청에 명시된 배우나 태그가 반드시 포함되어야 합니다.
+- **출력 규칙**: 반드시 JSON 객체 하나만 반환하세요. 그 외 어떤 텍스트(설명, 주석, 마크다운)도 절대 출력하지 마세요.
 
-응답 형식 (JSON 객체 하나만):
+응답 형식 (JSON 객체 하나만, 다른 텍스트 없이):
 {
   "themeFolders": [
     {
@@ -214,7 +215,8 @@ async function generateAiThemeFolders(videos, options = {}) {
   try {
     const response = await client.responses.create({
       model,
-      temperature:  1.1,   // 매 실행마다 다양한 특집 조합 유도
+      // customPrompt 있으면 정확도 우선(0.7), 없으면 다양성 우선(1.1)
+      temperature:  customPrompt ? 0.7 : 1.1,
       instructions: systemPrompt,
       input:        userPrompt,
     })
@@ -223,11 +225,22 @@ async function generateAiThemeFolders(videos, options = {}) {
     return { success: false, error: `OpenAI 요청 실패: ${err.message}` }
   }
 
-  // 4. JSON 파싱
+  // 4. JSON 파싱 (마크다운 블록 + 앞뒤 설명 문장 제거)
   let parsed
   try {
-    // 마크다운 코드 블록이 포함됐을 경우 제거
-    const jsonStr = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')
+    let jsonStr = rawText
+
+    // ① 마크다운 코드 블록 제거
+    jsonStr = jsonStr.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+
+    // ② 앞에 설명 문장이 붙어 있을 경우 첫 { 부터 추출
+    const firstBrace = jsonStr.indexOf('{')
+    if (firstBrace > 0) jsonStr = jsonStr.slice(firstBrace)
+
+    // ③ 뒤에 불필요한 텍스트가 붙어 있을 경우 마지막 } 까지만
+    const lastBrace = jsonStr.lastIndexOf('}')
+    if (lastBrace !== -1 && lastBrace < jsonStr.length - 1) jsonStr = jsonStr.slice(0, lastBrace + 1)
+
     parsed = JSON.parse(jsonStr)
   } catch (_) {
     // 파싱 실패 시 원문 일부를 개발 콘솔에만 출력 (API Key 포함 안 됨)
