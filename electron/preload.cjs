@@ -218,8 +218,8 @@ contextBridge.exposeInMainWorld('api', {
   // ── AI 특집 폴더 - 테마 생성 ─────────────────────────────────
   // DB 영상 분석 + OpenAI 호출로 특집 테마를 제안받는다.
   // 반환: { success: true, themes[], candidateCount } | { success: false, error }
-  generateAiThemeFolders: () =>
-    ipcRenderer.invoke('ai-theme-folders:generate'),
+  generateAiThemeFolders: (customPrompt) =>
+    ipcRenderer.invoke('ai-theme-folders:generate', customPrompt ?? ''),
 
   // ── AI 특집 폴더 - 실제 복사 실행 ───────────────────────────
   // @param targetRootPath {string}   - 복사할 상위 폴더 경로
@@ -300,5 +300,12 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: Video[] (actorsList 포함)
   getRecommendations: (preset, params) =>
     ipcRenderer.invoke('get-recommendations', preset, params),
+
+  // ── AI 채팅 추천 ──────────────────────────────────────────────
+  // 자연어 프롬프트로 DB 후보 + AI 추천 결합
+  // @param userPrompt {string}
+  // 반환: { success, summary, reason, intent, items[] } | { success: false, error }
+  askAiChatRecommend: (userPrompt) =>
+    ipcRenderer.invoke('ai-chat-recommend:ask', userPrompt),
 })
 

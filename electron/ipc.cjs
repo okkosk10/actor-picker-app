@@ -32,6 +32,7 @@ const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, createMtpT
 const { testOpenAIConnection }   = require('./services/openaiClient.cjs')
 const { generateAiThemeFolders } = require('./services/aiThemeFolderService.cjs')
 const { createThemeFolders }     = require('./services/themeCopyService.cjs')
+const { askAiChatRecommend }     = require('./services/aiChatRecommendService.cjs')
 
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
 // device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
@@ -2476,7 +2477,7 @@ function registerIpcHandlers() {
   // 반환: { success: true, themes[], candidateCount }
   //     | { success: false, error }
   // ══════════════════════════════════════════════════════════════
-  ipcMain.handle('ai-theme-folders:generate', async () => {
+  ipcMain.handle('ai-theme-folders:generate', async (_event, customPrompt = '') => {
     try {
       const db = getDb()
 
@@ -2574,7 +2575,7 @@ function registerIpcHandlers() {
         }
       })
 
-      return await generateAiThemeFolders(videos)
+      return await generateAiThemeFolders(videos, { customPrompt: customPrompt || '' })
     } catch (err) {
       console.error('[ai-theme-folders:generate]', err)
       return { success: false, error: err.message }
@@ -2714,7 +2715,24 @@ function registerIpcHandlers() {
       return { success: false, error: err.message }
     }
   })
-}
 
+  // ══════════════════════════════════════════════════════════════
+  // AI 채팅 추천 (ai-chat-recommend:ask)
+  //
+  // 자연어 프롬프트 → 의도 분석 → DB 후보 조회 → AI 추천
+  // @param userPrompt {string}
+  // 반환: { success, summary, reason, intent, items[] }
+  //       | { success: false, error }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('ai-chat-recommend:ask', async (_event, userPrompt) => {
+    try {
+      const db = getDb()
+      return await askAiChatRecommend(db, userPrompt)
+    } catch (err) {
+      console.error('[ai-chat-recommend:ask]', err)
+      return { success: false, error: err.message }
+    }
+  })
+}
 
 module.exports = { registerIpcHandlers }

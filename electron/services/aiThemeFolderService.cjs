@@ -137,7 +137,7 @@ function validateAiThemeFolders(themeFolders, allVideos, videoMap) {
  *                 | { success: false, error: string }>}
  */
 async function generateAiThemeFolders(videos, options = {}) {
-  const { candidateLimit = 120 } = options
+  const { candidateLimit = 120, customPrompt = '' } = options
 
   // 1. 후보 계산
   const candidates = buildThemeCandidates(videos, candidateLimit)
@@ -205,7 +205,10 @@ async function generateAiThemeFolders(videos, options = {}) {
   ]
 }`
 
-  const userPrompt = `다음은 내 영상 라이브러리의 상위 ${candidates.length}개 후보입니다. 특집 폴더를 제안해주세요.\n\n${JSON.stringify(candidates)}`
+  const userPromptBase = `다음은 내 영상 라이브러리의 상위 ${candidates.length}개 후보입니다. 특집 폴더를 제안해주세요.\n\n${JSON.stringify(candidates)}`
+  const userPrompt = customPrompt
+    ? `[사용자 요청] ${customPrompt}\n\n${userPromptBase}`
+    : userPromptBase
 
   let rawText = ''
   try {

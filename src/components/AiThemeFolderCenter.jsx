@@ -387,6 +387,7 @@ export default function AiThemeFolderCenter() {
   const [themes,         setThemes]         = useState(null)   // null = 아직 생성 안 함
   const [error,          setError]          = useState(null)
   const [candidateCount, setCandidateCount] = useState(0)
+  const [customPrompt,   setCustomPrompt]   = useState('')     // 사용자 요청 프롬프트
 
   // 비디오 맵 (파일 목록 표시용)
   const [videoMap, setVideoMap] = useState({})
@@ -424,7 +425,7 @@ export default function AiThemeFolderCenter() {
     setCopyResults(null)
 
     try {
-      const result = await window.api.generateAiThemeFolders()
+      const result = await window.api.generateAiThemeFolders(customPrompt.trim())
       if (!result.success) {
         setError(result.error ?? 'AI 특집 생성에 실패했습니다.')
         return
@@ -439,7 +440,7 @@ export default function AiThemeFolderCenter() {
     } finally {
       setGenerating(false)
     }
-  }, [])
+  }, [customPrompt])
 
   // ── 대상 폴더 선택 ────────────────────────────────────────────
   const handleSelectTarget = useCallback(async () => {
@@ -527,12 +528,42 @@ export default function AiThemeFolderCenter() {
       <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6, color: '#e8e8e8' }}>
         🎬 AI 특집 폴더 생성
       </h2>
-      <p style={{ color: '#888', fontSize: 13, marginBottom: 20 }}>
+      <p style={{ color: '#888', fontSize: 13, marginBottom: 16 }}>
         별점, 태그, 배우, 재생/복사 빈도를 분석해 AI가 특집 폴더를 제안합니다.
         원본 파일은 삭제되지 않습니다.
       </p>
 
-      {/* 액션 버튼 행 */}
+      {/* 사용자 요청 입력 */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>
+          💬 AI에게 요청 (선택사항) — 입력하면 그 기준으로, 비워두면 자동 분석
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            type="text"
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !generating) handleGenerate() }}
+            placeholder="예) 별점 높은 배우 위주로 묶어줘 / 복사 많이 한 태그 기준으로 / 재시청 추천 작품 특집"
+            disabled={generating}
+            style={{
+              flex: 1, background: '#0f172a', border: '1px solid #334155',
+              borderRadius: 6, color: '#e2e8f0', padding: '7px 12px',
+              fontSize: 13, outline: 'none', fontFamily: 'inherit',
+            }}
+          />
+          {customPrompt && (
+            <button
+              type="button"
+              onClick={() => setCustomPrompt('')}
+              disabled={generating}
+              style={{ padding: '0 10px', borderRadius: 6, border: '1px solid #334155', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
         {/* AI 생성 */}
         <button
