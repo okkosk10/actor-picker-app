@@ -44,6 +44,9 @@
       "electron/**/*",
       "package.json"
     ],
+    "extraResources": [
+      { "from": ".env", "to": ".env" }
+    ],
     "npmRebuild": true,
     "win": {
       "target": "portable",

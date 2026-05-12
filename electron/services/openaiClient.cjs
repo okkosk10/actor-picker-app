@@ -12,10 +12,16 @@
  */
 
 const path = require('path')
+const { app } = require('electron')
 
-// 프로젝트 루트의 .env 파일을 명시적으로 로드한다.
-// electron-builder 패키지 후에도 루트 위치를 정확히 찾기 위해 __dirname 기준으로 경로를 지정한다.
-require('dotenv').config({ path: path.join(__dirname, '../../.env') })
+// 패키징 여부에 따라 .env 경로를 다르게 지정한다.
+// - 개발:    프로젝트 루트 (.env)
+// - 패키징:  resources/.env  (extraResources로 자동 복사됨)
+if (app.isPackaged) {
+  require('dotenv').config({ path: path.join(process.resourcesPath, '.env') })
+} else {
+  require('dotenv').config({ path: path.join(__dirname, '../../.env') })
+}
 
 const { default: OpenAI } = require('openai')
 
