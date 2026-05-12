@@ -229,13 +229,24 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('sync-actor-videos'),
 
   // ── 영상 배우명 수정 ──────────────────────────────────────────
-  // videos.actor_name 갱신 + video_actors 재동기화
+  // videos.actor_name 갱신 + video_actors 재동기화 + is_actor_manual = 1
   // @param videoId   {number} - 동영상 ID
   // @param actorName {string} - 새 배우명 ("배우1, 배우2" 또는 빈 문자열)
   // 반환: { success: true } | { success: false, error: string }
   updateVideoActors: (videoId, actorName) =>
     ipcRenderer.invoke('update-video-actors', videoId, actorName),
 
+  // ── 배우명 파일명 기준 다시 추출 ─────────────────────────────────
+  // is_actor_manual = 0으로 되돌리고 파일명 파싱으로 actor_name 재설정
+  // @param videoId {number}
+  // 반환: { success: true, actor_name: string|null } | { success: false, error: string }
+  resetActorManual: (videoId) =>
+    ipcRenderer.invoke('reset-actor-manual', videoId),
+  // ── 고아 배우 정리 ─────────────────────────────────────────────────
+  // video_actors에 연결되지 않은 고아 배우를 actors 테이블에서 제거한다.
+  // 반환: { success, deletedCount, deletedActors: string[] }
+  cleanupOrphanActors: () =>
+    ipcRenderer.invoke('cleanup-orphan-actors'),
   // ── 추천 영상 조회 ─────────────────────────────────────────────
   // @param preset {string}  - 추천 프리셋
   //   'top_actor_videos'   : 별점 높은 배우의 작품

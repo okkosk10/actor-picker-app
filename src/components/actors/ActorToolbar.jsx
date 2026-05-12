@@ -21,6 +21,7 @@ export default function ActorToolbar({
   onToggleArchived,
   onNewActor,
   onSync,
+  onCleanupOrphans,
 }) {
   const SORT_OPTIONS = [
     { value: 'name_asc',         label: '이름 오름차순' },
@@ -129,6 +130,16 @@ export default function ActorToolbar({
             title="videos.actor_name 기반으로 video_actors 재동기화"
           >
             🔄 배우-영상 동기화
+          </button>
+        )}
+        {onCleanupOrphans && (
+          <button
+            className="btn-secondary"
+            type="button"
+            onClick={onCleanupOrphans}
+            title="어떤 영상에도 연결되지 않은 배우 정리"
+          >
+            🧹 고아 배우 정리
           </button>
         )}
       </div>

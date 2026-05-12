@@ -50,6 +50,7 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
   const [memo,       setMemo]       = useState(video.memo      || '')
   const [actorName,  setActorName]  = useState(video.actor_name || '')
   const [actorSaving, setActorSaving] = useState(false)
+  const [actorResetting, setActorResetting] = useState(false)
 
   const { saving, saved, saveVideo, resetSaved } = useVideoMeta()
 
@@ -112,12 +113,36 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
         message.error('배우명 저장 실패: ' + result.error)
         return
       }
-      onUpdate({ ...video, actor_name: actorName.trim() || null })
+      onUpdate({ ...video, actor_name: actorName.trim() || null, is_actor_manual: 1 })
       message.success('배우명을 저장했습니다.')
     } catch (e) {
       message.error('배우명 저장 실패: ' + e.message)
     } finally {
       setActorSaving(false)
+    }
+  }
+
+  // ── 파일명 기준 배우명 다시 추출 ───────────────────────────────
+  const handleResetActorManual = async () => {
+    setActorResetting(true)
+    try {
+      const result = await window.api.resetActorManual(video.id)
+      if (!result.success) {
+        message.error('추출 실패: ' + result.error)
+        return
+      }
+      const newName = result.actor_name || ''
+      setActorName(newName)
+      onUpdate({ ...video, actor_name: result.actor_name, is_actor_manual: 0 })
+      message.success(
+        newName
+          ? `파일명 기준으로 배우명을 다시 추출했습니다: ${newName}`
+          : '파일명에서 배우명을 추출할 수 없습니다.'
+      )
+    } catch (e) {
+      message.error('추출 실패: ' + e.message)
+    } finally {
+      setActorResetting(false)
     }
   }
 
@@ -274,6 +299,18 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
               {actorSaving ? '저장 중…' : '배우명 저장'}
             </button>
           </div>
+          {video.is_actor_manual === 1 && (
+            <button
+              className="btn-action btn-action--secondary"
+              type="button"
+              onClick={handleResetActorManual}
+              disabled={actorResetting}
+              style={{ marginTop: 4, fontSize: '0.8em' }}
+              title="파일명 파싱으로 배우명을 다시 설정합니다"
+            >
+              {actorResetting ? '추출 중…' : '파일명 기준으로 배우명 다시 추출'}
+            </button>
+          )}
         </div>
 
         {/* 태그 */}

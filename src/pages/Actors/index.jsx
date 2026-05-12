@@ -3,6 +3,7 @@
  * 배우 탐색 허브 — 검색·필터·통계·상세 패널 통합
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Modal } from 'antd'
 import ActorToolbar     from '../../components/actors/ActorToolbar.jsx'
 import ActorList        from '../../components/actors/ActorList.jsx'
 import ActorDetailPanel from '../../components/actors/ActorDetailPanel.jsx'
@@ -130,7 +131,31 @@ export default function ActorsPage() {
     }
     setTimeout(() => setSyncStatus(null), 4000)
   }
-
+  // ── 고아 배우 정리 ───────────────────────────────────────────
+  const handleCleanupOrphans = () => {
+    Modal.confirm({
+      title:   '고아 배우 정리',
+      content: '어떤 영상에도 연결되지 않은 배우를 삭제합니다.\n실제 영상 기록은 삭제되지 않습니다.',
+      okText:     '정리',
+      cancelText: '취소',
+      onOk: async () => {
+        try {
+          const result = await window.api.cleanupOrphanActors()
+          if (result.deletedCount === 0) {
+            setSyncStatus('고아 배우가 없습니다.')
+          } else {
+            const names = result.deletedActors.slice(0, 10).join(', ')
+            const extra = result.deletedActors.length > 10 ? ` 외 ${result.deletedActors.length - 10}명` : ''
+            setSyncStatus(`고아 배우 ${result.deletedCount}명 정리 완료: ${names}${extra}`)
+            await fetchActors(query, filters, showArchived)
+          }
+        } catch (e) {
+          setSyncStatus('고아 배우 정리 실패: ' + e.message)
+        }
+        setTimeout(() => setSyncStatus(null), 6000)
+      },
+    })
+  }
   const showPanel   = isCreating || selectedActor !== null
   const panelActor  = isCreating ? null : (actorDetail?.actor ?? selectedActor)
   const panelVideos = actorDetail?.videos   ?? []
@@ -148,6 +173,7 @@ export default function ActorsPage() {
         onToggleArchived={setShowArchived}
         onNewActor={handleNewActor}
         onSync={handleSync}
+        onCleanupOrphans={handleCleanupOrphans}
       />
 
       {syncStatus && (

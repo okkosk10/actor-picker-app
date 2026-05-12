@@ -27,6 +27,7 @@ const fs   = require('fs')
 const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
 const { getDb, recordVideoActivity, getDashboardStats } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
+const { parseFileName }       = require('./parser.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
 
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
@@ -215,13 +216,13 @@ function registerIpcHandlers() {
         size          = @size,
         modified_at   = @modified_at,
         code          = @code,
-        actor_name    = @actor_name,
+        actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
         file_identity = @file_identity,
         status        = CASE WHEN status = 'missing' THEN 'normal' ELSE status END,
         updated_at    = CURRENT_TIMESTAMP
       WHERE file_path = @file_path
     `)
-    // 다른 경로에서 발견된 같은 파일 → 경로 갱신 + status='normal' 복구 (사용자 데이터 보존)
+    // 제자리에서 발견된 같은 파일 → 좌표 갱신 + status='normal' 복구 (사용자 데이터 보존)
     const updateByIdentity = db.prepare(`
       UPDATE videos SET
         file_path     = @file_path,
@@ -231,7 +232,7 @@ function registerIpcHandlers() {
         size          = @size,
         modified_at   = @modified_at,
         code          = @code,
-        actor_name    = @actor_name,
+        actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
         file_identity = @file_identity,
         status        = 'normal',
         updated_at    = CURRENT_TIMESTAMP
@@ -272,13 +273,14 @@ function registerIpcHandlers() {
     })(files)
 
     // ② actors / video_actors 동기화
+    // is_actor_manual = 1인 영상은 수동 수정된 배우명을 유지한다 → 파일명 파싱으로 덮어쓰지 않음
     const filesWithActor = files.filter((f) => f.actor_name && f.actor_name.trim())
     if (filesWithActor.length > 0) {
-      const getVideoId = db.prepare('SELECT id FROM videos WHERE file_path = ?')
+      const getVideoRow = db.prepare('SELECT id, is_actor_manual FROM videos WHERE file_path = ?')
       db.transaction(() => {
         for (const file of filesWithActor) {
-          const row = getVideoId.get(file.file_path)
-          if (row) syncVideoActors(db, row.id, file.actor_name)
+          const row = getVideoRow.get(file.file_path)
+          if (row && !row.is_actor_manual) syncVideoActors(db, row.id, file.actor_name)
         }
       })()
     }
@@ -1604,18 +1606,82 @@ function registerIpcHandlers() {
       if (!trimmed) {
         // 배우명 비우기: actor_name NULL, video_actors 연결 삭제
         db.prepare(`
-          UPDATE videos SET actor_name = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          UPDATE videos SET actor_name = NULL, is_actor_manual = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
         `).run(videoId)
         db.prepare('DELETE FROM video_actors WHERE video_id = ?').run(videoId)
       } else {
         db.prepare(`
-          UPDATE videos SET actor_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          UPDATE videos SET actor_name = ?, is_actor_manual = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
         `).run(trimmed, videoId)
         syncVideoActors(db, videoId, trimmed)
       }
     })()
 
     return { success: true }
+  })
+
+  // ════════════════════════════════════════════════════════════
+  // 배우명 파일명 기준 다시 추출 (reset-actor-manual)
+  //
+  // is_actor_manual = 0으로 되돌리고, 파일명에서 actor_name을 재파싱한다.
+  // 주의: 실제 파일명은 변경하지 않는다.
+  //
+  // @param videoId {number}
+  // 반환: { success: true, actor_name: string|null } | { success: false, error: string }
+  // ════════════════════════════════════════════════════════════
+  ipcMain.handle('reset-actor-manual', async (_event, videoId) => {
+    const db = getDb()
+    const video = db.prepare('SELECT id, file_name FROM videos WHERE id = ?').get(videoId)
+    if (!video) return { success: false, error: 'VIDEO_NOT_FOUND' }
+
+    const parsed       = parseFileName(video.file_name)
+    const newActorName = parsed.actor_name ?? null
+
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE videos SET actor_name = ?, is_actor_manual = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(newActorName, videoId)
+      db.prepare('DELETE FROM video_actors WHERE video_id = ?').run(videoId)
+      if (newActorName) syncVideoActors(db, videoId, newActorName)
+    })()
+
+    return { success: true, actor_name: newActorName }
+  })
+
+  // ════════════════════════════════════════════════════════════
+  // 고아 배우 정리 (cleanup-orphan-actors)
+  //
+  // video_actors에 연결이 하나도 없는 actors row를 슬라 제거한다.
+  // videos.actor_name과 실제 파일은 절대 수정하지 않는다.
+  //
+  // 반환: { success, deletedCount, deletedActors }
+  // ════════════════════════════════════════════════════════════
+  ipcMain.handle('cleanup-orphan-actors', async () => {
+    const db = getDb()
+
+    const orphans = db.prepare(`
+      SELECT a.id, a.name
+      FROM actors a
+      LEFT JOIN video_actors va ON va.actor_id = a.id
+      WHERE va.actor_id IS NULL
+      ORDER BY a.name ASC
+    `).all()
+
+    if (orphans.length === 0) {
+      return { success: true, deletedCount: 0, deletedActors: [] }
+    }
+
+    const ids = orphans.map((r) => r.id)
+    db.transaction(() => {
+      const placeholders = ids.map(() => '?').join(',')
+      db.prepare(`DELETE FROM actors WHERE id IN (${placeholders})`).run(...ids)
+    })()
+
+    return {
+      success:       true,
+      deletedCount:  orphans.length,
+      deletedActors: orphans.map((r) => r.name),
+    }
   })
 
   ipcMain.handle('sync-actor-videos', async () => {

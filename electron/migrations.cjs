@@ -241,6 +241,18 @@ const MIGRATIONS = [
       `)
     },
   },
+
+  {
+    version: '011_add_is_actor_manual',
+    description: 'videos에 is_actor_manual 컬럼 추가 (사용자 수동 배우명 수정 여부)',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+      if (!cols.includes('is_actor_manual')) {
+        db.exec(`ALTER TABLE videos ADD COLUMN is_actor_manual INTEGER DEFAULT 0`)
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_videos_is_actor_manual ON videos (is_actor_manual)`)
+      }
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────
