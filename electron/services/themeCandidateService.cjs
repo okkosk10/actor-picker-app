@@ -102,7 +102,8 @@ function buildThemeCandidates(videos, limit = 120) {
 
   // 배우별 상한선 적용: 동일 배우가 후보의 25% 이상을 차지하지 않도록 제한
   // 단, 배우명이 없는 영상은 제한 없이 포함
-  const perActorLimit = Math.max(5, Math.ceil(limit * 0.25))
+  const mainLimit  = Math.max(1, limit - 1)   // 탐색 후보 1개를 위해 1 자리 확보
+  const perActorLimit = Math.max(5, Math.ceil(mainLimit * 0.25))
   const actorCount    = {}
   const limited       = []
   for (const v of scored) {
@@ -116,8 +117,20 @@ function buildThemeCandidates(videos, limit = 120) {
         actorCount[actor] = cnt + 1
       }
     }
-    if (limited.length >= limit) break
+    if (limited.length >= mainLimit) break
   }
+
+  // 탐색 후보 1개: 메인 풀에 포함되지 않은 구간에서 랜덤 선택 (순환 다양성)
+  // 항상 같은 고점수 영상만 테마에 올라오는 쏠림을 방지
+  const limitedIds   = new Set(limited.map(v => v.id))
+  const discoverPool = scored
+    .filter(v => !limitedIds.has(v.id) && !DELETE_GRADES.has(v.grade ?? ''))
+    .slice(0, limit * 2)
+  if (discoverPool.length > 0) {
+    const idx = Math.floor(Math.random() * Math.min(discoverPool.length, limit))
+    limited.push(discoverPool[idx])
+  }
+
   return limited
 }
 

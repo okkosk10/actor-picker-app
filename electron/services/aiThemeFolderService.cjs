@@ -181,6 +181,7 @@ async function generateAiThemeFolders(videos, options = {}) {
 - 아래 후보는 로컬 점수 계산(watchScore, copyScore, themeScore)으로 선별된 우수 후보들입니다.
 - tags, actors, folderName, fileName, rating, playCount, copyCount를 종합해 테마를 만드세요.
 - 단순 점수 높은 순이 아닌, 테마성이 있는 묶음을 만드세요 (배우 계열, 태그 계열, 폴더/시리즈 계열 등).
+- 후보 목록 끝에는 순환 다양성을 위한 낮은 점수의 탐색 후보 1개가 포함됩니다. 테마에 어울린다면 이 항목도 적극 활용해 새로운 발견 기회를 만드세요.
 - 테마명은 사용자가 폴더명으로 쓰기 좋은 한국어 이름으로 만드세요.
 - 각 특집은 최소 5개, 최대 30개 videoId를 포함하세요.
 - 같은 videoId가 너무 많은 테마에 중복되지 않게 하세요.

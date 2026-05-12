@@ -245,7 +245,21 @@ function scoreAndSort(rows, actorsMap, actorCopyMap, tagCopyMap, sortHint, limit
     return b._score - a._score  // 기본: themeScore
   })
 
-  return scored.slice(0, limit)
+  // 메인 후보 (상위 ~90%) + 탐색 후보 1~2개 (순환 다양성)
+  // 항상 높은 점수만 나오는 쏠림을 방지하고, 비교적 낮은 점수의 영상도 순환 노출
+  const discoverCount = Math.max(1, Math.min(2, Math.floor(limit * 0.1)))
+  const mainCount     = limit - discoverCount
+  const mainItems     = scored.slice(0, mainCount)
+
+  // 메인 이후 구간 (최대 mainCount*2 범위)에서 랜덤 탐색 후보 선택
+  const discoverPool = scored.slice(mainCount, mainCount + mainCount * 2)
+  for (let i = discoverPool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[discoverPool[i], discoverPool[j]] = [discoverPool[j], discoverPool[i]]
+  }
+  const discoverItems = discoverPool.slice(0, discoverCount)
+
+  return [...mainItems, ...discoverItems]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -277,6 +291,7 @@ async function callAiRecommend(userPrompt, intent, candidates) {
 - 반드시 제공된 후보 목록의 id 만 사용하세요. 없는 id를 만들지 마세요.
 - 최소 5개, 최대 30개를 추천하세요.
 - 각 항목에 한국어로 간결한 추천 이유를 적으세요.
+- 후보 목록 끝부분에는 순환 다양성을 위해 점수가 낮은 탐색 후보가 1~2개 포함되어 있습니다. 사용자 요청에 조금이라도 맞는다면 이들을 추천에 포함해 새로운 발견 기회를 제공하세요.
 - JSON만 반환하세요. 설명 문장이나 마크다운 코드 블록 없이.
 
 응답 형식:
