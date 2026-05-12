@@ -219,13 +219,30 @@ async function generateAiThemeFolders(videos, options = {}) {
       temperature:  customPrompt ? 0.7 : 1.1,
       instructions: systemPrompt,
       input:        userPrompt,
+      // JSON 모드 강제: 순수 JSON 객체만 반환
+      text: { format: { type: 'json_object' } },
     })
     rawText = response.output_text?.trim() ?? ''
   } catch (err) {
-    return { success: false, error: `OpenAI 요청 실패: ${err.message}` }
+    // JSON 모드 미지원 모델이면 폴백 (json_object 없이 재시도)
+    if (err.message?.includes('text.format') || err.message?.includes('json_object')) {
+      try {
+        const response2 = await client.responses.create({
+          model,
+          temperature:  customPrompt ? 0.7 : 1.1,
+          instructions: systemPrompt,
+          input:        userPrompt,
+        })
+        rawText = response2.output_text?.trim() ?? ''
+      } catch (err2) {
+        return { success: false, error: `OpenAI 요청 실패: ${err2.message}` }
+      }
+    } else {
+      return { success: false, error: `OpenAI 요청 실패: ${err.message}` }
+    }
   }
 
-  // 4. JSON 파싱 (마크다운 블록 + 앞뒤 설명 문장 제거)
+  // 4. JSON 파싱 (마크다운 블록 + 앞뒤 설명 문장 + 인라인 주석 제거)
   let parsed
   try {
     let jsonStr = rawText
@@ -240,6 +257,9 @@ async function generateAiThemeFolders(videos, options = {}) {
     // ③ 뒤에 불필요한 텍스트가 붙어 있을 경우 마지막 } 까지만
     const lastBrace = jsonStr.lastIndexOf('}')
     if (lastBrace !== -1 && lastBrace < jsonStr.length - 1) jsonStr = jsonStr.slice(0, lastBrace + 1)
+
+    // ④ 문자열 리터럴 밖의 // 주석 제거 (AI가 videoIds 줄에 달곤 함)
+    jsonStr = jsonStr.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g, (m, str) => str ?? '')
 
     parsed = JSON.parse(jsonStr)
   } catch (_) {

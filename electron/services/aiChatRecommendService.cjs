@@ -53,14 +53,16 @@ async function parseIntent(userPrompt) {
     temperature: 0.2,
     instructions: system,
     input: userPrompt,
+    text: { format: { type: 'json_object' } },
   })
 
   const raw = resp.output_text?.trim() ?? ''
-  const jsonStr = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')
   try {
-    return JSON.parse(jsonStr)
+    let s = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+    const fb = s.indexOf('{'); if (fb > 0) s = s.slice(fb)
+    const lb = s.lastIndexOf('}'); if (lb !== -1 && lb < s.length - 1) s = s.slice(0, lb + 1)
+    return JSON.parse(s)
   } catch {
-    // 파싱 실패 시 기본 intent 반환
     return { sortHint: 'themeScore', limit: 50 }
   }
 }
@@ -293,11 +295,16 @@ async function callAiRecommend(userPrompt, intent, candidates) {
     temperature: 0.7,
     instructions: system,
     input: userMsg,
+    text: { format: { type: 'json_object' } },
   })
 
   const raw = resp.output_text?.trim() ?? ''
-  const jsonStr = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')
-  return JSON.parse(jsonStr)
+  let s = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+  const fb = s.indexOf('{'); if (fb > 0) s = s.slice(fb)
+  const lb = s.lastIndexOf('}'); if (lb !== -1 && lb < s.length - 1) s = s.slice(0, lb + 1)
+  // 문자열 리터럴 밖의 // 주석 제거
+  s = s.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g, (m, str) => str ?? '')
+  return JSON.parse(s)
 }
 
 // ─────────────────────────────────────────────────────────────
