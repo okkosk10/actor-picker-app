@@ -2518,12 +2518,40 @@ function registerIpcHandlers() {
         }
       } catch { /* actors 없는 구버전 무시 */ }
 
-      // 3. DTO 변환
+      // 3. 배우별 누적 복사 횟수 집계 (actor_name → copy_count)
+      const actorCopyMap = {}
+      try {
+        const actorCopyRows = db.prepare(`
+          SELECT a.name, COUNT(*) AS cnt
+          FROM video_activity_logs val
+          JOIN video_actors va ON va.video_id = val.video_id
+          JOIN actors a ON a.id = va.actor_id
+          WHERE val.action_type IN ('copy_to_clipboard', 'copy_to_device')
+          GROUP BY a.name
+        `).all()
+        for (const r of actorCopyRows) actorCopyMap[r.name] = r.cnt
+      } catch { /* 무시 */ }
+
+      // 4. 태그별 누적 복사 횟수 집계 (tag → copy_count)
+      const tagCopyMap = {}
+      for (const v of videoRows) {
+        const cc = v.copy_count || 0
+        if (!cc) continue
+        const tags = (v.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+        for (const tag of tags) tagCopyMap[tag] = (tagCopyMap[tag] || 0) + cc
+      }
+
+      // 5. DTO 변환
       const videos = videoRows.map(v => {
-        const actorList  = actorsMap[v.id] ?? []
-        const actors     = v.actor_name || actorList.join(', ')
+        const actorList    = actorsMap[v.id] ?? []
+        const actors       = v.actor_name || actorList.join(', ')
         const primaryActor = actorList[0] ?? (v.actor_name || '')
-        const folderName = v.folder_path ? path.basename(v.folder_path) : ''
+        const folderName   = v.folder_path ? path.basename(v.folder_path) : ''
+        const tags         = (v.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+        // 해당 배우의 총 복사 횟수 (대표 배우 기준)
+        const actorCopyCount = actorCopyMap[primaryActor] || 0
+        // 해당 영상 태그 중 가장 많이 복사된 태그의 복사 횟수
+        const tagCopyCount   = tags.length ? Math.max(...tags.map(t => tagCopyMap[t] || 0)) : 0
         return {
           id:                   v.id,
           fileName:             v.file_name,
@@ -2532,12 +2560,14 @@ function registerIpcHandlers() {
           folderPath:           v.folder_path,
           actors,
           primaryActor,
-          tags:                 (v.tags || '').split(',').map(t => t.trim()).filter(Boolean),
+          tags,
           rating:               v.rating    ?? 0,
           grade:                v.grade     ?? '',
           playCount:            v.play_count ?? 0,
           downloadRequestCount: v.download_request_count ?? 0,
           copyCount:            v.copy_count ?? 0,
+          actorCopyCount,
+          tagCopyCount,
           favorite:             Boolean(v.favorite),
           recommended:          Boolean(v.recommended),
           fileSize:             v.size       ?? 0,
@@ -2577,15 +2607,18 @@ function registerIpcHandlers() {
 
     const fileMap = new Map(fileRows.map(r => [r.id, r]))
 
-    // 테마별 {name, files} 목록 구성 (missing/deleted 제외)
+    // 테마별 {name, files, videoIds} 목록 구성 (missing/deleted 제외)
     const themes = []
     for (const t of selectedThemes) {
-      const files = (t.videoIds ?? [])
+      const validRows = (t.videoIds ?? [])
         .map(id => fileMap.get(Number(id)))
         .filter(r => r && r.file_path && r.status !== 'missing' && r.status !== 'deleted')
-        .map(r => r.file_path)
-      if (files.length > 0) {
-        themes.push({ name: t.folderName ?? t.title, files })
+      if (validRows.length > 0) {
+        themes.push({
+          name:     t.folderName ?? t.title,
+          files:    validRows.map(r => r.file_path),
+          videoIds: validRows.map(r => r.id),
+        })
       }
     }
 
@@ -2610,6 +2643,23 @@ function registerIpcHandlers() {
     if (!session) {
       return { success: false, action: 'cancelled' }
     }
+
+    // ── 복사 이력 기록 ────────────────────────────────────────────
+    try {
+      const insertLog = db.prepare(`
+        INSERT INTO video_activity_logs (video_id, action_type, meta_json)
+        VALUES (?, 'copy_to_device', ?)
+      `)
+      const logAll = db.transaction(() => {
+        for (const t of themes) {
+          const meta = JSON.stringify({ theme: t.name })
+          for (const vid of t.videoIds) {
+            insertLog.run(vid, meta)
+          }
+        }
+      })
+      logAll()
+    } catch { /* 로그 실패가 복사 동작을 막지 않도록 */ }
 
     _themeSession = session
     const totalFiles = themes.reduce((s, t) => s + t.files.length, 0)

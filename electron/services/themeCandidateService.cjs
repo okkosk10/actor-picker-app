@@ -23,6 +23,8 @@ function calcScores(v) {
   const playCount            = Number(v.playCount)            || 0
   const copyCount            = Number(v.copyCount)            || 0
   const downloadRequestCount = Number(v.downloadRequestCount) || 0
+  const actorCopyCount       = Number(v.actorCopyCount)       || 0
+  const tagCopyCount         = Number(v.tagCopyCount)         || 0
   const favorite             = Boolean(v.favorite)
   const recommended          = Boolean(v.recommended)
   const grade                = v.grade ?? ''
@@ -50,6 +52,9 @@ function calcScores(v) {
   if (actors && actors !== '')  themeScore += 10
   if (folderName && folderName !== '') themeScore += 5
   if (DELETE_GRADES.has(grade)) themeScore -= 50
+  // 배우/태그 누적 복사 횟수 가중치 — 자주 복사된 배우·태그 계열 우선 추천
+  themeScore += Math.min(actorCopyCount, 50) * 2   // 배우 총 복사 횟수 (최대 +100)
+  themeScore += Math.min(tagCopyCount,   30) * 1   // 태그 총 복사 횟수 (최대 +30)
 
   return { watchScore, copyScore, themeScore }
 }
@@ -81,6 +86,8 @@ function buildThemeCandidates(videos, limit = 120) {
       playCount:            Number(v.playCount  ?? v.play_count)  || 0,
       downloadRequestCount: Number(v.downloadRequestCount ?? v.download_request_count) || 0,
       copyCount:            Number(v.copyCount  ?? v.copy_count)  || 0,
+      actorCopyCount:       Number(v.actorCopyCount) || 0,
+      tagCopyCount:         Number(v.tagCopyCount)   || 0,
       favorite:             Boolean(v.favorite),
       recommended:          Boolean(v.recommended),
       fileSizeGB,
