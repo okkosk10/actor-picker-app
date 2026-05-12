@@ -2446,6 +2446,26 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
+  // 영상 파일 정보 조회 (get-video-file-infos)
+  //
+  // AI 특집 폴더 등에서 videoIds 목록을 받아 장치 복사에 필요한
+  // 파일 정보(file_path, size, status 등)를 반환한다.
+  //
+  // @param videoIds {number[]}
+  // 반환: { id, file_name, file_path, size, status }[]
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-video-file-infos', (_event, videoIds) => {
+    if (!Array.isArray(videoIds) || videoIds.length === 0) return []
+    const db = getDb()
+    const ids = videoIds.map(Number).filter(n => Number.isFinite(n))
+    if (ids.length === 0) return []
+    const placeholders = ids.map(() => '?').join(',')
+    return db.prepare(
+      `SELECT id, file_name, file_path, size, status FROM videos WHERE id IN (${placeholders})`
+    ).all(...ids)
+  })
+
+  // ══════════════════════════════════════════════════════════════
   // AI 특집 폴더 - 테마 생성 (ai-theme-folders:generate)
   //
   // 1. DB에서 normal 영상 전체 조회 (배우/태그/활동 통계 포함)

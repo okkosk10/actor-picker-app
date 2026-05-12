@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import FileCopyModal from './FileCopyModal.jsx'
 
 // ─────────────────────────────────────────────────────────────
 // 내부 유틸
@@ -401,6 +402,10 @@ export default function AiThemeFolderCenter() {
   const [copying,     setCopying]     = useState(false)
   const [copyResults, setCopyResults] = useState(null)
 
+  // 장치 복사 모달
+  const [deviceVideos,     setDeviceVideos]     = useState(null)  // null = 닫힘
+  const [deviceLoading,    setDeviceLoading]    = useState(false)
+
   // ── 전체 선택/해제 ────────────────────────────────────────────
   const allChecked = themes && themes.length > 0 && checked.size === themes.length
   const toggleAll  = () => {
@@ -480,10 +485,37 @@ export default function AiThemeFolderCenter() {
     }
   }, [themes, checked, targetPath])
 
+  // ── 장치로 복사 ────────────────────────────────────────────────
+  const handleDeviceCopy = useCallback(async () => {
+    if (checked.size === 0) { setError('복사할 테마를 하나 이상 선택하세요.'); return }
+    setError(null)
+    setDeviceLoading(true)
+    try {
+      const selected  = (themes ?? []).filter(t => checked.has(t.folderName))
+      const allIds    = [...new Set(selected.flatMap(t => t.videoIds ?? []))]
+      const fileInfos = await window.api.getVideoFileInfos(allIds)
+      // FileCopyModal이 기대하는 video 객체 형식으로 변환
+      const videos = fileInfos.map(r => ({
+        id:         r.id,
+        file_name:  r.file_name,
+        file_path:  r.file_path,
+        size:       r.size   ?? 0,
+        status:     r.status ?? 'normal',
+      }))
+      if (videos.length === 0) { setError('복사 가능한 파일이 없습니다.'); return }
+      setDeviceVideos(videos)
+    } catch (e) {
+      setError(e.message || '파일 정보 조회 실패')
+    } finally {
+      setDeviceLoading(false)
+    }
+  }, [themes, checked])
+
   // ─────────────────────────────────────────────────────────────
   // 렌더
   // ─────────────────────────────────────────────────────────────
   return (
+  <>
     <div style={{ padding: '24px 28px', maxWidth: 900, margin: '0 auto' }}>
       {/* 제목 */}
       <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6, color: '#e8e8e8' }}>
@@ -521,6 +553,15 @@ export default function AiThemeFolderCenter() {
           style={{ ...BTN, background: '#135200' }}
         >
           {copying ? '⏳ 복사 중…' : `📂 선택한 특집 폴더 생성 (${checked.size}개)`}
+        </button>
+
+        <button
+          className="btn-primary"
+          onClick={handleDeviceCopy}
+          disabled={deviceLoading || !themes || checked.size === 0 || generating || copying}
+          style={{ ...BTN, background: '#391099' }}
+        >
+          {deviceLoading ? '⏳ 목록 조회 중…' : `📱 장치로 복사 (${checked.size}개 테마)`}
         </button>
       </div>
 
@@ -607,6 +648,16 @@ export default function AiThemeFolderCenter() {
         </>
       )}
     </div>
+
+    {/* 장치 복사 모달 */}
+    {deviceVideos && (
+      <FileCopyModal
+        videos={deviceVideos}
+        selectedIds={null}
+        onClose={() => setDeviceVideos(null)}
+      />
+    )}
+  </>
   )
 }
 

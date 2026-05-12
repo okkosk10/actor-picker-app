@@ -228,6 +228,12 @@ contextBridge.exposeInMainWorld('api', {
   createAiThemeFolders: (targetRootPath, selectedThemes) =>
     ipcRenderer.invoke('ai-theme-folders:create-folders', targetRootPath, selectedThemes),
 
+  // ── 영상 파일 정보 조회 (장치 복사용) ────────────────────────
+  // @param videoIds {number[]} - 조회할 videoId 배열
+  // 반환: { id, file_name, file_path, size, status }[]
+  getVideoFileInfos: (videoIds) =>
+    ipcRenderer.invoke('get-video-file-infos', videoIds),
+
   // ── 가중치 기반 대시보드 추천 조회 ───────────────────────────
   // 반환: { topPicks, stalePreferences, highRatedUnderViewed,
   //         worthRevisiting, needsMetadata, ratingReview }
