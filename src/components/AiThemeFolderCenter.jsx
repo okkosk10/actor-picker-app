@@ -527,7 +527,8 @@ export default function AiThemeFolderCenter() {
       </p>
 
       {/* 액션 버튼 행 */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+        {/* AI 생성 */}
         <button
           className="btn-primary"
           onClick={handleGenerate}
@@ -537,38 +538,53 @@ export default function AiThemeFolderCenter() {
           {generating ? '⏳ AI 분석 중…' : '✨ AI 특집 생성'}
         </button>
 
+        {/* 구분선 */}
+        <div style={{ width: 1, height: 28, background: '#333', margin: '0 4px' }} />
+
+        {/* PC 저장 그룹 */}
+        <span style={{ fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>💻 PC 저장</span>
         <button
           className="btn-secondary"
           onClick={handleSelectTarget}
           disabled={generating || copying}
           style={BTN}
         >
-          📁 대상 폴더 선택
+          📁 폴더 선택{targetPath ? ' ✓' : ''}
         </button>
-
         <button
           className="btn-primary"
           onClick={handleCreate}
           disabled={copying || !themes || checked.size === 0 || !targetPath}
           style={{ ...BTN, background: '#135200' }}
+          title={!targetPath ? '먼저 PC 폴더를 선택하세요' : ''}
         >
-          {copying ? '⏳ 복사 중…' : `📂 선택한 특집 폴더 생성 (${checked.size}개)`}
+          {copying ? '⏳ 복사 중…' : `💾 PC에 폴더 생성 (${checked.size}개)`}
         </button>
 
+        {/* 구분선 */}
+        <div style={{ width: 1, height: 28, background: '#333', margin: '0 4px' }} />
+
+        {/* 핸드폰 그룹 */}
+        <span style={{ fontSize: 11, color: '#555', whiteSpace: 'nowrap' }}>📱 핸드폰</span>
         <button
           className="btn-primary"
           onClick={handleDeviceCopy}
           disabled={deviceLoading || !themes || checked.size === 0 || generating || copying}
           style={{ ...BTN, background: '#391099' }}
         >
-          {deviceLoading ? '⏳ 목록 조회 중…' : `📱 장치로 복사 (${checked.size}개 테마)`}
+          {deviceLoading ? '⏳ 조회 중…' : `📱 장치로 복사 (${checked.size}개)`}
         </button>
       </div>
 
       {/* 대상 폴더 표시 */}
       {targetPath && (
-        <div style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>
-          📂 복사 대상: <span style={{ color: '#ccc', fontFamily: 'monospace' }}>{targetPath}</span>
+        <div style={{ fontSize: 12, color: '#666', marginBottom: 12 }}>
+          💻 PC 저장 경로: <span style={{ color: '#aaa', fontFamily: 'monospace' }}>{targetPath}</span>
+        </div>
+      )}
+      {!targetPath && themes && themes.length > 0 && (
+        <div style={{ fontSize: 12, color: '#555', marginBottom: 12 }}>
+          💡 핸드폰으로 복사하려면 <strong style={{ color: '#818cf8' }}>📱 장치로 복사</strong>를 바로 누르세요. PC 폴더 저장만 "📁 폴더 선택"이 필요합니다.
         </div>
       )}
 
