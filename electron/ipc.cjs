@@ -157,11 +157,16 @@ function registerIpcHandlers() {
   // ══════════════════════════════════════════════════════════════
   // 폴더 재귀 스캔 + DB upsert + 삭제 파일 감지
   //
-  // ① 스캔된 파일을 DB에 upsert
-  //    - 신규 파일  : INSERT → tags 자동 생성 (폴더명 + 배우명)
-  //    - 기존 파일  : UPDATE → 파일 시스템 컬럼만 갱신, tags 절대 덮어쓰지 않음
-  //    - missing → normal 자동 복구
-  // ② 해당 폴더 하위 DB 레코드 중 스캔에서 누락된 파일을 fs 로 재확인
+  // 파일 동일성 판단 기준: file_identity (file_path 변경에 무관)
+  //   - code가 있으면 `${code}|${size}`
+  //   - code가 없으면 `${file_name}|${size}`
+  //
+  // ① 스캔된 파일을 DB에 반영
+  //    a) file_path로 기존 row 조회 → 있으면 파일 시스템 컬럼만 갱신
+  //    b) file_identity로 기존 row 조회 → 있으면 경로 갱신 (사용자 데이터 보존)
+  //    c) 없으면 신규 INSERT
+  // ② 같은 file_identity를 가진 row가 2개 이상이면 master 선정 후 나머지 duplicate 처리
+  // ③ 해당 폴더 하위 DB 레코드 중 스캔에서 누락된 파일을 fs 로 재확인
   //    → 실제로 없으면 status = 'missing' 처리
   //
   // 반환: { totalFiles, missingCount, scannedFolder }
@@ -170,74 +175,103 @@ function registerIpcHandlers() {
     const db    = getDb()
     const files = await scanFolder(folderPath)
 
-    /**
-     * 신규 파일 INSERT 시 사용할 기본 tags를 생성한다.
-     *
-     * 자동 태그 정책:
-     *   - "최초 등록 보조 기능"으로만 사용
-     *   - 폴더 마지막 세그먼트 + actor_name 으로 구성
-     *   - 중복 제거, 빈 값 제외
-     *
-     * 기존 파일 재스캔 시에는 이 함수를 사용하지 않는다.
-     * (tags는 사용자 데이터로 취급 → ON CONFLICT 시 업데이트 제외)
-     *
-     * @param {object} video - scanner.cjs 가 반환한 파일 메타데이터
-     * @returns {string}     - 콤마 + 공백으로 구분된 태그 문자열
-     */
+    /** 신규 INSERT 시 기본 tags 생성 (폴더명 + 배우명) */
     function createDefaultTags(video) {
-      // path.basename: Windows(\) / Unix(/) 양쪽 처리
       const folderName = path.basename(video.folder_path || '')
       const actorName  = video.actor_name || ''
-      return Array.from(
-        new Set([folderName, actorName].filter(Boolean))
-      ).join(', ')
+      return Array.from(new Set([folderName, actorName].filter(Boolean))).join(', ')
     }
 
-    // ① INSERT ... ON CONFLICT: 신규 vs 기존 동작 분리
-    //
-    //   신규 파일 (INSERT 실행):
-    //     - tags = createDefaultTags(video)  ← 자동 태그 최초 설정
-    //     - is_new = 1 : "작업 대기" 상태로 NEW 탭에 표시
-    //     - 모든 컬럼 초기화
-    //
-    //   기존 파일 (ON CONFLICT DO UPDATE 실행):
-    //     - 파일 시스템 컬럼만 갱신 (file_name, folder_path, extension, size, modified_at, code, actor_name)
-    //     - tags 는 업데이트하지 않음 → 사용자가 수정한 태그 유지
-    //     - memo / rating / recommended / grade 도 보존 (SET 절 미포함)
-    //     - is_new 도 보존 → 기존 파일 재스캔 시 NEW 상태 유지/변경 없음
-    //     - missing → normal 자동 복구
-    const upsert = db.prepare(`
+    /**
+     * file_identity 생성
+     * code가 있으면 `${code}|${size}`, 없으면 `${file_name}|${size}`
+     */
+    function buildFileIdentity(file) {
+      const code = file.code && file.code.trim() ? file.code.trim() : null
+      const size = file.size ?? 0
+      return code ? `${code}|${size}` : `${file.file_name}|${size}`
+    }
+
+    // ── Prepared statements ────────────────────────────────────
+    const findByPath = db.prepare(
+      `SELECT id FROM videos WHERE file_path = ?`
+    )
+    // file_identity로 조회: deleted/duplicate 제외, normal 우선, 최신 updated_at 순
+    const findByIdentity = db.prepare(`
+      SELECT id FROM videos
+      WHERE file_identity = ? AND status NOT IN ('deleted', 'duplicate')
+      ORDER BY
+        CASE WHEN status = 'normal' THEN 0 ELSE 1 END ASC,
+        CASE WHEN rating > 0 THEN 0 ELSE 1 END ASC,
+        updated_at DESC
+      LIMIT 1
+    `)
+    // 같은 경로의 기존 row 갱신 (사용자 데이터 보존)
+    const updateByPath = db.prepare(`
+      UPDATE videos SET
+        file_name     = @file_name,
+        folder_path   = @folder_path,
+        extension     = @extension,
+        size          = @size,
+        modified_at   = @modified_at,
+        code          = @code,
+        actor_name    = @actor_name,
+        file_identity = @file_identity,
+        status        = CASE WHEN status = 'missing' THEN 'normal' ELSE status END,
+        updated_at    = CURRENT_TIMESTAMP
+      WHERE file_path = @file_path
+    `)
+    // 다른 경로에서 발견된 같은 파일 → 경로 갱신 + status='normal' 복구 (사용자 데이터 보존)
+    const updateByIdentity = db.prepare(`
+      UPDATE videos SET
+        file_path     = @file_path,
+        folder_path   = @folder_path,
+        file_name     = @file_name,
+        extension     = @extension,
+        size          = @size,
+        modified_at   = @modified_at,
+        code          = @code,
+        actor_name    = @actor_name,
+        file_identity = @file_identity,
+        status        = 'normal',
+        updated_at    = CURRENT_TIMESTAMP
+      WHERE id = @id
+    `)
+    // 신규 파일 INSERT
+    const insertNew = db.prepare(`
       INSERT INTO videos
         (file_name, file_path, folder_path, extension, size, modified_at,
-         code, actor_name, tags, is_new, updated_at)
+         code, actor_name, file_identity, tags, is_new, updated_at)
       VALUES
         (@file_name, @file_path, @folder_path, @extension, @size, @modified_at,
-         @code, @actor_name, @tags, 1, CURRENT_TIMESTAMP)
-      ON CONFLICT(file_path) DO UPDATE SET
-        file_name   = excluded.file_name,
-        folder_path = excluded.folder_path,
-        extension   = excluded.extension,
-        size        = excluded.size,
-        modified_at = excluded.modified_at,
-        code        = excluded.code,
-        actor_name  = excluded.actor_name,
-        -- tags / is_new 컬럼은 여기에 포함하지 않음 → 사용자 데이터 보존
-        -- 이전에 missing 이었으면 normal 로 복구, 그 외 상태는 보존
-        status      = CASE WHEN status = 'missing' THEN 'normal' ELSE status END,
-        updated_at  = CURRENT_TIMESTAMP
+         @code, @actor_name, @file_identity, @tags, 1, CURRENT_TIMESTAMP)
     `)
 
-    // 트랜잭션으로 일괄 upsert (수천 건도 빠르게 처리)
+    // ① 파일별 upsert (file_path → file_identity → INSERT 순)
     db.transaction((fileList) => {
       for (const file of fileList) {
-        // 신규 INSERT 시 tags 자동 생성값을 파라미터로 전달한다.
-        // ON CONFLICT DO UPDATE 경로에서는 이 값이 무시되므로 안전하다.
-        upsert.run({ ...file, tags: createDefaultTags(file) })
+        const identity = buildFileIdentity(file)
+
+        const byPath = findByPath.get(file.file_path)
+        if (byPath) {
+          // 같은 경로 → 파일 시스템 컬럼만 갱신
+          updateByPath.run({ ...file, file_identity: identity })
+          continue
+        }
+
+        const byIdentity = findByIdentity.get(identity)
+        if (byIdentity) {
+          // 다른 경로에서 같은 파일 발견 → 경로 갱신, 사용자 데이터 유지
+          updateByIdentity.run({ ...file, file_identity: identity, id: byIdentity.id })
+          continue
+        }
+
+        // 신규 파일
+        insertNew.run({ ...file, file_identity: identity, tags: createDefaultTags(file) })
       }
     })(files)
 
-    // ④ actors / video_actors 동기화
-    // actor_name이 있는 파일만 대상으로, upsert 후 확정된 video id를 조회해 동기화한다.
+    // ② actors / video_actors 동기화
     const filesWithActor = files.filter((f) => f.actor_name && f.actor_name.trim())
     if (filesWithActor.length > 0) {
       const getVideoId = db.prepare('SELECT id FROM videos WHERE file_path = ?')
@@ -249,41 +283,130 @@ function registerIpcHandlers() {
       })()
     }
 
-    // ② 삭제 파일 감지: 해당 폴더 하위 DB 레코드 vs 스캔 결과 비교
+    // ③ 중복 병합: 같은 file_identity를 가진 row가 2개 이상이면 master 선정 후 나머지 duplicate 처리
+    // 등급 점수 (낮을수록 좋은 등급)
+    const GRADE_SCORE = { '영구소장': 1, '재시청 추천': 2, '만족': 3, '보관': 4, '애매': 5, '삭제요망': 6 }
+
+    const dupGroups = db.prepare(`
+      SELECT file_identity FROM videos
+      WHERE file_identity IS NOT NULL
+        AND status NOT IN ('deleted', 'duplicate')
+      GROUP BY file_identity
+      HAVING COUNT(*) > 1
+    `).all()
+
+    if (dupGroups.length > 0) {
+      const getGroupRows  = db.prepare(`
+        SELECT * FROM videos
+        WHERE file_identity = ? AND status NOT IN ('deleted', 'duplicate')
+      `)
+      const updateMaster  = db.prepare(`
+        UPDATE videos SET
+          tags        = @tags,
+          memo        = @memo,
+          rating      = @rating,
+          grade       = @grade,
+          recommended = @recommended,
+          favorite    = @favorite,
+          play_count  = @play_count,
+          updated_at  = CURRENT_TIMESTAMP
+        WHERE id = @id
+      `)
+      const markDuplicate = db.prepare(
+        `UPDATE videos SET status = 'duplicate', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+
+      db.transaction(() => {
+        for (const group of dupGroups) {
+          const rows = getGroupRows.all(group.file_identity)
+          if (rows.length < 2) continue
+
+          // master 선택: normal 우선 → rating > 0 우선 → 사용자 데이터 양 우선 → 최신 updated_at 순
+          rows.sort((a, b) => {
+            const normalDiff = (a.status === 'normal' ? 0 : 1) - (b.status === 'normal' ? 0 : 1)
+            if (normalDiff !== 0) return normalDiff
+
+            const ratingDiff = (a.rating > 0 ? 0 : 1) - (b.rating > 0 ? 0 : 1)
+            if (ratingDiff !== 0) return ratingDiff
+
+            const score = (r) =>
+              (r.tags        ? 1 : 0) +
+              (r.memo        ? 1 : 0) +
+              (r.grade !== '보관' ? 1 : 0) +
+              (r.recommended || 0) +
+              (r.favorite    || 0) +
+              Math.min(r.play_count || 0, 1)
+            const scoreDiff = score(b) - score(a)
+            if (scoreDiff !== 0) return scoreDiff
+
+            return new Date(b.updated_at) - new Date(a.updated_at)
+          })
+
+          const master = rows[0]
+          const others = rows.slice(1)
+
+          // 사용자 데이터 병합
+          const allTagSet = new Set(
+            [master.tags, ...others.map((r) => r.tags)]
+              .join(',')
+              .split(',')
+              .map((t) => t.trim())
+              .filter(Boolean)
+          )
+          const mergedTags        = Array.from(allTagSet).join(', ')
+          const mergedMemo        = [master.memo, ...others.map((r) => r.memo)].find(Boolean) || ''
+          const mergedRating      = Math.max(master.rating || 0, ...others.map((r) => r.rating || 0))
+          const mergedGrade       = [master.grade, ...others.map((r) => r.grade)].reduce((best, g) => {
+            return (GRADE_SCORE[g] ?? 4) < (GRADE_SCORE[best] ?? 4) ? g : best
+          })
+          const mergedRecommended = [master, ...others].some((r) => r.recommended) ? 1 : 0
+          const mergedFavorite    = [master, ...others].some((r) => r.favorite)    ? 1 : 0
+          const mergedPlayCount   = others.reduce((sum, r) => sum + (r.play_count || 0), master.play_count || 0)
+
+          updateMaster.run({
+            id:          master.id,
+            tags:        mergedTags,
+            memo:        mergedMemo,
+            rating:      mergedRating,
+            grade:       mergedGrade,
+            recommended: mergedRecommended,
+            favorite:    mergedFavorite,
+            play_count:  mergedPlayCount,
+          })
+
+          for (const other of others) {
+            markDuplicate.run(other.id)
+          }
+        }
+      })()
+    }
+
+    // ④ 삭제 파일 감지: duplicate/deleted 제외한 레코드 vs 스캔 결과 비교
     const scannedPaths = new Set(files.map((f) => f.file_path))
 
-    // DB에서 folderPath 하위 레코드 전체 조회 (Windows/Unix 경로 구분자 양쪽 처리)
     const dbRecords = db.prepare(`
       SELECT id, file_path, status FROM videos
-      WHERE  folder_path = ?
-          OR folder_path LIKE ?
-          OR folder_path LIKE ?
-    `).all(
-      folderPath,
-      folderPath + '\\%',
-      folderPath + '/%',
-    )
+      WHERE status NOT IN ('duplicate', 'deleted')
+        AND (folder_path = ? OR folder_path LIKE ? OR folder_path LIKE ?)
+    `).all(folderPath, folderPath + '\\%', folderPath + '/%')
 
-    // 스캔에서 누락된 레코드만 추려 실제 존재 여부 확인
-    const markMissing = db.prepare(`
-      UPDATE videos
-      SET status = 'missing', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `)
+    const markMissing = db.prepare(
+      `UPDATE videos SET status = 'missing', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
 
     let missingCount = 0
     db.transaction(() => {
       for (const rec of dbRecords) {
-        if (scannedPaths.has(rec.file_path)) continue   // 스캔에서 찾은 파일 → 무시
-        if (rec.status === 'missing') continue           // 이미 missing 처리됨 → 무시
-        if (!fs.existsSync(rec.file_path)) {             // 실제로 없으면 missing 처리
+        if (scannedPaths.has(rec.file_path)) continue
+        if (rec.status === 'missing') continue
+        if (!fs.existsSync(rec.file_path)) {
           markMissing.run(rec.id)
           missingCount++
         }
       }
     })()
 
-    // ③ 스캔한 루트 폴더를 scanned_roots 테이블에 기록 (폴더 패널용)
+    // ⑤ 스캔한 루트 폴더를 scanned_roots 테이블에 기록 (폴더 패널용)
     db.prepare(`
       INSERT INTO scanned_roots (root_path, scanned_at)
       VALUES (?, CURRENT_TIMESTAMP)
@@ -301,9 +424,9 @@ function registerIpcHandlers() {
   // 스캔된 폴더 목록 조회 (get-folder-list)
   //
   // scanned_roots 테이블의 루트 폴더별로 아래 통계를 반환한다.
-  //   total             : 해당 루트 하위 전체 영상 수 (deleted 제외)
-  //   recommended_count : 추천작 수
-  //   delete_count      : 삭제요망(grade) 중 실제 파일 있는 수
+  //   total             : 해당 루트 하위 normal 영상 수
+  //   recommended_count : 추천작 수 (normal만)
+  //   delete_count      : 삭제요망(grade) 중 normal인 수
   //
   // 반환: { library: {...}, folders: FolderStat[] }
   //   library : 전체 라이브러리 합계 통계
@@ -312,14 +435,14 @@ function registerIpcHandlers() {
   ipcMain.handle('get-folder-list', async () => {
     const db = getDb()
 
-    // 전체 라이브러리 통계 (status='deleted' 제외)
+    // 전체 라이브러리 통계 (status='normal'만 카운트)
     const library = db.prepare(`
       SELECT
         COUNT(*) AS total,
-        SUM(CASE WHEN recommended = 1 THEN 1 ELSE 0 END)                                                                           AS recommended_count,
-        SUM(CASE WHEN grade = '삭제요망' AND status != 'missing' AND status != 'deleted' THEN 1 ELSE 0 END) AS delete_count
+        SUM(CASE WHEN recommended = 1 THEN 1 ELSE 0 END) AS recommended_count,
+        SUM(CASE WHEN grade = '삭제요망' THEN 1 ELSE 0 END) AS delete_count
       FROM videos
-      WHERE status != 'deleted'
+      WHERE status = 'normal'
     `).get()
 
     // 루트 폴더 목록 (scanned_roots 테이블)
@@ -327,14 +450,14 @@ function registerIpcHandlers() {
       SELECT root_path, scanned_at FROM scanned_roots ORDER BY root_path ASC
     `).all()
 
-    // 각 루트별 통계 (folder_path 하위 파일 집계)
+    // 각 루트별 통계 (folder_path 하위 파일 집계, status='normal'만)
     const countStmt = db.prepare(`
       SELECT
         COUNT(*) AS total,
-        SUM(CASE WHEN recommended = 1 THEN 1 ELSE 0 END)                                                                           AS recommended_count,
-        SUM(CASE WHEN grade = '삭제요망' AND status != 'missing' AND status != 'deleted' THEN 1 ELSE 0 END) AS delete_count
+        SUM(CASE WHEN recommended = 1 THEN 1 ELSE 0 END) AS recommended_count,
+        SUM(CASE WHEN grade = '삭제요망' THEN 1 ELSE 0 END) AS delete_count
       FROM videos
-      WHERE status != 'deleted'
+      WHERE status = 'normal'
         AND (folder_path = ? OR folder_path LIKE ? ESCAPE '!' OR folder_path LIKE ? ESCAPE '!')
     `)
 
@@ -388,7 +511,8 @@ function registerIpcHandlers() {
     // tabMode='new': NEW 작업 대기함 — is_new=1 + missing/deleted 자동 제외
     // tabMode='recommended': 추천 탭 — recommended=1만 표시
     // tabMode='all' (기본): 필터 조건만 적용
-    const tabConditions = []
+    // duplicate는 모든 모드에서 기본 숨김
+    const tabConditions = [`status != 'duplicate'`]
     if (tabMode === 'new') {
       tabConditions.push(`is_new = 1`)
       tabConditions.push(`status != 'missing'`)

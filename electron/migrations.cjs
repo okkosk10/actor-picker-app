@@ -211,6 +211,36 @@ const MIGRATIONS = [
       `)
     },
   },
+
+  {
+    version: '010_add_file_identity',
+    description: 'file_identity 컬럼 추가 및 백필 (파일 동일성 식별자)',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+
+      // 1. file_identity 컬럼 추가
+      if (!cols.includes('file_identity')) {
+        db.exec(`ALTER TABLE videos ADD COLUMN file_identity TEXT`)
+      }
+
+      // 2. 기존 데이터 백필: code가 있으면 `${code}|${size}`, 없으면 `${file_name}|${size}`
+      db.exec(`
+        UPDATE videos
+        SET file_identity = CASE
+          WHEN code IS NOT NULL AND trim(code) != ''
+            THEN trim(code) || '|' || CAST(COALESCE(size, 0) AS TEXT)
+          ELSE
+            file_name || '|' || CAST(COALESCE(size, 0) AS TEXT)
+        END
+        WHERE file_identity IS NULL
+      `)
+
+      // 3. file_identity 인덱스 추가
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_videos_file_identity ON videos (file_identity);
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────
