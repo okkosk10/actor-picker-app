@@ -376,12 +376,15 @@ Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue
 $themes = $raw | ConvertFrom-Json
 if (-not $themes -or $themes.Count -eq 0) { Write-Output 'ERR:테마없음'; exit 1 }
 
-$shell  = New-Object -ComObject Shell.Application
+$shell      = New-Object -ComObject Shell.Application
+$localShell = New-Object -ComObject Shell.Application
 $parent = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)
 if (-not $parent) { Write-Output 'CANCEL'; exit 0 }
 
-# ShellFolderItem 보관 — GetFolder 로 항상 fresh Shell.Folder 반환 가능 (MTP에서도 안정적)
+# ShellFolderItem 보관 — GetFolder 로 항상 fresh Shell.Folder 반환 가능
 $parentItem = $parent.Self
+$tmpBase    = $env:TEMP
+$localNS    = $localShell.NameSpace($tmpBase)
 
 function Get-Fresh {
   try { $f = $parentItem.GetFolder; if ($f) { return $f } } catch {}
@@ -390,7 +393,7 @@ function Get-Fresh {
 
 function Find-Sub {
   param($name)
-  for ($i = 0; $i -lt 20; $i++) {
+  for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 500
     $fp = Get-Fresh
     if (-not $fp) { continue }
@@ -411,35 +414,52 @@ foreach ($theme in $themes) {
   if (-not $safeName) { $safeName = 'theme' }
 
   $subFolder = $null
+  $tmpPath   = $null
 
-  # ── 빈 로컬 임시폴더 CopyHere → 장치에 폴더 생성 ──────────────
+  # ── 방법1: 더미파일 포함 로컬폴더를 FolderItem으로 CopyHere ───────
+  # 빈 폴더는 MTP가 무시하거나 COM 예외를 유발하므로 .keep 더미 파일 포함
   try {
-    $tmpDir = [System.IO.Path]::Combine($env:TEMP, $safeName)
-    if ([System.IO.Directory]::Exists($tmpDir)) { [System.IO.Directory]::Delete($tmpDir, $true) }
-    [System.IO.Directory]::CreateDirectory($tmpDir) | Out-Null
+    $tmpPath = [System.IO.Path]::Combine($tmpBase, $safeName)
+    if ([System.IO.Directory]::Exists($tmpPath)) {
+      [System.IO.Directory]::Delete($tmpPath, $true)
+    }
+    [System.IO.Directory]::CreateDirectory($tmpPath) | Out-Null
+    [System.IO.File]::WriteAllBytes(
+      [System.IO.Path]::Combine($tmpPath, '.keep'), [byte[]]@(0)
+    )
 
     $fp = Get-Fresh
     if ($fp) {
-      $fp.CopyHere($tmpDir, 0)
-      try { [System.IO.Directory]::Delete($tmpDir, $true) } catch {}
-      $subFolder = Find-Sub $safeName
-    } else {
-      try { [System.IO.Directory]::Delete($tmpDir, $true) } catch {}
+      # 경로 문자열 대신 Shell.FolderItem 전달 — MTP COM 안정성 향상
+      $folderItem = $localNS.ParseName($safeName)
+      if ($folderItem) {
+        $fp.CopyHere($folderItem, 4)
+        $subFolder = Find-Sub $safeName
+      }
     }
-  } catch {}
-
-  # ── 폴백: NewSubFolder ─────────────────────────────────────────
-  if (-not $subFolder) {
-    try { $fp = Get-Fresh; if ($fp) { $subFolder = $fp.NewSubFolder($safeName) } } catch {}
+  } catch {
+    # COM 예외 무시, 다음 방법으로 폴백
+  } finally {
+    if ($tmpPath -and [System.IO.Directory]::Exists($tmpPath)) {
+      try { [System.IO.Directory]::Delete($tmpPath, $true) } catch {}
+    }
   }
 
-  # ── 파일 복사 ──────────────────────────────────────────────────
+  # ── 방법2: NewSubFolder 폴백 ─────────────────────────────────────
+  if (-not $subFolder) {
+    try {
+      $fp2 = Get-Fresh
+      if ($fp2) { $subFolder = $fp2.NewSubFolder($safeName) }
+    } catch {}
+  }
+
+  # ── 파일 복사 ────────────────────────────────────────────────────
   if ($subFolder) {
     foreach ($f in $theme.files) { try { $subFolder.CopyHere($f, 0) } catch {} }
   } else {
     $folderErr++
-    $fp = Get-Fresh
-    if ($fp) { foreach ($f in $theme.files) { try { $fp.CopyHere($f, 0) } catch {} } }
+    $fp3 = Get-Fresh
+    if ($fp3) { foreach ($f in $theme.files) { try { $fp3.CopyHere($f, 0) } catch {} } }
   }
 }
 
