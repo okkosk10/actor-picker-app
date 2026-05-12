@@ -461,17 +461,19 @@ function registerIpcHandlers() {
         AND (folder_path = ? OR folder_path LIKE ? ESCAPE '!' OR folder_path LIKE ? ESCAPE '!')
     `)
 
-    const folders = roots.map((row) => {
-      const safe  = escapeLike(row.root_path)
-      const stats = countStmt.get(row.root_path, safe + '\\%', safe + '/%')
-      return {
-        root_path:         row.root_path,
-        scanned_at:        row.scanned_at,
-        total:             stats.total,
-        recommended_count: stats.recommended_count,
-        delete_count:      stats.delete_count,
-      }
-    })
+    const folders = roots
+      .map((row) => {
+        const safe  = escapeLike(row.root_path)
+        const stats = countStmt.get(row.root_path, safe + '\\%', safe + '/%')
+        return {
+          root_path:         row.root_path,
+          scanned_at:        row.scanned_at,
+          total:             stats.total,
+          recommended_count: stats.recommended_count,
+          delete_count:      stats.delete_count,
+        }
+      })
+      .filter((row) => row.total > 0)  // normal 영상이 0개인 폴더는 목록에서 숨김
 
     return { library, folders }
   })
