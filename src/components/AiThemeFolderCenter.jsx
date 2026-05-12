@@ -9,7 +9,7 @@
  *   4. "선택한 특집 폴더 생성" → createAiThemeFolders() IPC
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 
 // ─────────────────────────────────────────────────────────────
 // 내부 유틸
@@ -24,6 +24,122 @@ function fmtRating(r) {
   return `${'★'.repeat(Math.round(r))} (${Number(r).toFixed(1)})`
 }
 
+// ─────────────────────────────────────────────────────────────
+// 로딩 화면 (AI 분석 / 복사 진행 공용)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * mode: 'generate' | 'copy'
+ * copyTotal: 복사할 테마 수 (mode=copy일 때)
+ */
+function LoadingScreen({ mode, copyTotal = 0 }) {
+  const GEN_STEPS = [
+    { label: 'DB에서 영상 데이터 불러오는 중…',   sub: '전체 영상, 배우, 활동 통계를 조회합니다.' },
+    { label: '후보 점수 계산 중…',               sub: 'watchScore / copyScore / themeScore를 계산합니다.' },
+    { label: 'AI에 특집 분석 요청 중…',           sub: '상위 후보를 OpenAI에 전달합니다.' },
+    { label: 'AI 응답 대기 중…',                 sub: 'AI가 테마를 구성하고 있습니다. 잠시만 기다려주세요.' },
+    { label: 'AI가 열심히 분석하고 있습니다…',    sub: '영상 수가 많을수록 시간이 걸릴 수 있습니다.' },
+  ]
+  // 단계 전환 타이밍 (ms)
+  const STEP_TIMING = [0, 1200, 2600, 4500, 8000]
+
+  const [stepIdx, setStepIdx] = useState(0)
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    if (mode !== 'generate') return
+    setStepIdx(0)
+    let i = 1
+    function advance() {
+      if (i >= STEP_TIMING.length) return
+      timerRef.current = setTimeout(() => {
+        setStepIdx(i)
+        i++
+        advance()
+      }, i < STEP_TIMING.length ? STEP_TIMING[i] - STEP_TIMING[i - 1] : 99999)
+    }
+    advance()
+    return () => clearTimeout(timerRef.current)
+  }, [mode])
+
+  const step   = mode === 'generate' ? GEN_STEPS[stepIdx] : null
+  const pct    = mode === 'generate' ? Math.round((stepIdx / (GEN_STEPS.length - 1)) * 70) : null
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '52px 24px',
+        gap: 24,
+      }}
+    >
+      {/* 스피너 */}
+      <div className="ai-spinner" />
+
+      {/* 상태 텍스트 */}
+      {mode === 'generate' && step && (
+        <div style={{ textAlign: 'center', maxWidth: 380 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#c8d0ff', marginBottom: 6 }}>
+            {step.label}
+          </div>
+          <div style={{ fontSize: 12, color: '#666' }}>
+            {step.sub}
+          </div>
+        </div>
+      )}
+      {mode === 'copy' && (
+        <div style={{ textAlign: 'center', maxWidth: 380 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#a0f0b0', marginBottom: 6 }}>
+            선택한 특집 폴더를 복사하는 중…
+          </div>
+          <div style={{ fontSize: 12, color: '#666' }}>
+            {copyTotal}개 테마의 파일을 대상 폴더에 복사합니다. 원본은 삭제되지 않습니다.
+          </div>
+        </div>
+      )}
+
+      {/* 진행 바 */}
+      <div className="ai-progress-track" style={{ width: 320 }}>
+        {mode === 'generate' ? (
+          <>
+            {/* 실제 단계 기반 fill + shimmer */}
+            <div className="ai-progress-fill" style={{ width: `${pct}%` }} />
+            <div className="ai-progress-shimmer" />
+          </>
+        ) : (
+          /* 복사는 완전 indeterminate */
+          <div className="ai-progress-shimmer" />
+        )}
+      </div>
+
+      {/* 단계 도트 (generate 전용) */}
+      {mode === 'generate' && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {GEN_STEPS.map((s, i) => (
+            <div
+              key={i}
+              title={s.label}
+              style={{
+                width: i === stepIdx ? 10 : 7,
+                height: i === stepIdx ? 10 : 7,
+                borderRadius: '50%',
+                background: i < stepIdx ? '#4f6ef7' : i === stepIdx ? '#818cf8' : '#2a2a3a',
+                transition: 'all 0.3s',
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// 신뢰도 바
+// ─────────────────────────────────────────────────────────────
 function ConfidenceBar({ value }) {
   const pct = Math.round((value ?? 0.5) * 100)
   const color = pct >= 80 ? '#52c41a' : pct >= 60 ? '#faad14' : '#ff7875'
@@ -267,12 +383,12 @@ function CopyResultSummary({ results }) {
 // 메인 컴포넌트
 // ─────────────────────────────────────────────────────────────
 export default function AiThemeFolderCenter() {
-  const [generating,    setGenerating]    = useState(false)
-  const [themes,        setThemes]        = useState(null)   // null = 아직 생성 안 함
-  const [error,         setError]         = useState(null)
+  const [generating,     setGenerating]     = useState(false)
+  const [themes,         setThemes]         = useState(null)   // null = 아직 생성 안 함
+  const [error,          setError]          = useState(null)
   const [candidateCount, setCandidateCount] = useState(0)
 
-  // 비디오 맵 (파일 목록 표시용) – themeScore 등 후보 DTO를 id 기준으로 색인
+  // 비디오 맵 (파일 목록 표시용)
   const [videoMap, setVideoMap] = useState({})
 
   // 체크된 테마 folderName 집합
@@ -435,22 +551,21 @@ export default function AiThemeFolderCenter() {
       {/* 복사 결과 */}
       <CopyResultSummary results={copyResults} />
 
-      {/* 로딩 */}
-      {generating && (
-        <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>
-          🤖 AI가 영상을 분석하고 있습니다…
-        </div>
-      )}
+      {/* ── AI 생성 로딩 ── */}
+      {generating && <LoadingScreen mode="generate" />}
+
+      {/* ── 복사 로딩 ── */}
+      {copying && <LoadingScreen mode="copy" copyTotal={checked.size} />}
 
       {/* 결과 없음 */}
-      {!generating && themes !== null && themes.length === 0 && (
+      {!generating && !copying && themes !== null && themes.length === 0 && (
         <div style={{ color: '#888', padding: 24 }}>
           유효한 테마를 찾지 못했습니다. 영상 데이터를 더 추가한 뒤 다시 시도해보세요.
         </div>
       )}
 
       {/* 테마 목록 */}
-      {!generating && themes && themes.length > 0 && (
+      {!generating && !copying && themes && themes.length > 0 && (
         <>
           <div
             style={{

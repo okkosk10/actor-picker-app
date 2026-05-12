@@ -180,23 +180,6 @@ export default function DashboardPage({ onViewDetail, onCopyFiles }) {
   const [dashTab, setDashTab] = useState('stats')   // 'stats' | 'recs' | 'ai-theme'
   const loadingRef = useRef(false)
 
-  // AI 연결 테스트 상태
-  const [aiTesting,   setAiTesting]   = useState(false)
-  const [aiResult,    setAiResult]    = useState(null)   // { success, model?, message?, error? }
-
-  const handleAiTest = async () => {
-    setAiTesting(true)
-    setAiResult(null)
-    try {
-      const result = await window.api.testAiConnection()
-      setAiResult(result)
-    } catch (e) {
-      setAiResult({ success: false, error: e.message })
-    } finally {
-      setAiTesting(false)
-    }
-  }
-
   const fetchStats = async () => {
     if (loadingRef.current) return
     loadingRef.current = true
@@ -254,28 +237,6 @@ export default function DashboardPage({ onViewDetail, onCopyFiles }) {
           <button className="btn-secondary" type="button" onClick={fetchStats}>
             🔄 통계 새로고침
           </button>
-        )}
-        <button
-          className="btn-secondary"
-          type="button"
-          onClick={handleAiTest}
-          disabled={aiTesting}
-          style={{ marginLeft: 8 }}
-        >
-          {aiTesting ? '🤖 연결 테스트 중…' : '🤖 AI 연결 테스트'}
-        </button>
-        {aiResult && (
-          <span
-            style={{
-              marginLeft: 10,
-              fontWeight: 600,
-              color: aiResult.success ? '#52c41a' : '#ff4d4f',
-            }}
-          >
-            {aiResult.success
-              ? `✅ 연결 성공 (${aiResult.model}) — "${aiResult.message}"`
-              : `❌ 연결 실패: ${aiResult.error}`}
-          </span>
         )}
       </div>
 
