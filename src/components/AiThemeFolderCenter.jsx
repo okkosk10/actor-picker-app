@@ -10,7 +10,6 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
-import FileCopyModal from './FileCopyModal.jsx'
 
 // ─────────────────────────────────────────────────────────────
 // 내부 유틸
@@ -402,9 +401,9 @@ export default function AiThemeFolderCenter() {
   const [copying,     setCopying]     = useState(false)
   const [copyResults, setCopyResults] = useState(null)
 
-  // 장치 복사 모달
-  const [deviceVideos,     setDeviceVideos]     = useState(null)  // null = 닫힘
-  const [deviceLoading,    setDeviceLoading]    = useState(false)
+  // 장치 복사 상태: null | 'selecting' | 'started' | 'error'
+  const [deviceCopyState, setDeviceCopyState] = useState(null)
+  const [deviceCopyInfo,  setDeviceCopyInfo]  = useState(null)
 
   // ── 전체 선택/해제 ────────────────────────────────────────────
   const allChecked = themes && themes.length > 0 && checked.size === themes.length
@@ -485,31 +484,37 @@ export default function AiThemeFolderCenter() {
     }
   }, [themes, checked, targetPath])
 
-  // ── 장치로 복사 ────────────────────────────────────────────────
+  // ── 장치로 복사 (테마 서브폴더 생성) ─────────────────────────
   const handleDeviceCopy = useCallback(async () => {
     if (checked.size === 0) { setError('복사할 테마를 하나 이상 선택하세요.'); return }
     setError(null)
-    setDeviceLoading(true)
+    setDeviceCopyState('selecting')
+    setDeviceCopyInfo(null)
     try {
-      const selected  = (themes ?? []).filter(t => checked.has(t.folderName))
-      const allIds    = [...new Set(selected.flatMap(t => t.videoIds ?? []))]
-      const fileInfos = await window.api.getVideoFileInfos(allIds)
-      // FileCopyModal이 기대하는 video 객체 형식으로 변환
-      const videos = fileInfos.map(r => ({
-        id:         r.id,
-        file_name:  r.file_name,
-        file_path:  r.file_path,
-        size:       r.size   ?? 0,
-        status:     r.status ?? 'normal',
-      }))
-      if (videos.length === 0) { setError('복사 가능한 파일이 없습니다.'); return }
-      setDeviceVideos(videos)
+      const selected = (themes ?? []).filter(t => checked.has(t.folderName))
+      const result   = await window.api.copyThemesToDevice(selected)
+      if (!result.success) {
+        if (result.action === 'cancelled') {
+          setDeviceCopyState(null)
+        } else {
+          setDeviceCopyState('error')
+          setError(result.error ?? '장치 복사 실패')
+        }
+        return
+      }
+      setDeviceCopyInfo(result)
+      setDeviceCopyState('started')
     } catch (e) {
-      setError(e.message || '파일 정보 조회 실패')
-    } finally {
-      setDeviceLoading(false)
+      setDeviceCopyState('error')
+      setError(e.message || '장치 복사 오류')
     }
   }, [themes, checked])
+
+  const handleDeviceCopyDone = useCallback(() => {
+    window.api.themeCopyClose()
+    setDeviceCopyState(null)
+    setDeviceCopyInfo(null)
+  }, [])
 
   // ─────────────────────────────────────────────────────────────
   // 렌더
@@ -569,10 +574,10 @@ export default function AiThemeFolderCenter() {
         <button
           className="btn-primary"
           onClick={handleDeviceCopy}
-          disabled={deviceLoading || !themes || checked.size === 0 || generating || copying}
+          disabled={deviceCopyState === 'selecting' || !themes || checked.size === 0 || generating || copying || deviceCopyState === 'started'}
           style={{ ...BTN, background: '#391099' }}
         >
-          {deviceLoading ? '⏳ 조회 중…' : `📱 장치로 복사 (${checked.size}개)`}
+          {deviceCopyState === 'selecting' ? '⏳ 폴더 선택 중…' : `📱 핸드폰에 폴더 만들어서 복사 (${checked.size}개)`}
         </button>
       </div>
 
@@ -588,7 +593,35 @@ export default function AiThemeFolderCenter() {
         </div>
       )}
 
-      {/* 에러 */}
+      {/* 장치 복사 진행 상태 */}
+      {deviceCopyState === 'started' && deviceCopyInfo && (
+        <div style={{
+          padding: '14px 18px',
+          marginBottom: 16,
+          background: '#0f1a2e',
+          border: '1px solid #1e3a5f',
+          borderRadius: 8,
+          fontSize: 13,
+          color: '#7dd3fc',
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>📱 핸드폰 복사가 시작됐습니다</div>
+          <div style={{ color: '#94a3b8', marginBottom: 4 }}>
+            테마 {deviceCopyInfo.themeCount}개 · 파일 {deviceCopyInfo.fileCount}개
+            {deviceCopyInfo.folderErrors > 0 && (
+              <span style={{ color: '#f59e0b' }}> · 서브폴더 생성 실패 {deviceCopyInfo.folderErrors}개 (파일은 상위 폴더에 복사됨)</span>
+            )}
+          </div>
+          <div style={{ color: '#64748b', fontSize: 12, marginBottom: 10 }}>
+            Windows 복사 창에서 진행 상황을 확인하세요. 완료 후 아래 버튼을 눌러주세요.
+          </div>
+          <button
+            onClick={handleDeviceCopyDone}
+            style={{ ...BTN, background: '#1e40af', fontSize: 13 }}
+          >
+            ✅ 복사 완료
+          </button>
+        </div>
+      )}
       {error && (
         <div
           style={{
@@ -665,14 +698,6 @@ export default function AiThemeFolderCenter() {
       )}
     </div>
 
-    {/* 장치 복사 모달 */}
-    {deviceVideos && (
-      <FileCopyModal
-        videos={deviceVideos}
-        selectedIds={null}
-        onClose={() => setDeviceVideos(null)}
-      />
-    )}
   </>
   )
 }

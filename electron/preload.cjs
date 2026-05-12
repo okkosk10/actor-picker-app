@@ -234,6 +234,19 @@ contextBridge.exposeInMainWorld('api', {
   getVideoFileInfos: (videoIds) =>
     ipcRenderer.invoke('get-video-file-infos', videoIds),
 
+  // ── AI 테마 → 장치 서브폴더 복사 ─────────────────────────────
+  // 선택된 테마 배열을 받아 폰에서 폴더를 선택한 뒤
+  // 테마명으로 서브폴더를 만들고 파일을 일괄 복사한다.
+  // @param selectedThemes {object[]} - { folderName, videoIds }[]
+  // 반환: { success, action, themeCount, fileCount, folderErrors } | { success: false, error }
+  copyThemesToDevice: (selectedThemes) =>
+    ipcRenderer.invoke('copy-themes-to-device', selectedThemes),
+
+  // ── AI 테마 장치 복사 완료 신호 ───────────────────────────────
+  // Windows 복사 창 완료 후 사용자가 누르면 PS 프로세스를 종료한다.
+  themeCopyClose: () =>
+    ipcRenderer.send('theme-copy-close'),
+
   // ── 가중치 기반 대시보드 추천 조회 ───────────────────────────
   // 반환: { topPicks, stalePreferences, highRatedUnderViewed,
   //         worthRevisiting, needsMetadata, ratingReview }

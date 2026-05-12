@@ -345,4 +345,153 @@ async function createMtpBulkSession(hwnd, filePaths) {
   }
 }
 
-module.exports = { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec }
+/**
+ * MTP 테마별 서브폴더 생성 + 일괄 복사 세션.
+ * 선택한 장치 폴더 아래에 테마명으로 서브폴더를 만들고 각 파일을 복사한다.
+ *
+ * @param {number} hwnd
+ * @param {Array<{name: string, files: string[]}>} themes  테마 배열
+ * @returns {Promise<{errorCount:number, close():void}|null>}  null = 취소
+ */
+async function createMtpThemeBulkSession(hwnd, themes) {
+  if (!Array.isArray(themes) || themes.length === 0) return null
+
+  const hwndVal     = (Number.isInteger(hwnd) && hwnd > 0) ? hwnd : 0
+  const tmpFileName = `acp-theme-${crypto.randomBytes(8).toString('hex')}.json`
+  const tmpFile     = path.join(os.tmpdir(), tmpFileName)
+  const sigFileName = `acp-theme-sig-${crypto.randomBytes(8).toString('hex')}.txt`
+  const sigFile     = path.join(os.tmpdir(), sigFileName)
+
+  // JSON 파일 (UTF-8 BOM) 에 테마 데이터 기록
+  const bom = Buffer.from([0xEF, 0xBB, 0xBF])
+  fs.writeFileSync(tmpFile, Buffer.concat([bom, Buffer.from(JSON.stringify(themes), 'utf8')]))
+
+  const tmpSafe = tmpFile.replace(/'/g, "''")
+  const sigSafe = sigFile.replace(/'/g, "''")
+
+  const psScript = `
+$ErrorActionPreference = 'Continue'
+$raw = Get-Content -LiteralPath '${tmpSafe}' -Raw -Encoding UTF8
+Remove-Item -LiteralPath '${tmpSafe}' -ErrorAction SilentlyContinue
+$themes = $raw | ConvertFrom-Json
+if (-not $themes -or $themes.Count -eq 0) { Write-Output 'ERR:테마없음'; exit 1 }
+
+$shell  = New-Object -ComObject Shell.Application
+$parent = $shell.BrowseForFolder(${hwndVal}, '복사할 위치를 선택하세요 (휴대폰 폴더 포함)', 0, 17)
+if (-not $parent) { Write-Output 'CANCEL'; exit 0 }
+
+# ShellFolderItem 보관 — GetFolder 로 항상 fresh Shell.Folder 반환 가능 (MTP에서도 안정적)
+$parentItem = $parent.Self
+
+function Get-Fresh {
+  try { $f = $parentItem.GetFolder; if ($f) { return $f } } catch {}
+  return $null
+}
+
+function Find-Sub {
+  param($name)
+  for ($i = 0; $i -lt 20; $i++) {
+    Start-Sleep -Milliseconds 500
+    $fp = Get-Fresh
+    if (-not $fp) { continue }
+    try { $it = $fp.ParseName($name); if ($it -and $it.IsFolder) { return $it.GetFolder } } catch {}
+    try {
+      foreach ($it in @($fp.Items())) {
+        if ($it.IsFolder -and $it.Name -eq $name) { return $it.GetFolder }
+      }
+    } catch {}
+  }
+  return $null
+}
+
+$folderErr = 0
+
+foreach ($theme in $themes) {
+  $safeName = ($theme.name -replace '[<>:"/\\|?*]','_').Trim('_').Trim()
+  if (-not $safeName) { $safeName = 'theme' }
+
+  $subFolder = $null
+
+  # ── 빈 로컬 임시폴더 CopyHere → 장치에 폴더 생성 ──────────────
+  try {
+    $tmpDir = [System.IO.Path]::Combine($env:TEMP, $safeName)
+    if ([System.IO.Directory]::Exists($tmpDir)) { [System.IO.Directory]::Delete($tmpDir, $true) }
+    [System.IO.Directory]::CreateDirectory($tmpDir) | Out-Null
+
+    $fp = Get-Fresh
+    if ($fp) {
+      $fp.CopyHere($tmpDir, 0)
+      try { [System.IO.Directory]::Delete($tmpDir, $true) } catch {}
+      $subFolder = Find-Sub $safeName
+    } else {
+      try { [System.IO.Directory]::Delete($tmpDir, $true) } catch {}
+    }
+  } catch {}
+
+  # ── 폴백: NewSubFolder ─────────────────────────────────────────
+  if (-not $subFolder) {
+    try { $fp = Get-Fresh; if ($fp) { $subFolder = $fp.NewSubFolder($safeName) } } catch {}
+  }
+
+  # ── 파일 복사 ──────────────────────────────────────────────────
+  if ($subFolder) {
+    foreach ($f in $theme.files) { try { $subFolder.CopyHere($f, 0) } catch {} }
+  } else {
+    $folderErr++
+    $fp = Get-Fresh
+    if ($fp) { foreach ($f in $theme.files) { try { $fp.CopyHere($f, 0) } catch {} } }
+  }
+}
+
+Write-Output "STARTED:$folderErr"
+while (-not (Test-Path -LiteralPath '${sigSafe}')) { Start-Sleep -Milliseconds 500 }
+Remove-Item -LiteralPath '${sigSafe}' -ErrorAction SilentlyContinue
+`.trim()
+
+  const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
+
+  const proc = spawn(
+    'powershell.exe',
+    ['-STA', '-NoProfile', '-EncodedCommand', encoded],
+    { windowsHide: true },
+  )
+
+  let stdoutBuf = ''
+  let closed    = false
+  proc.on('close', () => { closed = true })
+  proc.stderr?.on('data', () => {})
+  proc.stdout.on('data', (d) => { stdoutBuf += d.toString('utf8') })
+
+  // BrowseForFolder 완료(또는 취소) 대기
+  const firstLine = await new Promise((resolve, reject) => {
+    const check = () => {
+      const idx = stdoutBuf.indexOf('\n')
+      if (idx !== -1) {
+        resolve(stdoutBuf.slice(0, idx).trim())
+        stdoutBuf = stdoutBuf.slice(idx + 1)
+        return
+      }
+      if (closed) return reject(new Error('프로세스가 응답 없이 종료됨'))
+      setTimeout(check, 50)
+    }
+    check()
+  })
+
+  try { fs.unlinkSync(tmpFile) } catch { /* 이미 삭제됨 */ }
+
+  if (firstLine === 'CANCEL') {
+    try { fs.writeFileSync(sigFile, '') } catch { /* 무시 */ }
+    return null
+  }
+
+  const errCount = parseInt((firstLine.match(/^STARTED:(\d+)/) || [])[1] ?? '0', 10)
+
+  return {
+    errorCount: errCount,
+    close() {
+      try { fs.writeFileSync(sigFile, '') } catch { /* 무시 */ }
+    },
+  }
+}
+
+module.exports = { copyFilesToClipboard, createMtpSession, createMtpBulkSession, createMtpThemeBulkSession, calcTimeoutSec }

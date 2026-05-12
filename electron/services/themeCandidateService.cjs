@@ -90,9 +90,28 @@ function buildThemeCandidates(videos, limit = 120) {
     }
   })
 
-  // themeScore 내림차순 정렬 후 상위 limit개만 반환
+  // themeScore 내림차순 정렬
   scored.sort((a, b) => b.themeScore - a.themeScore)
-  return scored.slice(0, limit)
+
+  // 배우별 상한선 적용: 동일 배우가 후보의 25% 이상을 차지하지 않도록 제한
+  // 단, 배우명이 없는 영상은 제한 없이 포함
+  const perActorLimit = Math.max(5, Math.ceil(limit * 0.25))
+  const actorCount    = {}
+  const limited       = []
+  for (const v of scored) {
+    const actor = (v.primaryActor || v.actors || '').trim()
+    if (!actor) {
+      limited.push(v)
+    } else {
+      const cnt = actorCount[actor] || 0
+      if (cnt < perActorLimit) {
+        limited.push(v)
+        actorCount[actor] = cnt + 1
+      }
+    }
+    if (limited.length >= limit) break
+  }
+  return limited
 }
 
 module.exports = { buildThemeCandidates, calcScores }

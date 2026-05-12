@@ -28,7 +28,7 @@ const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
 const { getDb, recordVideoActivity, getDashboardStats } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
 const { parseFileName }       = require('./parser.cjs')
-const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
+const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, createMtpThemeBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
 const { testOpenAIConnection }   = require('./services/openaiClient.cjs')
 const { generateAiThemeFolders } = require('./services/aiThemeFolderService.cjs')
 const { createThemeFolders }     = require('./services/themeCopyService.cjs')
@@ -45,6 +45,8 @@ const dispatchAction = (action) => {
 let _bulkSession = null
 // ── bulk 복사 완료 후 활동 기록용 pending 목록 ─────────────────
 let _bulkPending = []
+// ── AI 테마 장치 복사 세션 참조 ────────────────────────────────
+let _themeSession = null
 
 // ── 등급 정렬용 CASE 표현식 ───────────────────────────────────
 // 영구소장(1) → 재시청 추천(2) → 만족(3) → 보관(4) → 애매(5) → 삭제요망(6)
@@ -2550,6 +2552,84 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
+  // AI 테마 → 장치 서브폴더 복사 (copy-themes-to-device)
+  //
+  // 선택한 테마 배열에서 videoId → filePath 맵을 구성한 뒤
+  // createMtpThemeBulkSession 으로 장치에 테마명 서브폴더를 만들고 복사한다.
+  //
+  // @param selectedThemes {object[]} - 선택된 테마 (videoIds, folderName 포함)
+  // 반환: { success, action, themeCount, fileCount, folderErrors }
+  //       | { success: false, error }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('copy-themes-to-device', async (_event, selectedThemes) => {
+    if (!Array.isArray(selectedThemes) || selectedThemes.length === 0) {
+      return { success: false, error: '선택된 테마가 없습니다.' }
+    }
+
+    const db = getDb()
+    const allIds = [...new Set(selectedThemes.flatMap(t => (t.videoIds ?? []).map(Number)))]
+    const fileRows = allIds.length > 0
+      ? db.prepare(
+          `SELECT id, file_path, status FROM videos WHERE id IN (${allIds.map(() => '?').join(',')})`
+        ).all(...allIds)
+      : []
+
+    const fileMap = new Map(fileRows.map(r => [r.id, r]))
+
+    // 테마별 {name, files} 목록 구성 (missing/deleted 제외)
+    const themes = []
+    for (const t of selectedThemes) {
+      const files = (t.videoIds ?? [])
+        .map(id => fileMap.get(Number(id)))
+        .filter(r => r && r.file_path && r.status !== 'missing' && r.status !== 'deleted')
+        .map(r => r.file_path)
+      if (files.length > 0) {
+        themes.push({ name: t.folderName ?? t.title, files })
+      }
+    }
+
+    if (themes.length === 0) {
+      return { success: false, error: '복사 가능한 파일이 없습니다.' }
+    }
+
+    const mainWin    = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const hwndBuffer = mainWin?.getNativeWindowHandle()
+    const hwnd       = hwndBuffer ? hwndBuffer.readUInt32LE(0) : 0
+
+    // 이전 세션 정리
+    if (_themeSession) { try { _themeSession.close() } catch { /* 무시 */ }; _themeSession = null }
+
+    let session
+    try {
+      session = await createMtpThemeBulkSession(hwnd, themes)
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+
+    if (!session) {
+      return { success: false, action: 'cancelled' }
+    }
+
+    _themeSession = session
+    const totalFiles = themes.reduce((s, t) => s + t.files.length, 0)
+    return {
+      success:      true,
+      action:       'theme-bulk-started',
+      themeCount:   themes.length,
+      fileCount:    totalFiles,
+      folderErrors: session.errorCount,
+    }
+  })
+
+  // ── AI 테마 장치 복사 완료 신호 ─────────────────────────────────
+  ipcMain.on('theme-copy-close', () => {
+    if (_themeSession) {
+      _themeSession.close()
+      _themeSession = null
+    }
+  })
+
   // AI 특집 폴더 - 실제 복사 실행 (ai-theme-folders:create-folders)
   //
   // @param targetRootPath {string}   - 복사 대상 상위 디렉터리
