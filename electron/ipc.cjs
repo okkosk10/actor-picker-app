@@ -1583,6 +1583,41 @@ function registerIpcHandlers() {
   // videos.actor_name 기반으로 video_actors 테이블을 재동기화한다.
   // 반환: { synced: number }
   // ══════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
+  // 영상 배우명 수정 (update-video-actors)
+  //
+  // videos.actor_name을 갱신하고 video_actors 연결을 재동기화한다.
+  //
+  // @param videoId   {number} - 동영상 ID
+  // @param actorName {string} - 새 배우명 ("배우1, 배우2" 또는 빈 문자열)
+  // 반환: { success: true } | { success: false, error: string }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('update-video-actors', async (_event, videoId, actorName) => {
+    const db = getDb()
+
+    const video = db.prepare('SELECT id FROM videos WHERE id = ?').get(videoId)
+    if (!video) return { success: false, error: 'VIDEO_NOT_FOUND' }
+
+    const trimmed = (actorName ?? '').trim()
+
+    db.transaction(() => {
+      if (!trimmed) {
+        // 배우명 비우기: actor_name NULL, video_actors 연결 삭제
+        db.prepare(`
+          UPDATE videos SET actor_name = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).run(videoId)
+        db.prepare('DELETE FROM video_actors WHERE video_id = ?').run(videoId)
+      } else {
+        db.prepare(`
+          UPDATE videos SET actor_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).run(trimmed, videoId)
+        syncVideoActors(db, videoId, trimmed)
+      }
+    })()
+
+    return { success: true }
+  })
+
   ipcMain.handle('sync-actor-videos', async () => {
     const db     = getDb()
     const videos = db.prepare(`

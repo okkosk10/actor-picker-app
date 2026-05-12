@@ -228,6 +228,14 @@ contextBridge.exposeInMainWorld('api', {
   syncActorVideos: () =>
     ipcRenderer.invoke('sync-actor-videos'),
 
+  // ── 영상 배우명 수정 ──────────────────────────────────────────
+  // videos.actor_name 갱신 + video_actors 재동기화
+  // @param videoId   {number} - 동영상 ID
+  // @param actorName {string} - 새 배우명 ("배우1, 배우2" 또는 빈 문자열)
+  // 반환: { success: true } | { success: false, error: string }
+  updateVideoActors: (videoId, actorName) =>
+    ipcRenderer.invoke('update-video-actors', videoId, actorName),
+
   // ── 추천 영상 조회 ─────────────────────────────────────────────
   // @param preset {string}  - 추천 프리셋
   //   'top_actor_videos'   : 별점 높은 배우의 작품

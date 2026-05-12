@@ -45,9 +45,11 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
   const [gradeLoading, setGradeLoading] = useState(false)
 
   // ── 저장 버튼 필드 상태 ───────────────────────────────────────
-  const [rating, setRating] = useState(getInitialRating(video))
-  const [tags,   setTags]   = useState(video.tags   || '')
-  const [memo,   setMemo]   = useState(video.memo   || '')
+  const [rating,     setRating]     = useState(getInitialRating(video))
+  const [tags,       setTags]       = useState(video.tags      || '')
+  const [memo,       setMemo]       = useState(video.memo      || '')
+  const [actorName,  setActorName]  = useState(video.actor_name || '')
+  const [actorSaving, setActorSaving] = useState(false)
 
   const { saving, saved, saveVideo, resetSaved } = useVideoMeta()
 
@@ -56,8 +58,9 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
     setRecommended(Boolean(video.recommended))
     setGrade(video.grade || '보관')
     setRating(getInitialRating(video))
-    setTags(video.tags   || '')
-    setMemo(video.memo   || '')
+    setTags(video.tags      || '')
+    setMemo(video.memo      || '')
+    setActorName(video.actor_name || '')
     resetSaved()
   }, [video.id, resetSaved])
 
@@ -97,6 +100,24 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
       message.error('등급 변경 실패: ' + e.message)
     } finally {
       setGradeLoading(false)
+    }
+  }
+
+  // ── 배우명 저장 ─────────────────────────────────────────────
+  const handleSaveActors = async () => {
+    setActorSaving(true)
+    try {
+      const result = await window.api.updateVideoActors(video.id, actorName)
+      if (!result.success) {
+        message.error('배우명 저장 실패: ' + result.error)
+        return
+      }
+      onUpdate({ ...video, actor_name: actorName.trim() || null })
+      message.success('배우명을 저장했습니다.')
+    } catch (e) {
+      message.error('배우명 저장 실패: ' + e.message)
+    } finally {
+      setActorSaving(false)
     }
   }
 
@@ -228,6 +249,31 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
         <div className="edit-field">
           <span className="edit-label">별점</span>
           <StarRating value={rating} onChange={handleRatingChange} />
+        </div>
+
+        {/* 배우명 */}
+        <div className="edit-field">
+          <label className="edit-label" htmlFor="dp-actor">배우명</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              id="dp-actor"
+              type="text"
+              className="edit-input"
+              value={actorName}
+              onChange={(e) => setActorName(e.target.value)}
+              placeholder="배우1, 배우2"
+              style={{ flex: 1 }}
+            />
+            <button
+              className="btn-save"
+              type="button"
+              onClick={handleSaveActors}
+              disabled={actorSaving}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              {actorSaving ? '저장 중…' : '배우명 저장'}
+            </button>
+          </div>
         </div>
 
         {/* 태그 */}
