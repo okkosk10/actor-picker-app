@@ -209,6 +209,12 @@ contextBridge.exposeInMainWorld('api', {
   getDashboardStats: () =>
     ipcRenderer.invoke('get-dashboard-stats'),
 
+  // ── AI 연결 테스트 ────────────────────────────────────────────
+  // OpenAI API 연결 상태를 확인한다. API Key는 main process에서만 처리.
+  // 반환: { success: true, model, message } | { success: false, error }
+  testAiConnection: () =>
+    ipcRenderer.invoke('ai:test-connection'),
+
   // ── 가중치 기반 대시보드 추천 조회 ───────────────────────────
   // 반환: { topPicks, stalePreferences, highRatedUnderViewed,
   //         worthRevisiting, needsMetadata, ratingReview }

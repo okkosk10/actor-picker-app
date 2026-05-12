@@ -30,3 +30,6 @@ win-unpacked
 package-lock.json
 builder-debug.yml
 builder-effective-config.yaml
+
+# 환경 변수 (API 키 등 민감 정보)
+.env

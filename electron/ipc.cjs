@@ -29,6 +29,7 @@ const { getDb, recordVideoActivity, getDashboardStats } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
 const { parseFileName }       = require('./parser.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
+const { testOpenAIConnection } = require('./services/openaiClient.cjs')
 
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
 // device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
@@ -2423,6 +2424,23 @@ function registerIpcHandlers() {
   // ══════════════════════════════════════════════════════════════
   ipcMain.handle('get-dashboard-stats', async () => {
     return getDashboardStats()
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // AI 연결 테스트 (ai:test-connection)
+  //
+  // OpenAI Responses API로 간단한 요청을 보내 연결을 확인한다.
+  // API Key는 .env에서만 읽으며 Renderer에 노출하지 않는다.
+  //
+  // 반환: { success: true, model, message } | { success: false, error }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('ai:test-connection', async () => {
+    try {
+      const result = await testOpenAIConnection()
+      return result
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
   })
 }
 
