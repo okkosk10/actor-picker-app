@@ -201,6 +201,7 @@ async function generateAiThemeFolders(videos, options = {}) {
   try {
     const response = await client.responses.create({
       model,
+      temperature:  1.1,   // 매 실행마다 다양한 특집 조합 유도
       instructions: systemPrompt,
       input:        userPrompt,
     })
