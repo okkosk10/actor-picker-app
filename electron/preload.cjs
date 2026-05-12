@@ -215,6 +215,19 @@ contextBridge.exposeInMainWorld('api', {
   testAiConnection: () =>
     ipcRenderer.invoke('ai:test-connection'),
 
+  // ── AI 특집 폴더 - 테마 생성 ─────────────────────────────────
+  // DB 영상 분석 + OpenAI 호출로 특집 테마를 제안받는다.
+  // 반환: { success: true, themes[], candidateCount } | { success: false, error }
+  generateAiThemeFolders: () =>
+    ipcRenderer.invoke('ai-theme-folders:generate'),
+
+  // ── AI 특집 폴더 - 실제 복사 실행 ───────────────────────────
+  // @param targetRootPath {string}   - 복사할 상위 폴더 경로
+  // @param selectedThemes {object[]} - 선택된 테마 (videoIds 포함)
+  // 반환: { success: true, results[] } | { success: false, error }
+  createAiThemeFolders: (targetRootPath, selectedThemes) =>
+    ipcRenderer.invoke('ai-theme-folders:create-folders', targetRootPath, selectedThemes),
+
   // ── 가중치 기반 대시보드 추천 조회 ───────────────────────────
   // 반환: { topPicks, stalePreferences, highRatedUnderViewed,
   //         worthRevisiting, needsMetadata, ratingReview }

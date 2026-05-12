@@ -29,7 +29,9 @@ const { getDb, recordVideoActivity, getDashboardStats } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
 const { parseFileName }       = require('./parser.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
-const { testOpenAIConnection } = require('./services/openaiClient.cjs')
+const { testOpenAIConnection }   = require('./services/openaiClient.cjs')
+const { generateAiThemeFolders } = require('./services/aiThemeFolderService.cjs')
+const { createThemeFolders }     = require('./services/themeCopyService.cjs')
 
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
 // device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
@@ -2439,6 +2441,126 @@ function registerIpcHandlers() {
       const result = await testOpenAIConnection()
       return result
     } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // AI 특집 폴더 - 테마 생성 (ai-theme-folders:generate)
+  //
+  // 1. DB에서 normal 영상 전체 조회 (배우/태그/활동 통계 포함)
+  // 2. generateAiThemeFolders로 후보 계산 + OpenAI 호출
+  //
+  // 반환: { success: true, themes[], candidateCount }
+  //     | { success: false, error }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('ai-theme-folders:generate', async () => {
+    try {
+      const db = getDb()
+
+      // 1. 영상 + 활동 통계 JOIN
+      const videoRows = db.prepare(`
+        SELECT
+          v.id, v.file_name, v.file_path, v.folder_path,
+          v.actor_name, v.tags, v.rating, v.grade,
+          v.recommended, v.favorite, v.size,
+          v.play_count,
+          COALESCE(s.copy_count, 0) AS copy_count,
+          COALESCE(s.open_count, 0) AS open_count,
+          COALESCE(s.download_req,  0) AS download_request_count
+        FROM videos v
+        LEFT JOIN (
+          SELECT
+            video_id,
+            SUM(CASE WHEN action_type IN ('copy_to_clipboard','copy_to_device') THEN 1 ELSE 0 END) AS copy_count,
+            SUM(CASE WHEN action_type = 'open'              THEN 1 ELSE 0 END) AS open_count,
+            SUM(CASE WHEN action_type = 'download_request'  THEN 1 ELSE 0 END) AS download_req
+          FROM video_activity_logs
+          GROUP BY video_id
+        ) s ON s.video_id = v.id
+        WHERE v.status = 'normal'
+      `).all()
+
+      // 2. 배우 연결 맵 (video_id → 배우 이름 목록)
+      const actorsMap = {}
+      try {
+        const actorRows = db.prepare(`
+          SELECT va.video_id, a.name
+          FROM video_actors va
+          JOIN actors a ON a.id = va.actor_id
+          ORDER BY va.video_id, va.order_index ASC
+        `).all()
+        for (const r of actorRows) {
+          if (!actorsMap[r.video_id]) actorsMap[r.video_id] = []
+          actorsMap[r.video_id].push(r.name)
+        }
+      } catch { /* actors 없는 구버전 무시 */ }
+
+      // 3. DTO 변환
+      const videos = videoRows.map(v => {
+        const actorList  = actorsMap[v.id] ?? []
+        const actors     = v.actor_name || actorList.join(', ')
+        const primaryActor = actorList[0] ?? (v.actor_name || '')
+        const folderName = v.folder_path ? path.basename(v.folder_path) : ''
+        return {
+          id:                   v.id,
+          fileName:             v.file_name,
+          filePath:             v.file_path,
+          folderName,
+          folderPath:           v.folder_path,
+          actors,
+          primaryActor,
+          tags:                 (v.tags || '').split(',').map(t => t.trim()).filter(Boolean),
+          rating:               v.rating    ?? 0,
+          grade:                v.grade     ?? '',
+          playCount:            v.play_count ?? 0,
+          downloadRequestCount: v.download_request_count ?? 0,
+          copyCount:            v.copy_count ?? 0,
+          favorite:             Boolean(v.favorite),
+          recommended:          Boolean(v.recommended),
+          fileSize:             v.size       ?? 0,
+        }
+      })
+
+      return await generateAiThemeFolders(videos)
+    } catch (err) {
+      console.error('[ai-theme-folders:generate]', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // AI 특집 폴더 - 실제 복사 실행 (ai-theme-folders:create-folders)
+  //
+  // @param targetRootPath {string}   - 복사 대상 상위 디렉터리
+  // @param selectedThemes {object[]} - 선택된 테마 배열 (videoIds 포함)
+  //
+  // 반환: { success: true, results[] } | { success: false, error }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('ai-theme-folders:create-folders', async (_event, targetRootPath, selectedThemes) => {
+    try {
+      if (!targetRootPath) return { success: false, error: 'targetRootPath가 없습니다.' }
+      if (!Array.isArray(selectedThemes) || selectedThemes.length === 0) {
+        return { success: false, error: '선택된 테마가 없습니다.' }
+      }
+
+      const db = getDb()
+
+      // videoId → { filePath, fileName } 맵 구성
+      const allIds = [...new Set(selectedThemes.flatMap(t => (t.videoIds ?? []).map(Number)))]
+      const placeholders = allIds.map(() => '?').join(',')
+      const fileRows = allIds.length > 0
+        ? db.prepare(`SELECT id, file_path, file_name FROM videos WHERE id IN (${placeholders})`).all(...allIds)
+        : []
+
+      const videoFileMap = new Map()
+      for (const r of fileRows) {
+        videoFileMap.set(r.id, { filePath: r.file_path, fileName: r.file_name })
+      }
+
+      return await createThemeFolders(targetRootPath, selectedThemes, videoFileMap)
+    } catch (err) {
+      console.error('[ai-theme-folders:create-folders]', err)
       return { success: false, error: err.message }
     }
   })

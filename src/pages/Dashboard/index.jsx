@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useRef, useMemo } from 'react'
 import DashboardRecommendations from './DashboardRecommendations.jsx'
+import AiThemeFolderCenter from '../../components/AiThemeFolderCenter.jsx'
 import './Dashboard.css'
 
 function formatBytes(bytes) {
@@ -176,7 +177,7 @@ export default function DashboardPage({ onViewDetail, onCopyFiles }) {
   const [stats,   setStats]   = useState(null)
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState(null)
-  const [dashTab, setDashTab] = useState('stats')   // 'stats' | 'recs'
+  const [dashTab, setDashTab] = useState('stats')   // 'stats' | 'recs' | 'ai-theme'
   const loadingRef = useRef(false)
 
   // AI 연결 테스트 상태
@@ -241,6 +242,13 @@ export default function DashboardPage({ onViewDetail, onCopyFiles }) {
           >
             🎯 스마트 추천
           </button>
+          <button
+            type="button"
+            className={`dash-tab-btn ${dashTab === 'ai-theme' ? 'dash-tab-btn--active' : ''}`}
+            onClick={() => setDashTab('ai-theme')}
+          >
+            🎬 AI 특집 폴더
+          </button>
         </div>
         {dashTab === 'stats' && (
           <button className="btn-secondary" type="button" onClick={fetchStats}>
@@ -278,6 +286,9 @@ export default function DashboardPage({ onViewDetail, onCopyFiles }) {
           onViewDetail={onViewDetail}
         />
       )}
+
+      {/* AI 특집 폴더 탭 */}
+      {dashTab === 'ai-theme' && <AiThemeFolderCenter />}
 
       {/* 통계 탭 */}
       {dashTab === 'stats' && (!stats ? null : (

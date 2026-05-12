@@ -1,0 +1,98 @@
+'use strict'
+
+/**
+ * electron/services/themeCandidateService.cjs
+ * DB 영상 데이터를 기반으로 로컬 후보 점수를 계산한다.
+ *
+ * 점수 구성:
+ *   watchScore  = 재생/선호 기반 점수
+ *   copyScore   = 복사/소장 기반 점수
+ *   themeScore  = watchScore + copyScore + 메타데이터 보너스 - 페널티
+ */
+
+const PERMANENT_GRADES = new Set(['permanent', 'rewatch', '영구소장', '재시청', '재시청 추천'])
+const DELETE_GRADES    = new Set(['delete_candidate', '삭제요망', '삭제 요망'])
+
+/**
+ * 개별 영상의 세 가지 점수를 계산한다.
+ * @param {object} v - 영상 DTO
+ * @returns {{ watchScore: number, copyScore: number, themeScore: number }}
+ */
+function calcScores(v) {
+  const rating               = Number(v.rating)               || 0
+  const playCount            = Number(v.playCount)            || 0
+  const copyCount            = Number(v.copyCount)            || 0
+  const downloadRequestCount = Number(v.downloadRequestCount) || 0
+  const favorite             = Boolean(v.favorite)
+  const recommended          = Boolean(v.recommended)
+  const grade                = v.grade ?? ''
+  const tags                 = Array.isArray(v.tags) ? v.tags : []
+  const actors               = v.actors ?? v.primaryActor ?? ''
+  const folderName           = v.folderName ?? ''
+
+  // watchScore
+  let watchScore = rating * 20
+  if (favorite)   watchScore += 20
+  if (recommended) watchScore += 15
+  watchScore += playCount            * 3
+  watchScore += downloadRequestCount * 8
+
+  // copyScore
+  let copyScore = rating * 15
+  if (favorite)   copyScore += 25
+  if (recommended) copyScore += 20
+  copyScore += copyCount * 15
+  if (PERMANENT_GRADES.has(grade)) copyScore += 20
+
+  // themeScore
+  let themeScore = watchScore + copyScore
+  if (tags.length >= 2)         themeScore += 10
+  if (actors && actors !== '')  themeScore += 10
+  if (folderName && folderName !== '') themeScore += 5
+  if (DELETE_GRADES.has(grade)) themeScore -= 50
+
+  return { watchScore, copyScore, themeScore }
+}
+
+/**
+ * 전체 영상에서 themeScore 상위 limit개의 후보를 빌드한다.
+ *
+ * @param {object[]} videos - DB에서 조회한 전체 영상 DTO 배열
+ * @param {number}   limit  - 반환할 최대 후보 수 (기본 120)
+ * @returns {object[]} - AI에게 전달할 후보 DTO 배열
+ */
+function buildThemeCandidates(videos, limit = 120) {
+  if (!Array.isArray(videos) || videos.length === 0) return []
+
+  const scored = videos.map(v => {
+    const { watchScore, copyScore, themeScore } = calcScores(v)
+    const fileSizeGB = v.fileSize ? Number((v.fileSize / 1073741824).toFixed(2)) : 0
+
+    return {
+      // AI에게 전달할 식별자 및 콘텐츠 정보
+      id:                   v.id,
+      fileName:             v.fileName    ?? v.file_name    ?? '',
+      folderName:           v.folderName  ?? v.folder_name  ?? '',
+      actors:               v.actors      ?? v.actor_name   ?? '',
+      primaryActor:         v.primaryActor ?? '',
+      tags:                 Array.isArray(v.tags) ? v.tags : [],
+      rating:               Number(v.rating)    || 0,
+      grade:                v.grade             ?? '',
+      playCount:            Number(v.playCount  ?? v.play_count)  || 0,
+      downloadRequestCount: Number(v.downloadRequestCount ?? v.download_request_count) || 0,
+      copyCount:            Number(v.copyCount  ?? v.copy_count)  || 0,
+      favorite:             Boolean(v.favorite),
+      recommended:          Boolean(v.recommended),
+      fileSizeGB,
+      watchScore,
+      copyScore,
+      themeScore,
+    }
+  })
+
+  // themeScore 내림차순 정렬 후 상위 limit개만 반환
+  scored.sort((a, b) => b.themeScore - a.themeScore)
+  return scored.slice(0, limit)
+}
+
+module.exports = { buildThemeCandidates, calcScores }
