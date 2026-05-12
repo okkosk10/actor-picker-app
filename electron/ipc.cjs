@@ -756,8 +756,7 @@ function registerIpcHandlers() {
       SELECT COUNT(*) AS count
       FROM   videos
       WHERE  is_new  = 1
-        AND  status != 'missing'
-        AND  status != 'deleted'
+        AND  status NOT IN ('missing', 'deleted', 'duplicate')
     `).get()
     return { count: row.count }
   })
