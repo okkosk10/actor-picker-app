@@ -62,11 +62,12 @@ function calcScores(v) {
 /**
  * 전체 영상에서 themeScore 상위 limit개의 후보를 빌드한다.
  *
- * @param {object[]} videos - DB에서 조회한 전체 영상 DTO 배열
- * @param {number}   limit  - 반환할 최대 후보 수 (기본 120)
+ * @param {object[]} videos      - DB에서 조회한 전체 영상 DTO 배열
+ * @param {number}   limit       - 반환할 최대 후보 수 (기본 120)
+ * @param {Set<number>} priorityIds - 점수와 무관하게 반드시 포함할 video id 집합
  * @returns {object[]} - AI에게 전달할 후보 DTO 배열
  */
-function buildThemeCandidates(videos, limit = 120) {
+function buildThemeCandidates(videos, limit = 120, priorityIds = new Set()) {
   if (!Array.isArray(videos) || videos.length === 0) return []
 
   const scored = videos.map(v => {
@@ -100,13 +101,20 @@ function buildThemeCandidates(videos, limit = 120) {
   // themeScore 내림차순 정렬
   scored.sort((a, b) => b.themeScore - a.themeScore)
 
+  // ── 우선 포함 항목 분리 (customPrompt에서 언급된 배우/태그 등)
+  // priorityIds에 해당하는 영상은 perActorLimit·점수 무관하게 먼저 포함
+  const priorityItems   = scored.filter(v => priorityIds.has(v.id))
+  const nonPriorityItems = scored.filter(v => !priorityIds.has(v.id))
+
   // 배우별 상한선 적용: 동일 배우가 후보의 25% 이상을 차지하지 않도록 제한
   // 단, 배우명이 없는 영상은 제한 없이 포함
   const mainLimit  = Math.max(1, limit - 1)   // 탐색 후보 1개를 위해 1 자리 확보
-  const perActorLimit = Math.max(5, Math.ceil(mainLimit * 0.25))
+  const nonPrioritySlots = Math.max(0, mainLimit - priorityItems.length)
+  const perActorLimit = Math.max(5, Math.ceil(nonPrioritySlots * 0.25))
   const actorCount    = {}
-  const limited       = []
-  for (const v of scored) {
+  const limited       = [...priorityItems]
+  for (const v of nonPriorityItems) {
+    if (limited.length >= mainLimit) break
     const actor = (v.primaryActor || v.actors || '').trim()
     if (!actor) {
       limited.push(v)
@@ -117,7 +125,6 @@ function buildThemeCandidates(videos, limit = 120) {
         actorCount[actor] = cnt + 1
       }
     }
-    if (limited.length >= mainLimit) break
   }
 
   // 탐색 후보 1개: 메인 풀에 포함되지 않은 구간에서 랜덤 선택 (순환 다양성)

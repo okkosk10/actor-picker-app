@@ -137,10 +137,10 @@ function validateAiThemeFolders(themeFolders, allVideos, videoMap) {
  *                 | { success: false, error: string }>}
  */
 async function generateAiThemeFolders(videos, options = {}) {
-  const { candidateLimit = 120, customPrompt = '' } = options
+  const { candidateLimit = 120, customPrompt = '', priorityIds = new Set() } = options
 
   // 1. 후보 계산
-  const candidates = buildThemeCandidates(videos, candidateLimit)
+  const candidates = buildThemeCandidates(videos, candidateLimit, priorityIds)
   if (candidates.length === 0) {
     return { success: false, error: '후보 영상이 없습니다.' }
   }

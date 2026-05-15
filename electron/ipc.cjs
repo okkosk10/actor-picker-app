@@ -2575,7 +2575,24 @@ function registerIpcHandlers() {
         }
       })
 
-      return await generateAiThemeFolders(videos, { customPrompt: customPrompt || '' })
+      // customPrompt에 언급된 배우/키워드와 일치하는 영상을 우선 후보에 강제 포함
+      // → 점수가 낮아도 후보 120개 안에 반드시 들어가게 함
+      const priorityIds = new Set()
+      if (customPrompt) {
+        // 2자 이상 한글·일본어(히라가나/가타카나/한자) 단어 추출
+        const keywords = (customPrompt.match(/[\uAC00-\uD7A3\u3040-\u30FF\u4E00-\u9FFF]{2,}/g) ?? [])
+          .map(k => k.toLowerCase())
+        if (keywords.length > 0) {
+          for (const v of videos) {
+            const searchStr = [v.actors, ...v.tags].join(' ').toLowerCase()
+            if (keywords.some(kw => searchStr.includes(kw))) {
+              priorityIds.add(v.id)
+            }
+          }
+        }
+      }
+
+      return await generateAiThemeFolders(videos, { customPrompt: customPrompt || '', priorityIds })
     } catch (err) {
       console.error('[ai-theme-folders:generate]', err)
       return { success: false, error: err.message }

@@ -149,11 +149,15 @@ function queryCandidates(db, intent) {
   }
 
   // 배우 JOIN 절
+  // - actorTags가 있을 때: INNER JOIN (배우 태그가 반드시 있는 영상만)
+  // - actorNames만 있을 때: LEFT JOIN + v.actor_name LIKE 폴백
+  //   → video_actors 연결이 없어도 videos.actor_name 컬럼으로 매칭 가능
   let actorJoinSQL = ''
   if (needsActorJoin) {
+    const joinType = actorTags.length > 0 ? 'JOIN' : 'LEFT JOIN'
     actorJoinSQL = `
-      JOIN video_actors va2 ON va2.video_id = v.id
-      JOIN actors a2        ON a2.id = va2.actor_id`
+      ${joinType} video_actors va2 ON va2.video_id = v.id
+      ${joinType} actors a2        ON a2.id = va2.actor_id`
 
     if (actorTags.length > 0) {
       const atClauses = actorTags.map(() => "a2.tags LIKE ?").join(' OR ')
@@ -161,9 +165,10 @@ function queryCandidates(db, intent) {
       actorTags.forEach(t => bindings.push(`%${t}%`))
     }
     if (actorNames.length > 0) {
-      const anClauses = actorNames.map(() => "a2.name LIKE ?").join(' OR ')
+      // actors 테이블 이름 OR videos.actor_name 둘 다 검색 (폴백)
+      const anClauses = actorNames.map(() => "(a2.name LIKE ? OR v.actor_name LIKE ?)").join(' OR ')
       whereClauses.push(`(${anClauses})`)
-      actorNames.forEach(n => bindings.push(`%${n}%`))
+      actorNames.forEach(n => { bindings.push(`%${n}%`); bindings.push(`%${n}%`) })
     }
   }
 
