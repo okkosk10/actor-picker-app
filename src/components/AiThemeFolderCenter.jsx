@@ -380,6 +380,11 @@ function CopyResultSummary({ results }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 캐시 키
+// ─────────────────────────────────────────────────────────────
+const CACHE_KEY = 'aiThemeFolderCache'
+
+// ─────────────────────────────────────────────────────────────
 // 메인 컴포넌트
 // ─────────────────────────────────────────────────────────────
 export default function AiThemeFolderCenter() {
@@ -405,6 +410,39 @@ export default function AiThemeFolderCenter() {
   // 장치 복사 상태: null | 'selecting' | 'started' | 'error'
   const [deviceCopyState, setDeviceCopyState] = useState(null)
   const [deviceCopyInfo,  setDeviceCopyInfo]  = useState(null)
+
+  // ── 마운트 시 캐시 복원 ────────────────────────────────────────
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(CACHE_KEY)
+      if (!raw) return
+      const cache = JSON.parse(raw)
+      if (cache.themes         != null) setThemes(cache.themes)
+      if (cache.candidateCount != null) setCandidateCount(cache.candidateCount)
+      if (cache.videoMap       != null) setVideoMap(cache.videoMap)
+      if (Array.isArray(cache.checked)) setChecked(new Set(cache.checked))
+      if (cache.targetPath)             setTargetPath(cache.targetPath)
+      if (cache.customPrompt   != null) setCustomPrompt(cache.customPrompt)
+    } catch {
+      // 캐시 복원 실패 시 무시
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 관련 상태 변경 시 캐시 저장 ──────────────────────────────
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+        themes,
+        candidateCount,
+        videoMap,
+        checked:      Array.from(checked),
+        targetPath,
+        customPrompt,
+      }))
+    } catch {
+      // sessionStorage 저장 실패 시 무시 (용량 초과 등)
+    }
+  }, [themes, candidateCount, videoMap, checked, targetPath, customPrompt])
 
   // ── 전체 선택/해제 ────────────────────────────────────────────
   const allChecked = themes && themes.length > 0 && checked.size === themes.length
