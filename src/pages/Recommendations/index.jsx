@@ -69,12 +69,33 @@ function VideoCard({ video, checkedIds, onToggleCheck }) {
 // ─────────────────────────────────────────────────────────────
 // AiChatCard (AI 추천 결과 카드)
 // ─────────────────────────────────────────────────────────────
-function AiChatCard({ item, checkedIds, onToggleCheck }) {
+function AiChatCard({ item, intent, checkedIds, onToggleCheck }) {
   const { video, reason, scoreComment } = item
   const actors = video.actorsList || []
-  const actorLabel = actors.length > 0
-    ? actors.map((a) => a.name).join(', ')
-    : (video.actor_name || '—')
+
+  // 배우 별점 기준 쿼리일 때 qualifying 배우(조건 충족)와 공동출연자 구분
+  const actorRatingFilter = (intent?.actorRatingExact ?? 0) > 0
+    ? intent.actorRatingExact
+    : (intent?.actorMinRating ?? 0)
+  const isActorRatingQuery = actorRatingFilter > 0
+
+  let actorLabel
+  if (actors.length > 0) {
+    if (isActorRatingQuery) {
+      // qualifying 배우: 조건 별점 충족 → 앞에 ★ 표시
+      // 공동출연자: 조건 미충족 → 그대로 (흐리게 렌더)
+      actorLabel = actors.map((a) => {
+        const q = intent?.actorRatingExact > 0
+          ? (a.rating ?? 0) === intent.actorRatingExact
+          : (a.rating ?? 0) >= actorRatingFilter
+        return q ? `★${a.name}` : a.name
+      }).join(', ')
+    } else {
+      actorLabel = actors.map((a) => a.name).join(', ')
+    }
+  } else {
+    actorLabel = video.actor_name || '—'
+  }
   const tags = (video.tags || '').split(',').map(t => t.trim()).filter(Boolean)
   const isChecked = checkedIds?.has(video.id) ?? false
 
@@ -147,15 +168,29 @@ function AiChatCard({ item, checkedIds, onToggleCheck }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
 // AiChatPanel
 // ─────────────────────────────────────────────────────────────
+// window.__aiChatCache 에 result/prompt/checkedIds 를 캐싱한다.
+// 컴포넌트가 언마운트/재마운트되어도 이전 결과가 복원된다.
 function AiChatPanel({ onCopyFiles }) {
-  const [prompt,     setPrompt]     = useState('')
+  const [prompt,     setPrompt]     = useState(() => window.__aiChatCache?.prompt     ?? '')
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState(null)
-  const [result,     setResult]     = useState(null)   // { summary, reason, intent, items }
-  const [checkedIds, setCheckedIds] = useState(new Set())
+  const [result,     setResult]     = useState(() => window.__aiChatCache?.result     ?? null)
+  const [checkedIds, setCheckedIds] = useState(() =>
+    window.__aiChatCache?.checkedIds ? new Set(window.__aiChatCache.checkedIds) : new Set()
+  )
   const textareaRef = useRef(null)
+
+  // 핵심 상태 변경 시 window 캐시 동기화
+  useEffect(() => {
+    window.__aiChatCache = {
+      prompt,
+      result,
+      checkedIds: [...checkedIds],
+    }
+  }, [prompt, result, checkedIds])
 
   // 전송
   const handleAsk = useCallback(async () => {
@@ -335,6 +370,7 @@ function AiChatPanel({ onCopyFiles }) {
                 <AiChatCard
                   key={item.video.id}
                   item={item}
+                  intent={result.intent}
                   checkedIds={checkedIds}
                   onToggleCheck={toggleCheck}
                 />
@@ -437,16 +473,13 @@ export default function RecommendationsPage({ onCopyFiles }) {
         </button>
       </div>
 
-      {/* AI 채팅 탭 */}
-      {tab === 'ai-chat' && (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <AiChatPanel onCopyFiles={onCopyFiles} />
-        </div>
-      )}
+      {/* AI 채팅 탭 — display:none으로 마운트 유지, state 보존 */}
+      <div style={{ flex: 1, minHeight: 0, display: tab === 'ai-chat' ? 'flex' : 'none', flexDirection: 'column' }}>
+        <AiChatPanel onCopyFiles={onCopyFiles} />
+      </div>
 
-      {/* 프리셋 탭 */}
-      {tab === 'preset' && (
-        <div className="rec-page" style={{ flex: 1, minHeight: 0 }}>
+      {/* 프리셋 탭 — display:none으로 마운트 유지 */}
+      <div className="rec-page" style={{ flex: 1, minHeight: 0, display: tab === 'preset' ? 'flex' : 'none' }}>
           {/* 프리셋 사이드바 */}
           <div className="rec-sidebar">
             <h2 className="rec-sidebar__title">추천 프리셋</h2>
@@ -536,7 +569,6 @@ export default function RecommendationsPage({ onCopyFiles }) {
             )}
           </div>
         </div>
-      )}
     </div>
   )
 }

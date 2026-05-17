@@ -2507,17 +2507,22 @@ function registerIpcHandlers() {
       `).all()
 
       // 2. 배우 연결 맵 (video_id → 배우 이름 목록)
+      // + 배우명 → 별점 맵 (video_actors 연결 없이 actor_name만 있는 영상 폴백용)
       const actorsMap = {}
+      const actorNameRatingMap = {}  // name → rating (폴백)
       try {
         const actorRows = db.prepare(`
-          SELECT va.video_id, a.name
+          SELECT va.video_id, a.name, a.rating AS actor_rating
           FROM video_actors va
           JOIN actors a ON a.id = va.actor_id
           ORDER BY va.video_id, va.order_index ASC
         `).all()
         for (const r of actorRows) {
           if (!actorsMap[r.video_id]) actorsMap[r.video_id] = []
-          actorsMap[r.video_id].push(r.name)
+          actorsMap[r.video_id].push({ name: r.name, rating: r.actor_rating ?? 0 })
+          // 이름 → 별점 맵 (같은 이름이면 최고 별점 유지)
+          const prev = actorNameRatingMap[r.name] ?? 0
+          if ((r.actor_rating ?? 0) > prev) actorNameRatingMap[r.name] = r.actor_rating ?? 0
         }
       } catch { /* actors 없는 구버전 무시 */ }
 
@@ -2547,14 +2552,19 @@ function registerIpcHandlers() {
       // 5. DTO 변환
       const videos = videoRows.map(v => {
         const actorList    = actorsMap[v.id] ?? []
-        const actors       = v.actor_name || actorList.join(', ')
-        const primaryActor = actorList[0] ?? (v.actor_name || '')
+        const actors       = v.actor_name || actorList.map(a => a.name).join(', ')
+        const primaryActor = actorList[0]?.name ?? (v.actor_name || '')
         const folderName   = v.folder_path ? path.basename(v.folder_path) : ''
         const tags         = (v.tags || '').split(',').map(t => t.trim()).filter(Boolean)
         // 해당 배우의 총 복사 횟수 (대표 배우 기준)
         const actorCopyCount = actorCopyMap[primaryActor] || 0
         // 해당 영상 태그 중 가장 많이 복사된 태그의 복사 횟수
         const tagCopyCount   = tags.length ? Math.max(...tags.map(t => tagCopyMap[t] || 0)) : 0
+        // 영상에 출연한 배우 중 최고 별점 (배우 별점 필터링용)
+        // video_actors 연결이 없으면 actor_name으로 폴백
+        let maxActorRating = actorList.length > 0
+          ? Math.max(...actorList.map(a => a.rating || 0))
+          : (actorNameRatingMap[v.actor_name] ?? 0)
         return {
           id:                   v.id,
           fileName:             v.file_name,
@@ -2574,18 +2584,43 @@ function registerIpcHandlers() {
           favorite:             Boolean(v.favorite),
           recommended:          Boolean(v.recommended),
           fileSize:             v.size       ?? 0,
+          maxActorRating,
         }
       })
 
+      // customPrompt에서 "N점 배우" 패턴 감지 → 해당 배우 영상만 필터링
+      // 예: "5점짜리 배우", "별점 5점 배우", "평점 5 배우", "배우 별점 5점"
+      let actorRatingFilter = 0
+      if (customPrompt) {
+        const m = customPrompt.match(/([1-5])\s*점(?:짜리)?\s*(?:이상\s*)?배우|배우[^0-9]*([1-5])\s*점|(?:별점|평점)[^0-9]*([1-5])/)
+        if (m) actorRatingFilter = Number(m[1] || m[2] || m[3])
+      }
+
+      // 배우 별점 필터가 있으면 해당 배우가 출연한 영상만 포함
+      let filteredVideos = videos
+      let candidateLimit = 120
+      if (actorRatingFilter > 0) {
+        filteredVideos = videos.filter(v => v.maxActorRating === actorRatingFilter)
+        // 조건 충족 배우 수 파악 → 배우당 최소 5개 확보
+        const qualifyingActors = new Set()
+        for (const v of filteredVideos) {
+          const actorList = actorsMap[v.id] ?? []
+          for (const a of actorList) {
+            if ((a.rating || 0) === actorRatingFilter) qualifyingActors.add(a.name)
+          }
+        }
+        candidateLimit = Math.max(120, qualifyingActors.size * 5)
+      }
+
       // customPrompt에 언급된 배우/키워드와 일치하는 영상을 우선 후보에 강제 포함
-      // → 점수가 낮아도 후보 120개 안에 반드시 들어가게 함
+      // → 점수가 낮아도 후보 안에 반드시 들어가게 함
       const priorityIds = new Set()
       if (customPrompt) {
         // 2자 이상 한글·일본어(히라가나/가타카나/한자) 단어 추출
         const keywords = (customPrompt.match(/[\uAC00-\uD7A3\u3040-\u30FF\u4E00-\u9FFF]{2,}/g) ?? [])
           .map(k => k.toLowerCase())
         if (keywords.length > 0) {
-          for (const v of videos) {
+          for (const v of filteredVideos) {
             const searchStr = [v.actors, ...v.tags].join(' ').toLowerCase()
             if (keywords.some(kw => searchStr.includes(kw))) {
               priorityIds.add(v.id)
@@ -2594,7 +2629,7 @@ function registerIpcHandlers() {
         }
       }
 
-      return await generateAiThemeFolders(videos, { customPrompt: customPrompt || '', priorityIds })
+      return await generateAiThemeFolders(filteredVideos, { customPrompt: customPrompt || '', priorityIds, candidateLimit })
     } catch (err) {
       console.error('[ai-theme-folders:generate]', err)
       return { success: false, error: err.message }

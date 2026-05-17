@@ -38,8 +38,10 @@ async function parseIntent(userPrompt) {
 중요: "영상 별점"과 "배우 별점"을 반드시 구분하세요.
 - "5점 배우", "별점 5개 배우", "배우 별점 5", "평점 높은 배우", "탑 배우", "최고 평점 배우" 등
   → 배우 별점 기준이므로 actorRatingExact 또는 actorMinRating 사용
+- "별점 5점짜리 배우", "별점 5점 배우", "N점짜리 배우", "N점 배우 특집" 처럼 배우 수식
+  → 반드시 actorRatingExact = N 으로 설정, minRating은 0 유지
 - "별점 5점 영상", "평점 높은 영상", "5점짜리 작품" 등 영상 자체 별점
-  → minRating 사용
+  → minRating 사용 (actorRatingExact, actorMinRating은 0 유지)
 - "5점 배우 작품", "5점 배우 영상 추천" 처럼 배우 별점이 명확한 경우
   → actorRatingExact 또는 actorMinRating 사용 (minRating은 0으로 유지)
 
@@ -209,6 +211,8 @@ function queryCandidates(db, intent) {
   }
 
   const actualLimit = Math.min(Math.max(Number(limit) || 50, 10), 200)
+  // 배우 별점 필터가 있으면 전체 영상을 가져와야 배우 누락이 없음
+  const sqlLimit = (actorRatingExact > 0 || actorMinRating > 0) ? 2000 : actualLimit * 4
 
   const sql = `
     SELECT DISTINCT
@@ -232,7 +236,7 @@ function queryCandidates(db, intent) {
     ) s ON s.video_id = v.id
     WHERE ${whereClauses.join('\n      AND ')}
     ${notCopiedSubquery}
-    LIMIT ${actualLimit * 4}
+    LIMIT ${sqlLimit}
   `
 
   return db.prepare(sql).all(...bindings)
@@ -304,10 +308,110 @@ function scoreAndSort(rows, actorsMap, actorCopyMap, tagCopyMap, sortHint, limit
 }
 
 // ─────────────────────────────────────────────────────────────
+// 배우 별점 기준 쿼리: 해당하는 모든 배우의 영상을 균등하게 커버
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * actorRatingExact / actorMinRating 조건에 해당하는 배우를 모두 파악하고,
+ * 각 배우별로 대표 영상을 골라 최대 maxTotal개의 후보를 반환한다.
+ * 이를 통해 특정 배우가 후보에서 통째로 누락되는 문제를 방지한다.
+ */
+function buildActorCoveredCandidates(rows, actorsMap, actorCopyMap, tagCopyMap, intent, maxTotal = 100) {
+  const targetRating = intent.actorRatingExact ?? 0
+  const minRating    = intent.actorMinRating   ?? 0
+
+  // 조건에 해당하는 배우별 영상 맵 구성
+  // actorName → { rating, videos[] }
+  const actorMap = new Map()
+
+  for (const v of rows) {
+    const actorList = actorsMap[v.id] ?? []
+    for (const actor of actorList) {
+      const ar = actor.rating ?? 0
+      const qualifies =
+        (targetRating > 0 && ar === targetRating) ||
+        (minRating > 0 && ar >= minRating)
+      if (!qualifies) continue
+
+      if (!actorMap.has(actor.name)) {
+        actorMap.set(actor.name, { rating: ar, videos: [] })
+      }
+      actorMap.get(actor.name).videos.push(v)
+    }
+  }
+
+  // 배우를 별점 내림차순으로 정렬
+  const sortedActors = [...actorMap.entries()]
+    .sort(([, a], [, b]) => b.rating - a.rating)
+
+  const totalActors = sortedActors.length
+  // 배우 수에 따라 배우당 최대 영상 수 결정 (최소 1개 보장)
+  const maxPerActor = Math.max(1, Math.floor(maxTotal / Math.max(totalActors, 1)))
+
+  const selected = new Set() // 중복 방지
+  const result   = []
+
+  for (const [, actorData] of sortedActors) {
+    if (result.length >= maxTotal) break
+
+    // 해당 배우 영상을 품질 순 정렬 (영상 별점 → 복사 횟수)
+    const sorted = actorData.videos
+      .filter(v => !selected.has(v.id))
+      .sort((a, b) => {
+        const rDiff = (b.rating ?? 0) - (a.rating ?? 0)
+        if (rDiff !== 0) return rDiff
+        return (b.copy_count ?? 0) - (a.copy_count ?? 0)
+      })
+
+    let taken = 0
+    for (const v of sorted) {
+      if (taken >= maxPerActor || result.length >= maxTotal) break
+      if (!selected.has(v.id)) {
+        selected.add(v.id)
+        result.push(v)
+        taken++
+      }
+    }
+  }
+
+  // 각 영상에 themeScore / _actors / _tags 부여
+  return result.map(v => {
+    const actorList      = actorsMap[v.id] ?? []
+    const primaryActor   = actorList[0]?.name ?? v.actor_name ?? ''
+    const tags           = (v.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+    const actorCopyCount = actorCopyMap[primaryActor] || 0
+    const tagCopyCount   = tags.length
+      ? Math.max(...tags.map(t => tagCopyMap[t] || 0))
+      : 0
+
+    const dto = {
+      id:                   v.id,
+      fileName:             v.file_name,
+      folderName:           v.folder_path ? path.basename(v.folder_path) : '',
+      actors:               v.actor_name || actorList.map(a => a.name).join(', '),
+      primaryActor,
+      tags,
+      rating:               v.rating             ?? 0,
+      grade:                v.grade              ?? '',
+      playCount:            v.play_count         ?? 0,
+      downloadRequestCount: v.download_request_count ?? 0,
+      copyCount:            v.copy_count         ?? 0,
+      actorCopyCount,
+      tagCopyCount,
+      favorite:             Boolean(v.favorite),
+      recommended:          Boolean(v.recommended),
+      fileSize:             v.size               ?? 0,
+    }
+    const { themeScore } = calcScores(dto)
+    return { ...v, _actors: actorList, _tags: tags, _score: themeScore, primaryActor }
+  })
+}
+
+// ─────────────────────────────────────────────────────────────
 // AI 최종 추천 (5단계 AI 호출)
 // ─────────────────────────────────────────────────────────────
 
-async function callAiRecommend(userPrompt, intent, candidates) {
+async function callAiRecommend(userPrompt, intent, candidates, maxItems = 30) {
   const client = getOpenAIClient()
   const model  = process.env.OPENAI_MODEL || 'gpt-4.1'
 
@@ -330,7 +434,7 @@ async function callAiRecommend(userPrompt, intent, candidates) {
 
 규칙:
 - 반드시 제공된 후보 목록의 id 만 사용하세요. 없는 id를 만들지 마세요.
-- 최소 5개, 최대 30개를 추천하세요.
+- 최소 5개, 최대 ${maxItems}개를 추천하세요.
 - 각 항목에 한국어로 간결한 추천 이유를 적으세요.
 - 후보 목록 끝부분에는 순환 다양성을 위해 점수가 낮은 탐색 후보가 1~2개 포함되어 있습니다. 사용자 요청에 조금이라도 맞는다면 이들을 추천에 포함해 새로운 발견 기회를 제공하세요.
 - JSON만 반환하세요. 설명 문장이나 마크다운 코드 블록 없이.
@@ -449,14 +553,24 @@ async function askAiChatRecommend(db, userPrompt) {
     for (const tag of tags) tagCopyMap[tag] = (tagCopyMap[tag] || 0) + cc
   }
 
-  // 3. 로컬 점수 정렬 + 상위 50개만 추출
-  const candidateLimit = Math.min(Math.max(Number(intent.limit) || 50, 20), 100)
-  const candidates = scoreAndSort(rows, actorsMap, actorCopyMap, tagCopyMap, intent.sortHint, 50)
+  // 3. 후보 선정
+  // 배우 별점 기준 쿼리면: 해당하는 모든 배우가 후보에 포함되도록 배우별 균등 선정
+  // 일반 쿼리면: 테마 점수 기반 정렬 후 상위 N개
+  const isActorRatingQuery = ((intent.actorRatingExact ?? 0) > 0 || (intent.actorMinRating ?? 0) > 0)
+  let candidates, aiMaxItems
+  if (isActorRatingQuery) {
+    candidates = buildActorCoveredCandidates(rows, actorsMap, actorCopyMap, tagCopyMap, intent, 100)
+    aiMaxItems = Math.min(candidates.length, 50)
+  } else {
+    const candidateLimit = Math.min(Math.max(Number(intent.limit) || 50, 20), 100)
+    candidates = scoreAndSort(rows, actorsMap, actorCopyMap, tagCopyMap, intent.sortHint, candidateLimit)
+    aiMaxItems = 30
+  }
 
   // 4. AI 추천
   let aiResult
   try {
-    aiResult = await callAiRecommend(userPrompt, intent, candidates)
+    aiResult = await callAiRecommend(userPrompt, intent, candidates, aiMaxItems)
   } catch (err) {
     return { success: false, error: `AI 추천 실패: ${err.message}` }
   }

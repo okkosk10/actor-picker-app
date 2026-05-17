@@ -284,7 +284,7 @@ export default function App() {
 
       {/* ── 추천·탐색 탭 ─────────────────────────────────── */}
       {/* display:none 방식으로 유지 — 탭 이동 시 AI 결과 state 보존 */}
-      <div style={{ display: appTab === 'recommendations' ? 'contents' : 'none' }}>
+      <div style={{ display: appTab === 'recommendations' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
         <RecommendationsPage onCopyFiles={handleOpenFileCopy} />
       </div>
 
