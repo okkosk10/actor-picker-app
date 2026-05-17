@@ -52,6 +52,10 @@ export default function ActorDetailPanel({
   const [quickFilter,  setQuickFilter]  = useState('all')
   const [filteredVids, setFilteredVids] = useState(videos)
   const [vidsLoading,  setVidsLoading]  = useState(false)
+  // AI 분석 상태
+  const [aiData,        setAiData]       = useState(null)   // 캐시된 분석 결과
+  const [aiLoading,     setAiLoading]    = useState(false)
+  const [aiError,       setAiError]      = useState(null)
 
   useEffect(() => {
     setForm(formFromActor(actor))
@@ -59,6 +63,14 @@ export default function ActorDetailPanel({
     setSuccess(null)
     setQuickFilter('all')
     setFilteredVids(videos)
+    setAiData(null)
+    setAiError(null)
+    // 배우 전환 시 캐시된 AI 분석 결과를 조회
+    if (actor?.id) {
+      window.api.getAiAnalysis('actor', actor.id).then((res) => {
+        if (res?.success && res.data) setAiData(res.data)
+      }).catch(() => {})
+    }
   }, [actor]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -128,6 +140,23 @@ export default function ActorDetailPanel({
       setUploading(false)
     }
   }
+
+  const handleAiAnalyze = useCallback(async (force = false) => {
+    if (!actor?.id) return
+    setAiLoading(true); setAiError(null)
+    try {
+      const res = await window.api.analyzeActorAi(actor.id, force)
+      if (res?.success) {
+        setAiData(res.data)
+      } else {
+        setAiError(res?.error || 'AI 분석 실패')
+      }
+    } catch (e) {
+      setAiError(e.message || 'AI 분석 실패')
+    } finally {
+      setAiLoading(false)
+    }
+  }, [actor])
 
   return (
     <div className="actor-detail">
@@ -249,6 +278,151 @@ export default function ActorDetailPanel({
               )}
             </ul>
           )}
+        </div>
+      )}
+
+      {/* AI 배우 분석 */}
+      {actor && (
+        <AiAnalysisSection
+          aiData={aiData}
+          aiLoading={aiLoading}
+          aiError={aiError}
+          onAnalyze={handleAiAnalyze}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── AI 분석 섹션 서브 컴포넌트 ─────────────────────────────────
+
+const STATUS_LABELS = {
+  pending:    '미분석',
+  processing: '분석 중…',
+  done:       '분석 완료',
+  failed:     '분석 실패',
+}
+
+const STATUS_COLORS = {
+  pending:    'var(--text-muted)',
+  processing: '#facc15',
+  done:       '#22c55e',
+  failed:     '#ef4444',
+}
+
+function AiAnalysisSection({ aiData, aiLoading, aiError, onAnalyze }) {
+  const status     = aiData?.ai_status ?? 'pending'
+  const isDone     = status === 'done'
+  const analysis   = isDone ? aiData.ai_analysis : null
+  const updatedAt  = aiData?.ai_updated_at
+    ? new Date(aiData.ai_updated_at).toLocaleString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : null
+
+  return (
+    <div className="actor-detail__ai-section">
+      <div className="actor-detail__ai-header">
+        <span className="actor-detail__section-title" style={{ marginBottom: 0 }}>🤖 AI 배우 분석</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {aiData && (
+            <span style={{ fontSize: 11, color: STATUS_COLORS[status] }}>
+              {STATUS_LABELS[status]}
+            </span>
+          )}
+          <button
+            className="btn-secondary"
+            style={{ padding: '2px 10px', fontSize: 12 }}
+            type="button"
+            disabled={aiLoading}
+            onClick={() => onAnalyze(false)}
+          >
+            {aiLoading ? '분석 중…' : (isDone ? '재분석' : 'AI 분석')}
+          </button>
+          {isDone && (
+            <button
+              className="btn-secondary"
+              style={{ padding: '2px 8px', fontSize: 11, opacity: 0.7 }}
+              type="button"
+              disabled={aiLoading}
+              title="OpenAI를 다시 호출해 강제 재분석합니다"
+              onClick={() => onAnalyze(true)}
+            >
+              ↺
+            </button>
+          )}
+        </div>
+      </div>
+
+      {aiError && (
+        <div style={{ color: '#ef4444', fontSize: 12, marginTop: 6 }}>{aiError}</div>
+      )}
+
+      {isDone && analysis && (
+        <div className="actor-detail__ai-result">
+          {/* 점수 + 요약 */}
+          <div className="actor-detail__ai-score-row">
+            <span className="actor-detail__ai-score">{aiData.ai_score ?? 0}</span>
+            <span className="actor-detail__ai-score-label">/ 100</span>
+            <span className="actor-detail__ai-summary">{aiData.ai_summary}</span>
+          </div>
+
+          {/* 분위기 / 스타일 */}
+          {(analysis.mood?.length > 0 || analysis.style?.length > 0) && (
+            <div className="actor-detail__ai-tags-row">
+              {[...(analysis.mood ?? []), ...(analysis.style ?? [])].map((t) => (
+                <span key={t} className="actor-detail__ai-tag actor-detail__ai-tag--mood">{t}</span>
+              ))}
+            </div>
+          )}
+
+          {/* 강점 */}
+          {analysis.strengths?.length > 0 && (
+            <div className="actor-detail__ai-tags-row">
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 4 }}>강점</span>
+              {analysis.strengths.map((t) => (
+                <span key={t} className="actor-detail__ai-tag actor-detail__ai-tag--strength">{t}</span>
+              ))}
+            </div>
+          )}
+
+          {/* 추천 태그 */}
+          {analysis.recommendedTags?.length > 0 && (
+            <div className="actor-detail__ai-tags-row">
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 4 }}>추천태그</span>
+              {analysis.recommendedTags.map((t) => (
+                <span key={t} className="actor-detail__ai-tag actor-detail__ai-tag--rec">{t}</span>
+              ))}
+            </div>
+          )}
+
+          {/* 장르 분포 */}
+          {analysis.genreDistribution && Object.keys(analysis.genreDistribution).length > 0 && (
+            <div className="actor-detail__ai-genre">
+              {Object.entries(analysis.genreDistribution).map(([genre, pct]) => (
+                <div key={genre} className="actor-detail__ai-genre-bar">
+                  <span className="actor-detail__ai-genre-label">{genre}</span>
+                  <div className="actor-detail__ai-genre-track">
+                    <div
+                      className="actor-detail__ai-genre-fill"
+                      style={{ width: `${Math.min(100, pct)}%` }}
+                    />
+                  </div>
+                  <span className="actor-detail__ai-genre-pct">{pct}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {updatedAt && (
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
+              마지막 분석: {updatedAt}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!aiData && !aiLoading && (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+          AI 분석 버튼을 눌러 배우 데이터를 분석하세요.
         </div>
       )}
     </div>

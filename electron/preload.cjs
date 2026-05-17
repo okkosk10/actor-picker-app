@@ -327,5 +327,22 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { success: true } | { success: false, error }
   markDeleteCandidate: (videoId) =>
     ipcRenderer.invoke('mark-delete-candidate', videoId),
+
+  // ── AI 분석 캐시 조회 ─────────────────────────────────────────
+  // DB에 저장된 AI 분석 결과를 반환한다. (OpenAI 미호출)
+  // @param entityType {'actor'|'video'}
+  // @param entityId   {number}
+  // 반환: { success: true, data: AiCache|null } | { success: false, error }
+  getAiAnalysis: (entityType, entityId) =>
+    ipcRenderer.invoke('get-ai-analysis', entityType, entityId),
+
+  // ── 배우 AI 분석 트리거 ───────────────────────────────────────
+  // 캐시가 있으면 바로 반환, 없으면 OpenAI 분석 후 저장.
+  // @param actorId {number}
+  // @param force   {boolean} - true이면 캐시 무시하고 강제 재분석
+  // 반환: { success: true, data: AiCache, fromCache: boolean }
+  //        | { success: false, error }
+  analyzeActorAi: (actorId, force = false) =>
+    ipcRenderer.invoke('analyze-actor-ai', actorId, force),
 })
 

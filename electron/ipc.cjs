@@ -33,6 +33,7 @@ const { testOpenAIConnection }   = require('./services/openaiClient.cjs')
 const { generateAiThemeFolders } = require('./services/aiThemeFolderService.cjs')
 const { createThemeFolders }     = require('./services/themeCopyService.cjs')
 const { askAiChatRecommend }     = require('./services/aiChatRecommendService.cjs')
+const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
 
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
 // device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
@@ -2844,6 +2845,30 @@ function registerIpcHandlers() {
         `UPDATE videos SET grade = '삭제요망', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
       ).run(videoId)
       return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── AI 분석 캐시 조회 ────────────────────────────────────────────────────────
+  // entityType: 'actor' | 'video',  entityId: number
+  // 반환: { success: true, data: object|null } | { success: false, error }
+  ipcMain.handle('get-ai-analysis', async (_event, entityType, entityId) => {
+    try {
+      const db = getDb()
+      return getAiAnalysis(db, entityType, Number(entityId))
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── 배우 AI 분석 트리거 ──────────────────────────────────────────────────────
+  // actorId: number,  force: boolean (true = 강제 재분석)
+  // 반환: { success: true, data, fromCache } | { success: false, error }
+  ipcMain.handle('analyze-actor-ai', async (_event, actorId, force = false) => {
+    try {
+      const db = getDb()
+      return await analyzeActor(db, Number(actorId), force)
     } catch (err) {
       return { success: false, error: err.message }
     }

@@ -267,6 +267,33 @@ const MIGRATIONS = [
       }
     },
   },
+
+  {
+    version: '013_create_ai_analysis_cache',
+    description: 'AI 분석 결과 캐시 테이블 생성 (배우/영상 공용)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_analysis_cache (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          entity_type   TEXT    NOT NULL,                   -- 'actor' | 'video'
+          entity_id     INTEGER NOT NULL,
+          ai_analysis   TEXT,                               -- 전체 AI 분석 JSON 원문
+          ai_tags       TEXT,                               -- AI 추천 태그 배열 (JSON string)
+          ai_score      INTEGER DEFAULT 0,                  -- AI 추천 점수 0~100
+          ai_summary    TEXT,                               -- 사용자 표시용 요약
+          ai_status     TEXT    NOT NULL DEFAULT 'pending', -- pending|processing|done|failed
+          ai_updated_at TEXT,
+          UNIQUE (entity_type, entity_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_cache_entity
+          ON ai_analysis_cache (entity_type, entity_id);
+
+        CREATE INDEX IF NOT EXISTS idx_ai_cache_status
+          ON ai_analysis_cache (ai_status);
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────
