@@ -283,9 +283,10 @@ export default function App() {
       {appTab === 'actors' && <ActorsPage />}
 
       {/* ── 추천·탐색 탭 ─────────────────────────────────── */}
-      {appTab === 'recommendations' && (
+      {/* display:none 방식으로 유지 — 탭 이동 시 AI 결과 state 보존 */}
+      <div style={{ display: appTab === 'recommendations' ? 'contents' : 'none' }}>
         <RecommendationsPage onCopyFiles={handleOpenFileCopy} />
-      )}
+      </div>
 
       {/* ── 대시보드 탭 ──────────────────────────────────── */}
       {appTab === 'dashboard' && (
