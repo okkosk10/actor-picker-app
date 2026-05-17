@@ -220,6 +220,7 @@ function registerIpcHandlers() {
         folder_path   = @folder_path,
         extension     = @extension,
         size          = @size,
+        file_size     = @size,
         modified_at   = @modified_at,
         code          = @code,
         actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
@@ -236,6 +237,7 @@ function registerIpcHandlers() {
         file_name     = @file_name,
         extension     = @extension,
         size          = @size,
+        file_size     = @size,
         modified_at   = @modified_at,
         code          = @code,
         actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
@@ -247,10 +249,10 @@ function registerIpcHandlers() {
     // 신규 파일 INSERT
     const insertNew = db.prepare(`
       INSERT INTO videos
-        (file_name, file_path, folder_path, extension, size, modified_at,
+        (file_name, file_path, folder_path, extension, size, file_size, modified_at,
          code, actor_name, file_identity, tags, is_new, updated_at)
       VALUES
-        (@file_name, @file_path, @folder_path, @extension, @size, @modified_at,
+        (@file_name, @file_path, @folder_path, @extension, @size, @size, @modified_at,
          @code, @actor_name, @file_identity, @tags, 1, CURRENT_TIMESTAMP)
     `)
 
@@ -2747,6 +2749,67 @@ function registerIpcHandlers() {
       return await askAiChatRecommend(db, userPrompt)
     } catch (err) {
       console.error('[ai-chat-recommend:ask]', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 드라이브별 저장소 통계 조회 (get-drive-stats)
+  //
+  // 모든 normal 영상을 드라이브 문자 기준으로 집계한다.
+  // 반환: DriveStats[]
+  //   { drive, totalVideos, totalSize, averageRating,
+  //     recommendedCount, deleteCandidateCount, lowPreferenceCount }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-drive-stats', async () => {
+    try {
+      const db = getDb()
+      const { getDriveStats } = require('./services/driveStatsService.cjs')
+      return { success: true, drives: getDriveStats(db) }
+    } catch (err) {
+      console.error('[get-drive-stats]', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 드라이브별 삭제 후보 조회 (get-delete-candidates-by-drive)
+  //
+  // @param drive {string|null} - "D:" 형태 또는 null(전체)
+  // 반환:
+  //   { drive, freeSpace, totalDiskSize, usedByLibrary, candidates[] }
+  //   candidates[]: { id, filename, file_path, file_size, rating,
+  //                   actorNames, tags, copy_count, watch_count,
+  //                   deleteScore, reason[] }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-delete-candidates-by-drive', async (_event, drive) => {
+    try {
+      const db = getDb()
+      const { getDeleteCandidatesByDrive } = require('./services/driveStatsService.cjs')
+      return { success: true, ...getDeleteCandidatesByDrive(db, drive || null) }
+    } catch (err) {
+      console.error('[get-delete-candidates-by-drive]', err)
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 삭제 예정 표시 (mark-delete-candidate)
+  //
+  // 실제 파일 삭제 없이 grade='삭제요망'으로만 변경한다.
+  // @param videoId {number}
+  // 반환: { success: true } | { success: false, error }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('mark-delete-candidate', async (_event, videoId) => {
+    try {
+      const db  = getDb()
+      const row = db.prepare('SELECT id, grade FROM videos WHERE id = ?').get(videoId)
+      if (!row) return { success: false, error: '영상을 찾을 수 없습니다.' }
+      db.prepare(
+        `UPDATE videos SET grade = '삭제요망', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).run(videoId)
+      return { success: true }
+    } catch (err) {
       return { success: false, error: err.message }
     }
   })

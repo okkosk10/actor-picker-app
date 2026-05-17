@@ -253,6 +253,20 @@ const MIGRATIONS = [
       }
     },
   },
+
+  {
+    version: '012_add_file_size',
+    description: 'videos에 file_size 컬럼 추가 및 기존 size 값으로 백필 (드라이브 저장소 관리용)',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+      if (!cols.includes('file_size')) {
+        db.exec(`ALTER TABLE videos ADD COLUMN file_size INTEGER DEFAULT 0`)
+        // 기존 size 컬럼 값으로 백필
+        db.exec(`UPDATE videos SET file_size = COALESCE(size, 0) WHERE file_size IS NULL OR file_size = 0`)
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_videos_file_size ON videos (file_size)`)
+      }
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

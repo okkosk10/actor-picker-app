@@ -24,6 +24,7 @@ import HeaderActionBar          from './components/HeaderActionBar.jsx'
 import ActorsPage               from './pages/Actors/index.jsx'
 import RecommendationsPage      from './pages/Recommendations/index.jsx'
 import DashboardPage            from './pages/Dashboard/index.jsx'
+import StoragePage              from './pages/Storage/index.jsx'
 
 export default function App() {
   // ── 앱 탭 ('library' | 'actors' | 'recommendations' | 'dashboard')
@@ -239,6 +240,7 @@ export default function App() {
             { key: 'actors',          label: '배우 관리' },
             { key: 'recommendations', label: '🎬 추천·탐색' },
             { key: 'dashboard',       label: '대시보드' },
+            { key: 'storage',         label: '💾 저장소' },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -300,6 +302,9 @@ export default function App() {
           onCopyFiles={handleOpenFileCopy}
         />
       )}
+
+      {/* ── 저장소 관리 탭 ───────────────────────────────── */}
+      {appTab === 'storage' && <StoragePage />}
 
       {/* ── 영상 관리 탭 ─────────────────────────────────── */}
       {appTab === 'library' && (

@@ -1,0 +1,439 @@
+/* src/pages/Storage/Storage.css */
+
+.storage-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: #0f0f0f;
+  color: #e0e0e0;
+}
+
+/* ── 헤더 ──────────────────────────────────────────────────── */
+.storage-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.storage-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.storage-header-spacer {
+  flex: 1;
+}
+
+.storage-refresh-btn {
+  padding: 6px 14px;
+  background: #1e1e2e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #aaa;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.storage-refresh-btn:hover {
+  background: #2a2a40;
+  color: #e0e0e0;
+}
+
+.storage-refresh-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── 드라이브 카드 그리드 ───────────────────────────────────── */
+.storage-drive-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 20px;
+  flex-shrink: 0;
+}
+
+.storage-drive-card {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 10px;
+  padding: 16px 20px;
+  min-width: 220px;
+  flex: 1;
+  max-width: 320px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.storage-drive-card:hover {
+  border-color: #4a6fa5;
+  background: #1e2040;
+}
+
+.storage-drive-card.active {
+  border-color: #5b8ae0;
+  background: #1c2244;
+}
+
+.storage-drive-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.storage-drive-icon {
+  font-size: 22px;
+}
+
+.storage-drive-label {
+  font-size: 18px;
+  font-weight: 700;
+  color: #7eb3ff;
+}
+
+.storage-drive-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.storage-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.storage-stat-label {
+  color: #666;
+  font-size: 11px;
+}
+
+.storage-stat-value {
+  color: #ddd;
+  font-weight: 500;
+}
+
+.storage-stat-value.danger {
+  color: #f87171;
+}
+
+.storage-stat-value.warn {
+  color: #fbbf24;
+}
+
+.storage-drive-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.storage-view-candidates-btn {
+  flex: 1;
+  padding: 6px 10px;
+  background: #2a3a5e;
+  border: 1px solid #3a5a8e;
+  border-radius: 6px;
+  color: #7eb3ff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.storage-view-candidates-btn:hover {
+  background: #3a4a7e;
+}
+
+/* ── 삭제 후보 패널 ─────────────────────────────────────────── */
+.storage-candidates-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 1px solid #2a2a2a;
+}
+
+.storage-candidates-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: #141420;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.storage-candidates-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.storage-candidates-count {
+  font-size: 12px;
+  color: #888;
+  background: #2a2a2a;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.storage-disk-info {
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #888;
+}
+
+.storage-disk-info span {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.storage-disk-info strong {
+  color: #ccc;
+  font-size: 13px;
+}
+
+.storage-candidates-close {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+}
+
+.storage-candidates-close:hover {
+  color: #ccc;
+}
+
+.storage-candidates-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* ── 삭제 후보 아이템 ───────────────────────────────────────── */
+.storage-candidate-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #1e1e1e;
+  transition: background 0.1s;
+}
+
+.storage-candidate-item:hover {
+  background: #181826;
+}
+
+.storage-candidate-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+  min-width: 44px;
+}
+
+.storage-score-badge {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.storage-score-badge.high   { color: #f87171; }
+.storage-score-badge.medium { color: #fbbf24; }
+.storage-score-badge.low    { color: #6b7280; }
+
+.storage-score-label {
+  font-size: 10px;
+  color: #555;
+}
+
+.storage-candidate-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.storage-candidate-filename {
+  font-size: 13px;
+  color: #ddd;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.storage-candidate-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+.storage-candidate-meta .meta-sep {
+  color: #444;
+}
+
+.storage-candidate-actors {
+  color: #7eb3ff;
+}
+
+.storage-candidate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.storage-candidate-tag {
+  padding: 1px 7px;
+  background: #1e2530;
+  border: 1px solid #2a3545;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #6b8cbe;
+}
+
+.storage-candidate-tag.danger {
+  background: #2a1010;
+  border-color: #5a2020;
+  color: #f87171;
+}
+
+.storage-candidate-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.storage-reason-badge {
+  padding: 1px 7px;
+  background: #2a1f10;
+  border: 1px solid #4a3a20;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #fbbf24;
+}
+
+.storage-candidate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.storage-action-btn {
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid;
+  transition: background 0.15s;
+}
+
+.storage-action-btn.open-folder {
+  background: #1e2530;
+  border-color: #2a3545;
+  color: #7eb3ff;
+}
+
+.storage-action-btn.open-folder:hover {
+  background: #2a3545;
+}
+
+.storage-action-btn.mark-delete {
+  background: #2a1010;
+  border-color: #5a2020;
+  color: #f87171;
+}
+
+.storage-action-btn.mark-delete:hover {
+  background: #3a1515;
+}
+
+.storage-action-btn.mark-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.storage-action-btn.marked {
+  background: #1a2a1a;
+  border-color: #2a4a2a;
+  color: #6ee77a;
+  cursor: default;
+}
+
+/* ── 빈 상태 / 로딩 ─────────────────────────────────────────── */
+.storage-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #444;
+  gap: 10px;
+}
+
+.storage-empty-icon {
+  font-size: 40px;
+  opacity: 0.4;
+}
+
+.storage-empty-text {
+  font-size: 14px;
+}
+
+.storage-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #666;
+  font-size: 14px;
+  gap: 10px;
+}
+
+/* ── 용량 바 ────────────────────────────────────────────────── */
+.storage-size-bar-wrap {
+  margin-top: 8px;
+  height: 4px;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.storage-size-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3b6fd4, #5b8ae0);
+  border-radius: 2px;
+  transition: width 0.4s;
+}
+
+/* ── 별점 ───────────────────────────────────────────────────── */
+.storage-rating {
+  color: #fbbf24;
+  font-size: 12px;
+}
+
+.storage-rating.none {
+  color: #444;
+}

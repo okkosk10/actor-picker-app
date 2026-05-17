@@ -307,5 +307,25 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { success, summary, reason, intent, items[] } | { success: false, error }
   askAiChatRecommend: (userPrompt) =>
     ipcRenderer.invoke('ai-chat-recommend:ask', userPrompt),
+
+  // ── 드라이브별 저장소 통계 조회 ───────────────────────────────
+  // 파일 경로 기준 드라이브별 영상 수 / 용량 / 평균 별점 / 삭제 후보 수 등 집계
+  // 반환: { success: true, drives: DriveStats[] } | { success: false, error }
+  getDriveStats: () =>
+    ipcRenderer.invoke('get-drive-stats'),
+
+  // ── 드라이브별 삭제 후보 조회 ─────────────────────────────────
+  // @param drive {string|null} - "D:" 형태 또는 null(전체 라이브러리)
+  // 반환: { success: true, drive, freeSpace, totalDiskSize, usedByLibrary, candidates[] }
+  //        | { success: false, error }
+  getDeleteCandidatesByDrive: (drive) =>
+    ipcRenderer.invoke('get-delete-candidates-by-drive', drive),
+
+  // ── 삭제 예정 표시 (실제 삭제 없음) ──────────────────────────
+  // grade='삭제요망'으로만 변경. 파일 삭제는 하지 않음.
+  // @param videoId {number}
+  // 반환: { success: true } | { success: false, error }
+  markDeleteCandidate: (videoId) =>
+    ipcRenderer.invoke('mark-delete-candidate', videoId),
 })
 
