@@ -90,6 +90,25 @@ function escapeLike(str) {
   return str.replace(/!/g, '!!').replace(/%/g, '!%').replace(/_/g, '!_')
 }
 
+function normalizeTagText(value) {
+  return String(value ?? '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
+function splitCsvTags(value) {
+  return String(value ?? '')
+    .split(',')
+    .map(t => t.trim())
+    .filter(Boolean)
+}
+
+function promptWantsAll(prompt) {
+  return /(싹다|전부|모두|전체|총집합|다\s*넣|다\s*모|전원)/.test(prompt || '')
+}
+
+function promptLooksLikeActorTagRequest(prompt) {
+  return /배우[^,\n]*태그|태그[^,\n]*배우/.test(prompt || '')
+}
+
 /**
  * currentFolder 기반 SQL 폴더 필터 조건과 파라미터를 반환한다.
  *
@@ -2580,14 +2599,18 @@ function registerIpcHandlers() {
       const actorNameRatingMap = {}  // name → rating (폴백)
       try {
         const actorRows = db.prepare(`
-          SELECT va.video_id, a.name, a.rating AS actor_rating
+          SELECT va.video_id, a.name, a.rating AS actor_rating, a.tags AS actor_tags
           FROM video_actors va
           JOIN actors a ON a.id = va.actor_id
           ORDER BY va.video_id, va.order_index ASC
         `).all()
         for (const r of actorRows) {
           if (!actorsMap[r.video_id]) actorsMap[r.video_id] = []
-          actorsMap[r.video_id].push({ name: r.name, rating: r.actor_rating ?? 0 })
+          actorsMap[r.video_id].push({
+            name:   r.name,
+            rating: r.actor_rating ?? 0,
+            tags:   splitCsvTags(r.actor_tags),
+          })
           // 이름 → 별점 맵 (같은 이름이면 최고 별점 유지)
           const prev = actorNameRatingMap[r.name] ?? 0
           if ((r.actor_rating ?? 0) > prev) actorNameRatingMap[r.name] = r.actor_rating ?? 0
@@ -2624,6 +2647,7 @@ function registerIpcHandlers() {
         const primaryActor = actorList[0]?.name ?? (v.actor_name || '')
         const folderName   = v.folder_path ? path.basename(v.folder_path) : ''
         const tags         = (v.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+        const actorTags    = [...new Set(actorList.flatMap(a => a.tags || []))]
         // 해당 배우의 총 복사 횟수 (대표 배우 기준)
         const actorCopyCount = actorCopyMap[primaryActor] || 0
         // 해당 영상 태그 중 가장 많이 복사된 태그의 복사 횟수
@@ -2642,6 +2666,7 @@ function registerIpcHandlers() {
           actors,
           primaryActor,
           tags,
+          actorTags,
           rating:               v.rating    ?? 0,
           grade:                v.grade     ?? '',
           playCount:            v.play_count ?? 0,
@@ -2713,6 +2738,77 @@ function registerIpcHandlers() {
         }
       }
 
+      // ── 배우 태그 키워드 감지 → 해당 태그를 가진 배우 출연 영상만 필터링 ──
+      // 예: "청순 태그 배우 싹다", "배우 태그 청순 전부", "청순 태그에 해당하는 배우들"
+      let forcedTheme = null
+      if (customPrompt && promptLooksLikeActorTagRequest(customPrompt)) {
+        try {
+          const actorTagRows = db.prepare(`
+            SELECT name, tags
+            FROM actors
+            WHERE is_archived = 0
+              AND tags IS NOT NULL
+              AND trim(tags) != ''
+          `).all()
+
+          const promptNorm = normalizeTagText(customPrompt)
+          const matchedTagNorms = new Set()
+          const matchedTagLabels = []
+          for (const row of actorTagRows) {
+            for (const tag of splitCsvTags(row.tags)) {
+              const norm = normalizeTagText(tag)
+              if (norm.length >= 2 && promptNorm.includes(norm) && !matchedTagNorms.has(norm)) {
+                matchedTagNorms.add(norm)
+                matchedTagLabels.push(tag)
+              }
+            }
+          }
+
+          if (matchedTagNorms.size > 0) {
+            const matchingActorNames = new Set()
+            for (const row of actorTagRows) {
+              const hasTag = splitCsvTags(row.tags)
+                .some(tag => matchedTagNorms.has(normalizeTagText(tag)))
+              if (hasTag) matchingActorNames.add(normalizeTagText(row.name))
+            }
+
+            filteredVideos = filteredVideos.filter(v => {
+              const actorList = actorsMap[v.id] ?? []
+              if (actorList.some(a => matchingActorNames.has(normalizeTagText(a.name)))) return true
+
+              const fallbackNames = String(v.actors || '')
+                .replace(/^\(|\)$/g, '')
+                .split(',')
+                .map(normalizeTagText)
+                .filter(Boolean)
+              return fallbackNames.some(name => matchingActorNames.has(name))
+            })
+
+            candidateLimit = Math.max(candidateLimit, filteredVideos.length)
+
+            if (promptWantsAll(customPrompt) && filteredVideos.length > 0) {
+              const actorNames = [...new Set(
+                filteredVideos
+                  .flatMap(v => (actorsMap[v.id] ?? []).map(a => a.name))
+                  .filter(Boolean)
+              )]
+              forcedTheme = {
+                title:       `${matchedTagLabels.join(', ')} 태그 배우 전체`,
+                folderName:  `${matchedTagLabels.join('_')}_태그_배우_전체`,
+                description: `배우 태그 ${matchedTagLabels.join(', ')}에 해당하는 배우들의 영상을 전체 포함합니다.`,
+                keywords:    matchedTagLabels,
+                actorNames,
+                videoIds:    filteredVideos.map(v => v.id),
+                reason:      '사용자가 배우 태그 조건의 전체 포함을 요청해 AI 선택 누락 없이 강제 포함했습니다.',
+                confidence:  1,
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[ai-theme-folders:generate] 배우 태그 필터 감지 실패:', err.message)
+        }
+      }
+
       // customPrompt에 언급된 배우/키워드와 일치하는 영상을 우선 후보에 강제 포함
       // → 점수가 낮아도 후보 안에 반드시 들어가게 함
       const priorityIds = new Set()
@@ -2729,8 +2825,16 @@ function registerIpcHandlers() {
           }
         }
       }
+      if (forcedTheme) {
+        for (const id of forcedTheme.videoIds) priorityIds.add(id)
+      }
 
-      return await generateAiThemeFolders(filteredVideos, { customPrompt: customPrompt || '', priorityIds, candidateLimit })
+      return await generateAiThemeFolders(filteredVideos, {
+        customPrompt: customPrompt || '',
+        priorityIds,
+        candidateLimit,
+        forcedTheme,
+      })
     } catch (err) {
       console.error('[ai-theme-folders:generate]', err)
       return { success: false, error: err.message }

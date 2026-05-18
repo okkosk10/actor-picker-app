@@ -82,6 +82,7 @@ function buildThemeCandidates(videos, limit = 120, priorityIds = new Set()) {
       actors:               v.actors      ?? v.actor_name   ?? '',
       primaryActor:         v.primaryActor ?? '',
       tags:                 Array.isArray(v.tags) ? v.tags : [],
+      actorTags:            Array.isArray(v.actorTags) ? v.actorTags : [],
       rating:               Number(v.rating)    || 0,
       grade:                v.grade             ?? '',
       playCount:            Number(v.playCount  ?? v.play_count)  || 0,

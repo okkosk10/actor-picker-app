@@ -137,7 +137,7 @@ function validateAiThemeFolders(themeFolders, allVideos, videoMap) {
  *                 | { success: false, error: string }>}
  */
 async function generateAiThemeFolders(videos, options = {}) {
-  const { candidateLimit = 120, customPrompt = '', priorityIds = new Set() } = options
+  const { candidateLimit = 120, customPrompt = '', priorityIds = new Set(), forcedTheme = null } = options
 
   // 1. 후보 계산
   const candidates = buildThemeCandidates(videos, candidateLimit, priorityIds)
@@ -155,6 +155,7 @@ async function generateAiThemeFolders(videos, options = {}) {
       folderName:  v.folderName  ?? v.folder_name  ?? '',
       actors:      v.actors      ?? v.actor_name   ?? '',
       tags:        Array.isArray(v.tags) ? v.tags : [],
+      actorTags:   Array.isArray(v.actorTags) ? v.actorTags : [],
       rating:      v.rating      ?? 0,
       grade:       v.grade       ?? '',
       playCount:   v.playCount   ?? v.play_count   ?? 0,
@@ -179,11 +180,11 @@ async function generateAiThemeFolders(videos, options = {}) {
 
 규칙:
 - 아래 후보는 로컬 점수 계산(watchScore, copyScore, themeScore)으로 선별된 우수 후보들입니다.
-- tags, actors, folderName, fileName, rating, playCount, copyCount를 종합해 테마를 만드세요.
+- tags, actorTags, actors, folderName, fileName, rating, playCount, copyCount를 종합해 테마를 만드세요.
 - 단순 점수 높은 순이 아닌, 테마성이 있는 묶음을 만드세요 (배우 계열, 태그 계열, 폴더/시리즈 계열 등).
 - 후보 목록 끝에는 순환 다양성을 위한 낮은 점수의 탐색 후보 1개가 포함됩니다. 테마에 어울린다면 이 항목도 적극 활용해 새로운 발견 기회를 만드세요.
 - 테마명은 사용자가 폴더명으로 쓰기 좋은 한국어 이름으로 만드세요.
-- 각 특집은 최소 2개, 최대 30개 videoId를 포함하세요.
+- 각 특집은 최소 2개, 최대 30개 videoId를 포함하세요. 단, 사용자가 '싹다', '모두', '전부'처럼 전체 포함을 요청한 경우에는 30개 제한보다 전체 포함을 우선하세요.
 - 같은 videoId가 너무 많은 테마에 중복되지 않게 하세요.
 - **배우 다양성**: 특정 배우 한 명을 주제로 하는 테마는 전체 테마 중 최대 1개로 제한하세요. 같은 배우가 여러 테마에 반복 등장하지 않도록 하세요.
 - 전체 테마에 걸쳐 가능한 다양한 배우, 태그, 폴더 계열이 골고루 나오도록 하세요.
@@ -276,7 +277,20 @@ async function generateAiThemeFolders(videos, options = {}) {
   }
 
   // 5. 검증 및 보강
-  const themes = validateAiThemeFolders(parsed.themeFolders, videos, videoMap)
+  let themes = validateAiThemeFolders(parsed.themeFolders, videos, videoMap)
+  if (forcedTheme) {
+    const forcedThemes = validateAiThemeFolders([forcedTheme], videos, videoMap)
+    if (forcedThemes.length > 0) {
+      const forcedIds = new Set(forcedThemes[0].videoIds)
+      themes = [
+        forcedThemes[0],
+        ...themes.filter(theme =>
+          theme.videoIds.length !== forcedIds.size ||
+          theme.videoIds.some(id => !forcedIds.has(id))
+        ),
+      ]
+    }
+  }
   if (themes.length === 0) {
     return { success: false, error: 'AI 응답에서 유효한 테마를 찾을 수 없습니다.' }
   }
