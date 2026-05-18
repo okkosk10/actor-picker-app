@@ -45,6 +45,13 @@ async function parseIntent(userPrompt) {
 - "5점 배우 작품", "5점 배우 영상 추천" 처럼 배우 별점이 명확한 경우
   → actorRatingExact 또는 actorMinRating 사용 (minRating은 0으로 유지)
 
+중요: 소속사(agency) 기반 요청을 인식하세요.
+다음 표현은 actorAgencies 배열에 소속사명을 넣으세요.
+  예: "A 소속사 배우 특집", "B 프로덕션 배우들", "C 소속 배우 영상",
+      "A 소속배우", "A 전속 배우", "소속사가 A인 배우"
+  → actorAgencies: ["A"]
+소속사는 actors.agency 컬럼의 LIKE 검색에 사용됩니다.
+
 중요: 삭제/정리 관련 요청을 구분하세요.
 다음 표현은 볼만한 영상 추천이 아닌 "삭제 후보 추천" 모드입니다.
   → deleteMode: true 로 설정
@@ -56,6 +63,7 @@ async function parseIntent(userPrompt) {
   "actorTags": [],           // 배우가 가진 태그 조건 (actors.tags LIKE)
   "videoTags": [],           // 영상 태그 조건 (videos.tags LIKE)
   "actorNames": [],          // 특정 배우명 (actors.name LIKE)
+  "actorAgencies": [],       // 소속사명 조건 (actors.agency LIKE) — 소속사 기반 요청 시 사용
   "minRating": 0,            // 영상(videos.rating) 최소 별점 (0~5, 기본 0)
   "actorMinRating": 0,       // 배우(actors.rating) 최소 별점 (0~5, 기본 0) — 이상
   "actorRatingExact": 0,     // 배우(actors.rating) 정확히 일치 별점 (0~5, 기본 0)
@@ -106,6 +114,7 @@ function queryCandidates(db, intent) {
     actorTags        = [],
     videoTags        = [],
     actorNames       = [],
+    actorAgencies    = [],
     minRating        = 0,
     actorMinRating   = 0,
     actorRatingExact = 0,
@@ -159,10 +168,11 @@ function queryCandidates(db, intent) {
     videoTags.forEach(t => bindings.push(`%${t}%`))
   }
 
-  // 배우 태그 / 배우명 / 배우 별점 조건이 있으면 JOIN 필요
+  // 배우 태그 / 배우명 / 소속사 / 배우 별점 조건이 있으면 JOIN 필요
   let needsActorJoin =
     actorTags.length > 0 ||
     actorNames.length > 0 ||
+    actorAgencies.length > 0 ||
     actorMinRating > 0 ||
     actorRatingExact > 0
 
@@ -182,7 +192,7 @@ function queryCandidates(db, intent) {
   //   → video_actors 연결이 없어도 videos.actor_name 컬럼으로 매칭 가능
   let actorJoinSQL = ''
   if (needsActorJoin) {
-    const joinType = (actorTags.length > 0 || actorRatingExact > 0 || actorMinRating > 0)
+    const joinType = (actorTags.length > 0 || actorAgencies.length > 0 || actorRatingExact > 0 || actorMinRating > 0)
       ? 'JOIN'
       : 'LEFT JOIN'
     actorJoinSQL = `
@@ -200,6 +210,12 @@ function queryCandidates(db, intent) {
       whereClauses.push(`(${anClauses})`)
       actorNames.forEach(n => { bindings.push(`%${n}%`); bindings.push(`%${n}%`) })
     }
+    // 소속사 조건 (actors.agency LIKE)
+    if (actorAgencies.length > 0) {
+      const agClauses = actorAgencies.map(() => "a2.agency LIKE ?").join(' OR ')
+      whereClauses.push(`(${agClauses})`)
+      actorAgencies.forEach(ag => bindings.push(`%${ag}%`))
+    }
     // 배우 별점 조건 (actors.rating)
     if (actorRatingExact > 0) {
       whereClauses.push('a2.rating = ?')
@@ -211,8 +227,8 @@ function queryCandidates(db, intent) {
   }
 
   const actualLimit = Math.min(Math.max(Number(limit) || 50, 10), 200)
-  // 배우 별점 필터가 있으면 전체 영상을 가져와야 배우 누락이 없음
-  const sqlLimit = (actorRatingExact > 0 || actorMinRating > 0) ? 2000 : actualLimit * 4
+  // 배우 별점·소속사 필터가 있으면 전체 영상을 가져와야 배우 누락이 없음
+  const sqlLimit = (actorRatingExact > 0 || actorMinRating > 0 || actorAgencies.length > 0) ? 2000 : actualLimit * 4
 
   const sql = `
     SELECT DISTINCT

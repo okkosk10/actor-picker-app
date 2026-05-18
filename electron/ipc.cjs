@@ -2680,6 +2680,39 @@ function registerIpcHandlers() {
         candidateLimit = Math.max(120, qualifyingActors.size * 5)
       }
 
+      // ── 소속사 키워드 감지 → 해당 소속 배우 출연 영상만 필터링 ──
+      // 패턴: "XXX 소속", "XXX소속", "소속사 XXX", "소속 XXX", "XXX 전속"
+      if (customPrompt) {
+        const agencyMatch =
+          customPrompt.match(/([가-힣a-zA-Z0-9·\-]{2,})\s*소속/) ||
+          customPrompt.match(/소속사?\s+([가-힣a-zA-Z0-9·\-]{2,})/) ||
+          customPrompt.match(/([가-힣a-zA-Z0-9·\-]{2,})\s*전속/)
+        if (agencyMatch) {
+          const agencyKw = agencyMatch[1].trim()
+          const excluded = new Set(['배우', '소속', '전속', '레이블', '특집', '총집합'])
+          if (agencyKw.length >= 2 && !excluded.has(agencyKw)) {
+            // DB에서 agency 또는 tags에 해당 키워드를 가진 배우 조회
+            const agencyActorRows = db.prepare(`
+              SELECT name FROM actors
+              WHERE (agency LIKE ? OR tags LIKE ?)
+                AND (agency IS NOT NULL AND agency != '')
+            `).all(`%${agencyKw}%`, `%${agencyKw}%`)
+            const agencyActorNames = new Set(agencyActorRows.map(r => r.name.toLowerCase()))
+
+            if (agencyActorNames.size > 0) {
+              filteredVideos = filteredVideos.filter(v => {
+                const actorList = actorsMap[v.id] ?? []
+                if (actorList.some(a => agencyActorNames.has(a.name.toLowerCase()))) return true
+                // video_actors 연결 없는 폴백: actor_name 컬럼 직접 비교
+                const fallbackName = (v.actors || v.primaryActor || '').toLowerCase()
+                return agencyActorNames.has(fallbackName)
+              })
+              candidateLimit = Math.max(120, filteredVideos.length)
+            }
+          }
+        }
+      }
+
       // customPrompt에 언급된 배우/키워드와 일치하는 영상을 우선 후보에 강제 포함
       // → 점수가 낮아도 후보 안에 반드시 들어가게 함
       const priorityIds = new Set()
