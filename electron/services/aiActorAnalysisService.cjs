@@ -174,7 +174,7 @@ async function callOpenAI(actorData) {
     tags:    (v.tags || '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 5),
   }))
 
-  const input = JSON.stringify({
+  const payload = JSON.stringify({
     name:         actor.name,
     actorTags:    (actor.tags || '').split(',').map(t => t.trim()).filter(Boolean),
     actorRating:  actor.rating || 0,
@@ -184,6 +184,9 @@ async function callOpenAI(actorData) {
     topTags,
     sampleVideos,
   })
+
+  // json_object 포맷 사용 시 input 메시지에 'json' 단어 필수 (OpenAI API 요구사항)
+  const input = `아래 배우 데이터를 분석해 JSON으로 반환해 주세요:\n\n${payload}`
 
   const resp = await client.responses.create({
     model,

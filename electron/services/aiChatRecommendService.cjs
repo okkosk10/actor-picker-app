@@ -74,7 +74,7 @@ async function parseIntent(userPrompt) {
     model,
     temperature: 0.2,
     instructions: system,
-    input: userPrompt,
+    input: `다음 사용자 요청을 분석해 JSON으로 반환해 주세요: ${userPrompt}`,
     text: { format: { type: 'json_object' } },
   })
 
