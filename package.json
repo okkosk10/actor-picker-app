@@ -49,7 +49,7 @@
     ],
     "npmRebuild": true,
     "win": {
-      "target": "portable",
+      "target": "dir",
       "icon": "build/icon.ico"
     }
   },
