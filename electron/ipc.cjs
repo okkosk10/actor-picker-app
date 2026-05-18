@@ -2784,7 +2784,11 @@ function registerIpcHandlers() {
               return fallbackNames.some(name => matchingActorNames.has(name))
             })
 
-            candidateLimit = Math.max(candidateLimit, filteredVideos.length)
+            // forcedTheme이 전체를 커버하므로 AI에는 대표 샘플만 전달해 토큰 초과 방지
+            // "싹다/전부" 요청 → 40개 샘플(30k TPM 안전 마진), 그 외 → 최대 100개
+            candidateLimit = promptWantsAll(customPrompt)
+              ? Math.min(40, filteredVideos.length)
+              : Math.min(100, filteredVideos.length)
 
             if (promptWantsAll(customPrompt) && filteredVideos.length > 0) {
               const actorNames = [...new Set(
