@@ -2691,7 +2691,7 @@ function registerIpcHandlers() {
 
       // 배우 별점 필터가 있으면 해당 배우가 출연한 영상만 포함
       let filteredVideos = videos
-      let candidateLimit = 120
+      let candidateLimit = 60  // 토큰 초과 방지: 영상 1개 ~589토큰 × 60 = ~35k → 슬림 DTO와 조합 시 30k 이내
       if (actorRatingFilter > 0) {
         filteredVideos = videos.filter(v => v.maxActorRating === actorRatingFilter)
         // 조건 충족 배우 수 파악 → 배우당 최소 5개 확보

@@ -209,7 +209,11 @@ async function generateAiThemeFolders(videos, options = {}) {
   ]
 }`
 
-  const userPromptBase = `다음은 내 영상 라이브러리의 상위 ${candidates.length}개 후보입니다. 특집 폴더를 제안해주세요.\n\n${JSON.stringify(candidates)}`
+  // AI 테마 분류에 필요한 필드만 남겨 토큰 절감 (watchScore, copyScore 등 내부 점수 제거)
+  const slimCandidates = candidates.map(({ id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore }) => ({
+    id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore
+  }))
+  const userPromptBase = `다음은 내 영상 라이브러리의 상위 ${slimCandidates.length}개 후보입니다. 특집 폴더를 제안해주세요.\n\n${JSON.stringify(slimCandidates)}`
   const userPrompt = customPrompt
     ? `[사용자 요청] ${customPrompt}\n\n${userPromptBase}`
     : userPromptBase
