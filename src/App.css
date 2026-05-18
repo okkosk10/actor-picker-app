@@ -2137,6 +2137,39 @@
   color: #f59e0b;
   flex-shrink: 0;
 }
+/* ── New 배우 확인/무시 버튼 ─────────────────────────────── */
+.actor-list__new-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.actor-list__new-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.actor-list__new-btn:hover { opacity: 0.8; }
+.actor-list__new-btn--confirm { background: #22c55e; color: #fff; }
+.actor-list__new-btn--dismiss { background: #f59e0b; color: #fff; }
+
+/* ── 배우 탭 바 ──────────────────────────────────────────── */
+.actors-page__tab-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.actors-page__new-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  font-style: italic;
+}
 
 /* ── 배우 상세 패널 ───────────────────────────────────────── */
 .actor-detail {

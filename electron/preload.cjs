@@ -153,10 +153,21 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.send('bulk-copy-close'),
 
   // ── 배우 목록 조회 ────────────────────────────────────────────
-  // @param options {{ query?, category?, agency?, minRating?, archived? }}
+  // @param options {{ query?, category?, agency?, minRating?, archived?, isNew? }}
   // 반환: Actor[]
   getActors: (options) =>
     ipcRenderer.invoke('get-actors', options),
+
+  // ── 새 배우 카운트 조회 (is_new=1) ───────────────────────────
+  // 반환: { count: number }
+  getNewActorCount: () =>
+    ipcRenderer.invoke('get-new-actor-count'),
+
+  // ── 새 배우 New 상태 해제 ─────────────────────────────────────
+  // @param actorId {number}
+  // 반환: { success: true }
+  clearActorNew: (actorId) =>
+    ipcRenderer.invoke('clear-actor-new', actorId),
 
   // ── 배우 상세 조회 ────────────────────────────────────────────
   // @param id {number}

@@ -3,10 +3,12 @@
  * 배우 목록 (좌측 패널)
  *
  * Props:
- *   actors     {Actor[]}       - 표시할 배우 배열 (video_count, copy_count, open_count 포함)
- *   selectedId {number|null}   - 현재 선택된 배우 id
- *   onSelect   {Function}      - 배우 선택 콜백 (actor)
- *   loading    {boolean}
+ *   actors         {Actor[]}       - 표시할 배우 배열 (video_count, copy_count, open_count 포함)
+ *   selectedId     {number|null}   - 현재 선택된 배우 id
+ *   onSelect       {Function}      - 배우 선택 콜백 (actor)
+ *   loading        {boolean}
+ *   onConfirmNew   {Function|null} - 제공 시 "확인" 버튼 표시 (actorId) => void
+ *   onDismissNew   {Function|null} - 제공 시 "무시" 버튼 표시 (actorId) => void
  */
 import ActorImage from '../common/ActorImage.jsx'
 
@@ -25,7 +27,7 @@ function TagList({ tags, max = 3 }) {
   )
 }
 
-export default function ActorList({ actors, selectedId, onSelect, loading }) {
+export default function ActorList({ actors, selectedId, onSelect, loading, onConfirmNew, onDismissNew }) {
   if (loading) {
     return <div className="actor-list actor-list--loading">불러오는 중…</div>
   }
@@ -38,6 +40,8 @@ export default function ActorList({ actors, selectedId, onSelect, loading }) {
       </div>
     )
   }
+
+  const showNewActions = typeof onConfirmNew === 'function' || typeof onDismissNew === 'function'
 
   return (
     <ul className="actor-list" role="listbox" aria-label="배우 목록">
@@ -101,6 +105,32 @@ export default function ActorList({ actors, selectedId, onSelect, loading }) {
                 </span>
               )}
             </div>
+
+            {/* 새 배우 탭 액션 버튼 */}
+            {showNewActions && (
+              <div className="actor-list__new-actions" onClick={(e) => e.stopPropagation()}>
+                {onConfirmNew && (
+                  <button
+                    type="button"
+                    className="actor-list__new-btn actor-list__new-btn--confirm"
+                    title="New 상태 해제 — 배우 목록에 유지"
+                    onClick={() => onConfirmNew(actor.id)}
+                  >
+                    확인
+                  </button>
+                )}
+                {onDismissNew && (
+                  <button
+                    type="button"
+                    className="actor-list__new-btn actor-list__new-btn--dismiss"
+                    title="New 상태 해제 + 아카이브 — 배우 목록에서 숨김"
+                    onClick={() => onDismissNew(actor.id)}
+                  >
+                    무시
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </li>
       ))}

@@ -55,6 +55,7 @@ export default function App() {
   const [checkedIds,        setCheckedIds]        = useState(new Set())
   const [folderRefreshKey,  setFolderRefreshKey]  = useState(0)
   const [newCount,          setNewCount]          = useState(0)
+  const [newActorCount,     setNewActorCount]     = useState(0)
   const [isAutoScanning,    setIsAutoScanning]    = useState(false)
 
   // ── NEW 카운트 갱신 ───────────────────────────────────────────
@@ -65,10 +66,19 @@ export default function App() {
     } catch { /* 조용히 무시 */ }
   }, [])
 
+  // ── 새 배우 카운트 갱신 ──────────────────────────────────────
+  const refreshNewActorCount = useCallback(async () => {
+    try {
+      const { count } = await window.api.getNewActorCount()
+      setNewActorCount(count)
+    } catch { /* 조용히 무시 */ }
+  }, [])
+
   // 앱 시작 시 DB 조회 + NEW count만 (스캔 없음)
   useEffect(() => {
     refreshNewCount()
-  }, [refreshNewCount])
+    refreshNewActorCount()
+  }, [refreshNewCount, refreshNewActorCount])
 
   // ── 폴더 선택 ─────────────────────────────────────────────────
   const handleSelectFolder = async () => {
@@ -102,6 +112,7 @@ export default function App() {
         await refresh()
         const { count: nextNew } = await window.api.getNewCount()
         setNewCount(nextNew)
+        await refreshNewActorCount()
         setFolderRefreshKey((k) => k + 1)
         setScanInfo({ totalFiles, missingCount, scannedFolder: '전체 라이브러리', newAdded: Math.max(0, nextNew - prevNew) })
       } catch (e) { setError('전체 스캔 중 오류: ' + e.message) }
@@ -114,6 +125,7 @@ export default function App() {
       await refresh()
       const { count: nextNew } = await window.api.getNewCount()
       setNewCount(nextNew)
+      await refreshNewActorCount()
       setFolderRefreshKey((k) => k + 1)
       changeFolder(result.scannedFolder)
       setScanInfo({ ...result, newAdded: Math.max(0, nextNew - prevNew) })
@@ -237,7 +249,7 @@ export default function App() {
         <div className="app-tab-switcher">
           {[
             { key: 'library',         label: '영상 관리' },
-            { key: 'actors',          label: '배우 관리' },
+            { key: 'actors',          label: newActorCount > 0 ? `배우 관리 (${newActorCount})` : '배우 관리' },
             { key: 'recommendations', label: '🎬 추천·탐색' },
             { key: 'dashboard',       label: '대시보드' },
             { key: 'storage',         label: '💾 저장소' },
@@ -351,6 +363,11 @@ export default function App() {
                   {(scanInfo.newAdded ?? 0) > 0 && (
                     <span style={{ color: '#22c55e', marginLeft: 8 }}>
                       · NEW <strong>{scanInfo.newAdded}</strong>개 발견
+                    </span>
+                  )}
+                  {(scanInfo.newActors ?? 0) > 0 && (
+                    <span style={{ color: '#22c55e', marginLeft: 8 }}>
+                      · 새 배우 <strong>{scanInfo.newActors}</strong>명 발견
                     </span>
                   )}
                   {(scanInfo.newAdded ?? 0) === 0 && scanInfo.scannedFolder !== '배우-영상 동기화' && (

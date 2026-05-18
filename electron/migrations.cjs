@@ -294,6 +294,30 @@ const MIGRATIONS = [
       `)
     },
   },
+
+  {
+    version: '014_add_actor_is_new',
+    description: 'actors에 is_new, first_seen_scan_id, last_seen_scan_id 컬럼 추가 (New Actors 흐름)',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(actors)').all().map((c) => c.name)
+
+      const additions = [
+        { name: 'is_new',             def: 'INTEGER DEFAULT 0' },
+        { name: 'first_seen_scan_id', def: "TEXT DEFAULT ''" },
+        { name: 'last_seen_scan_id',  def: "TEXT DEFAULT ''" },
+      ]
+
+      for (const col of additions) {
+        if (!cols.includes(col.name)) {
+          db.exec(`ALTER TABLE actors ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_actors_is_new ON actors (is_new);
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

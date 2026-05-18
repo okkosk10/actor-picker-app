@@ -24,6 +24,10 @@ export default function ActorsPage() {
   const [showArchived, setShowArchived] = useState(false)
   const [syncStatus,   setSyncStatus]   = useState(null)
 
+  // ── 새 배우 탭 ──────────────────────────────────────────────
+  const [actorTabMode,   setActorTabMode]   = useState('all')   // 'all' | 'new'
+  const [newActorCount,  setNewActorCount]  = useState(0)
+
   const [selectedActor, setSelectedActor] = useState(null)
   const [actorDetail,   setActorDetail]   = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -32,8 +36,16 @@ export default function ActorsPage() {
   // 디바운스 타이머
   const debounceRef = useRef(null)
 
+  // ── 새 배우 카운트 갱신 ─────────────────────────────────────
+  const refreshNewActorCount = useCallback(async () => {
+    try {
+      const { count } = await window.api.getNewActorCount()
+      setNewActorCount(count)
+    } catch { /* 조용히 무시 */ }
+  }, [])
+
   // ── 배우 목록 조회 ──────────────────────────────────────────
-  const fetchActors = useCallback(async (q, flt, arch) => {
+  const fetchActors = useCallback(async (q, flt, arch, tabMode) => {
     setLoading(true)
     try {
       const result = await window.api.getActors({
@@ -44,6 +56,7 @@ export default function ActorsPage() {
         tag:           flt.tag        || undefined,
         minVideoCount: flt.minVideoCount || undefined,
         sortBy:        flt.sortBy,
+        isNew:         tabMode === 'new' ? true : undefined,
       })
       setActors(result)
     } catch (e) {
@@ -53,14 +66,19 @@ export default function ActorsPage() {
     }
   }, [])
 
-  // 검색어/필터 변경 시 디바운스 조회
+  // 검색어/필터/탭 변경 시 디바운스 조회
   useEffect(() => {
     clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
-      fetchActors(query, filters, showArchived)
+      fetchActors(query, filters, showArchived, actorTabMode)
     }, 300)
     return () => clearTimeout(debounceRef.current)
-  }, [query, filters, showArchived, fetchActors])
+  }, [query, filters, showArchived, actorTabMode, fetchActors])
+
+  // 초기 + 탭 마운트 시 새 배우 카운트 조회
+  useEffect(() => {
+    refreshNewActorCount()
+  }, [refreshNewActorCount])
 
   // ── 필터 패치 ───────────────────────────────────────────────
   const handleFiltersChange = (patch) => {
@@ -92,7 +110,8 @@ export default function ActorsPage() {
 
   // ── 저장/생성 완료 ──────────────────────────────────────────
   const handleSaved = async (savedActor) => {
-    await fetchActors(query, filters, showArchived)
+    await fetchActors(query, filters, showArchived, actorTabMode)
+    await refreshNewActorCount()
     setIsCreating(false)
     setSelectedActor(savedActor)
     setDetailLoading(true)
@@ -108,7 +127,8 @@ export default function ActorsPage() {
 
   // ── 아카이브/복구 완료 ──────────────────────────────────────
   const handleArchived = async (updated) => {
-    await fetchActors(query, filters, showArchived)
+    await fetchActors(query, filters, showArchived, actorTabMode)
+    await refreshNewActorCount()
     setSelectedActor(updated)
     setActorDetail((prev) =>
       prev ? { ...prev, actor: updated } : { actor: updated, videos: [], stats: {}, topVideos: [] }
@@ -121,7 +141,8 @@ export default function ActorsPage() {
     try {
       const result = await window.api.syncActorVideos()
       setSyncStatus(`완료 — ${result.synced}개 영상 동기화됨`)
-      await fetchActors(query, filters, showArchived)
+      await fetchActors(query, filters, showArchived, actorTabMode)
+      await refreshNewActorCount()
       if (selectedActor) {
         const detail = await window.api.getActorDetail(selectedActor.id)
         setActorDetail(detail)
@@ -131,6 +152,7 @@ export default function ActorsPage() {
     }
     setTimeout(() => setSyncStatus(null), 4000)
   }
+
   // ── 고아 배우 정리 ───────────────────────────────────────────
   const handleCleanupOrphans = () => {
     Modal.confirm({
@@ -147,7 +169,8 @@ export default function ActorsPage() {
             const names = result.deletedActors.slice(0, 10).join(', ')
             const extra = result.deletedActors.length > 10 ? ` 외 ${result.deletedActors.length - 10}명` : ''
             setSyncStatus(`고아 배우 ${result.deletedCount}명 정리 완료: ${names}${extra}`)
-            await fetchActors(query, filters, showArchived)
+            await fetchActors(query, filters, showArchived, actorTabMode)
+            await refreshNewActorCount()
           }
         } catch (e) {
           setSyncStatus('고아 배우 정리 실패: ' + e.message)
@@ -156,6 +179,42 @@ export default function ActorsPage() {
       },
     })
   }
+
+  // ── 새 배우 "확인" 액션 (is_new 해제, 목록 유지) ─────────────
+  const handleConfirmNew = useCallback(async (actorId) => {
+    try {
+      await window.api.clearActorNew(actorId)
+      await fetchActors(query, filters, showArchived, actorTabMode)
+      await refreshNewActorCount()
+      // 상세 패널이 열려 있으면 업데이트
+      if (selectedActor?.id === actorId) {
+        const detail = await window.api.getActorDetail(actorId)
+        setActorDetail(detail)
+        setSelectedActor((prev) => prev ? { ...prev, is_new: 0 } : prev)
+      }
+    } catch (e) {
+      setSyncStatus('확인 처리 실패: ' + e.message)
+      setTimeout(() => setSyncStatus(null), 4000)
+    }
+  }, [query, filters, showArchived, actorTabMode, fetchActors, refreshNewActorCount, selectedActor])
+
+  // ── 새 배우 "무시" 액션 (is_new 해제 + 아카이브) ─────────────
+  const handleDismissNew = useCallback(async (actorId) => {
+    try {
+      await window.api.clearActorNew(actorId)
+      await window.api.archiveActor(actorId)
+      await fetchActors(query, filters, showArchived, actorTabMode)
+      await refreshNewActorCount()
+      if (selectedActor?.id === actorId) {
+        setSelectedActor(null)
+        setActorDetail(null)
+      }
+    } catch (e) {
+      setSyncStatus('무시 처리 실패: ' + e.message)
+      setTimeout(() => setSyncStatus(null), 4000)
+    }
+  }, [query, filters, showArchived, actorTabMode, fetchActors, refreshNewActorCount, selectedActor])
+
   const showPanel   = isCreating || selectedActor !== null
   const panelActor  = isCreating ? null : (actorDetail?.actor ?? selectedActor)
   const panelVideos = actorDetail?.videos   ?? []
@@ -164,6 +223,33 @@ export default function ActorsPage() {
 
   return (
     <div className="actors-page">
+      {/* ── 새 배우 탭 바 ───────────────────────────────────── */}
+      <div className="actor-tab-bar" role="tablist" aria-label="배우 탭">
+        {[
+          { key: 'all', label: '전체 배우' },
+          {
+            key:   'new',
+            label: newActorCount > 0 ? `새 배우 (${newActorCount})` : '새 배우',
+            badge: newActorCount > 0,
+          },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={actorTabMode === tab.key}
+            className={[
+              'tab-btn',
+              actorTabMode === tab.key ? 'tab-btn--active' : '',
+              tab.key === 'new' && tab.badge ? 'tab-btn--new-badge' : '',
+            ].filter(Boolean).join(' ')}
+            onClick={() => setActorTabMode(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <ActorToolbar
         query={query}
         onQueryChange={setQuery}
@@ -186,6 +272,9 @@ export default function ActorsPage() {
           <div className="actors-page__list-header">
             <span className="actors-page__list-count">
               {actors.length}명
+              {actorTabMode === 'new' && (
+                <span className="actors-page__new-hint"> — 스캔에서 새로 발견됨</span>
+              )}
             </span>
           </div>
           <ActorList
@@ -193,6 +282,8 @@ export default function ActorsPage() {
             selectedId={selectedActor?.id ?? null}
             onSelect={handleSelect}
             loading={loading}
+            onConfirmNew={actorTabMode === 'new' ? handleConfirmNew : undefined}
+            onDismissNew={actorTabMode === 'new' ? handleDismissNew : undefined}
           />
         </div>
 

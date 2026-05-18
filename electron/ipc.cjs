@@ -121,26 +121,41 @@ function buildFolderFilter(currentFolder) {
  * @param {number}  videoId
  * @param {string}  actorName  - "(배우1, 배우2)" 또는 "배우1, 배우2" 형태
  */
-function syncVideoActors(db, videoId, actorName) {
+/**
+ * video_id 기준으로 actors / video_actors를 동기화한다.
+ * scanId: 현재 스캔 세션 식별자 (타임스탬프 문자열)
+ * 반환: { newActorIds: number[] } — 이번 스캔에서 새로 생성된 배우 ID 목록
+ */
+function syncVideoActors(db, videoId, actorName, scanId) {
   const raw   = actorName.replace(/^\(|\)$/g, '').trim()
   const names = raw.split(',').map((n) => n.trim()).filter((n) => n.length > 0)
-  if (names.length === 0) return
+  if (names.length === 0) return { newActorIds: [] }
 
-  const insertActor  = db.prepare('INSERT INTO actors (name) VALUES (?) ON CONFLICT(name) DO NOTHING')
-  const getActor     = db.prepare('SELECT id FROM actors WHERE name = ?')
-  const deleteLinks  = db.prepare('DELETE FROM video_actors WHERE video_id = ?')
-  const insertLink   = db.prepare(`
+  // 신규 배우: is_new=1, first_seen_scan_id=scanId 설정
+  // 기존 배우: last_seen_scan_id만 갱신 (is_new 상태 보존 — 이미 0이면 0 유지)
+  const upsertActor = db.prepare(`
+    INSERT INTO actors (name, is_new, first_seen_scan_id, last_seen_scan_id)
+    VALUES (?, 1, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET last_seen_scan_id = excluded.last_seen_scan_id
+  `)
+  const findActor   = db.prepare('SELECT id FROM actors WHERE name = ?')
+  const deleteLinks = db.prepare('DELETE FROM video_actors WHERE video_id = ?')
+  const insertLink  = db.prepare(`
     INSERT INTO video_actors (video_id, actor_id, is_main, order_index)
     VALUES (?, ?, ?, ?)
   `)
 
+  const newActorIds = []
   deleteLinks.run(videoId)
   names.forEach((name, idx) => {
-    insertActor.run(name)
-    const actor = getActor.get(name)
+    const before = findActor.get(name)          // INSERT 전 존재 여부 확인
+    upsertActor.run(name, scanId, scanId)
+    const actor = findActor.get(name)
     if (!actor) return
+    if (!before) newActorIds.push(actor.id)     // 이번 스캔에서 새로 생성됨
     insertLink.run(videoId, actor.id, idx === 0 ? 1 : 0, idx)
   })
+  return { newActorIds }
 }
 
 /**
@@ -283,15 +298,22 @@ function registerIpcHandlers() {
 
     // ② actors / video_actors 동기화
     // is_actor_manual = 1인 영상은 수동 수정된 배우명을 유지한다 → 파일명 파싱으로 덮어쓰지 않음
+    const scanId = Date.now().toString()
+    let newActorCount = 0
     const filesWithActor = files.filter((f) => f.actor_name && f.actor_name.trim())
     if (filesWithActor.length > 0) {
-      const getVideoRow = db.prepare('SELECT id, is_actor_manual FROM videos WHERE file_path = ?')
+      const getVideoRow   = db.prepare('SELECT id, is_actor_manual FROM videos WHERE file_path = ?')
+      const newActorIdSet = new Set()
       db.transaction(() => {
         for (const file of filesWithActor) {
           const row = getVideoRow.get(file.file_path)
-          if (row && !row.is_actor_manual) syncVideoActors(db, row.id, file.actor_name)
+          if (row && !row.is_actor_manual) {
+            const { newActorIds } = syncVideoActors(db, row.id, file.actor_name, scanId)
+            newActorIds.forEach((id) => newActorIdSet.add(id))
+          }
         }
       })()
+      newActorCount = newActorIdSet.size
     }
 
     // ③ 중복 병합: 같은 file_identity를 가진 row가 2개 이상이면 master 선정 후 나머지 duplicate 처리
@@ -428,6 +450,7 @@ function registerIpcHandlers() {
       totalFiles:    files.length,
       missingCount,
       scannedFolder: folderPath,
+      newActors:     newActorCount,
     }
   })
 
@@ -766,6 +789,25 @@ function registerIpcHandlers() {
       FROM   videos
       WHERE  is_new  = 1
         AND  status NOT IN ('missing', 'deleted', 'duplicate')
+    `).get()
+    return { count: row.count }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 새 배우 카운트 조회 (get-new-actor-count)
+  //
+  // is_new = 1 인 배우 수를 반환한다. (탭 배지 숫자용)
+  // 아카이브된 배우는 제외한다.
+  //
+  // 반환: { count: number }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-new-actor-count', async () => {
+    const db  = getDb()
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM   actors
+      WHERE  is_new     = 1
+        AND  is_archived = 0
     `).get()
     return { count: row.count }
   })
@@ -1423,6 +1465,11 @@ function registerIpcHandlers() {
     conditions.push('a.is_archived = ?')
     params.push(archived)
 
+    // 신규 배우 필터 (New Actors 탭 — isNew=true 일 때만)
+    if (options.isNew === true) {
+      conditions.push('a.is_new = 1')
+    }
+
     // 통합 검색 (이름 + 별칭 + 태그 + 메모 + 소속사)
     if (options.query && options.query.trim()) {
       const q = '%' + escapeLike(options.query.trim()) + '%'
@@ -2040,6 +2087,26 @@ function registerIpcHandlers() {
       UPDATE actors SET is_archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
     `).run(id)
 
+    return { success: true }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 새 배우 New 상태 해제 (clear-actor-new)
+  //
+  // is_new = 1 → 0 으로 변경한다.
+  // "확인" 또는 "무시" 액션 시 호출.
+  //
+  // @param actorId {number}
+  // 반환: { success: true }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('clear-actor-new', async (_event, actorId) => {
+    const db = getDb()
+    if (typeof actorId !== 'number' || actorId <= 0) {
+      throw new Error(`유효하지 않은 actorId: ${actorId}`)
+    }
+    db.prepare(`
+      UPDATE actors SET is_new = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(actorId)
     return { success: true }
   })
 
