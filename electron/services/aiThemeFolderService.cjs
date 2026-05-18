@@ -213,7 +213,21 @@ async function generateAiThemeFolders(videos, options = {}) {
   const slimCandidates = candidates.map(({ id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore }) => ({
     id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore
   }))
-  const userPromptBase = `다음은 내 영상 라이브러리의 상위 ${slimCandidates.length}개 후보입니다. 특집 폴더를 제안해주세요.\n\n${JSON.stringify(slimCandidates)}`
+
+  // 문자 수 기반 동적 트런케이션
+  // 일본어 1자 ≈ 1토큰 → 20,000자 이하 유지 시 후보 토큰 ≤ 20,000
+  // 시스템 프롬프트 ~2,000토큰 + 후보 ≤ 20,000 = 총 ≤ 22,000토큰 (30k 한도 이내)
+  const CANDIDATE_CHAR_BUDGET = 20000
+  const cappedCandidates = []
+  let charCount = 2 // JSON 배열 [] 포함
+  for (const c of slimCandidates) {
+    const s = JSON.stringify(c)
+    if (charCount + s.length + 1 > CANDIDATE_CHAR_BUDGET) break
+    cappedCandidates.push(c)
+    charCount += s.length + 1
+  }
+
+  const userPromptBase = `다음은 내 영상 라이브러리의 상위 ${cappedCandidates.length}개 후보입니다. 특집 폴더를 제안해주세요.\n\n${JSON.stringify(cappedCandidates)}`
   const userPrompt = customPrompt
     ? `[사용자 요청] ${customPrompt}\n\n${userPromptBase}`
     : userPromptBase
