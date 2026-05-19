@@ -12,6 +12,7 @@
 const path = require('path')
 const { getOpenAIClient }     = require('./openaiClient.cjs')
 const { buildThemeCandidates } = require('./themeCandidateService.cjs')
+const { parseTargetSizeGB, redistributeBySize: _redistributeBySize } = require('./themeSizeHelper.cjs')
 
 // ─────────────────────────────────────────────────────────────
 // 폴더명 정제
@@ -48,6 +49,21 @@ function sanitizeFolderName(name) {
   const mm    = String(today.getMonth() + 1).padStart(2, '0')
   const dd    = String(today.getDate()).padStart(2, '0')
   return `${s}_${yyyy}${mm}${dd}`
+}
+
+// ─────────────────────────────────────────────────────────────
+// 용량 기준 재분배 래퍼 (sanitizeFolderName 주입)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * redistributeBySize에 이 파일의 sanitizeFolderName을 주입한 래퍼.
+ * @param {object[]} themes
+ * @param {Map}      videoMap
+ * @param {number}   targetSizeGB
+ * @returns {object[]}
+ */
+function redistributeBySize(themes, videoMap, targetSizeGB) {
+  return _redistributeBySize(themes, videoMap, targetSizeGB, sanitizeFolderName)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -138,6 +154,7 @@ function validateAiThemeFolders(themeFolders, allVideos, videoMap) {
  */
 async function generateAiThemeFolders(videos, options = {}) {
   const { candidateLimit = 120, customPrompt = '', priorityIds = new Set(), forcedTheme = null } = options
+  const targetSizeGB = parseTargetSizeGB(customPrompt)
 
   // 1. 후보 계산
   const candidates = buildThemeCandidates(videos, candidateLimit, priorityIds)
@@ -190,7 +207,11 @@ async function generateAiThemeFolders(videos, options = {}) {
 - 전체 테마에 걸쳐 가능한 다양한 배우, 태그, 폴더 계열이 골고루 나오도록 하세요.
 - 성인물 직접 묘사는 피하고 앱 내부 정리용 테마/태그 수준으로 표현하세요.
 - [사용자 요청]이 있으면 그 내용을 최우선으로 반영하세요. 요청에 명시된 배우나 태그가 반드시 포함되어야 합니다.
-- **중요**: '싹다', '모두', '전부' 등 전체 포함 요청이 있으면 조건에 맞는 영상을 최대한 하나의 큰 폴더에 모아 주세요. '배우당 N개씩' 요청은 배우마다 별도 폴더를 만들지 말고, 하나의 폴더 안에 각 배우에서 N개씩 골라 포함하세요.
+- **중요**: '싹다', '모두', '전부' 등 전체 포함 요청이 있으면 조건에 맞는 영상을 최대한 하나의 큰 폴더에 모아 주세요. '배우당 N개씩' 요청은 배우마다 별도 폴더를 만들지 말고, 하나의 폴더 안에 각 배우에서 N개씩 골라 포함하세요.${
+    targetSizeGB
+      ? `\n- **용량 기준 묶기 (최우선)**: 사용자가 ${targetSizeGB}GB 단위 묶기를 요청했습니다. 각 themeFolder의 videoIds에 포함된 영상들의 fileSizeGB 합계(totalSizeGB)가 반드시 ${targetSizeGB}GB 이하가 되어야 합니다.\n  - 가능하면 각 폴더를 ${targetSizeGB}GB의 80~100% 범위(${(targetSizeGB * 0.8).toFixed(1)}~${targetSizeGB}GB)로 채우세요.\n  - 테마 일관성보다 용량 제한이 우선입니다. 같은 폴더에 넣을 영상을 고를 때 fileSizeGB 합계를 반드시 확인하세요.\n  - 같은 videoId 중복 금지.\n  - 용량을 맞추기 어려우면 마지막 폴더만 작아도 됩니다.\n  - 각 폴더의 videoIds 개수 상한(30개)보다 용량 제한을 우선하세요.`
+      : ''
+  }
 - **출력 규칙**: 반드시 JSON 객체 하나만 반환하세요. 그 외 어떤 텍스트(설명, 주석, 마크다운)도 절대 출력하지 마세요.
 
 응답 형식 (JSON 객체 하나만, 다른 텍스트 없이):
@@ -210,8 +231,8 @@ async function generateAiThemeFolders(videos, options = {}) {
 }`
 
   // AI 테마 분류에 필요한 필드만 남겨 토큰 절감 (watchScore, copyScore 등 내부 점수 제거)
-  const slimCandidates = candidates.map(({ id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore }) => ({
-    id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore
+  const slimCandidates = candidates.map(({ id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore, fileSizeGB }) => ({
+    id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore, fileSizeGB
   }))
 
   // 문자 수 기반 동적 트런케이션
@@ -313,6 +334,11 @@ async function generateAiThemeFolders(videos, options = {}) {
     return { success: false, error: 'AI 응답에서 유효한 테마를 찾을 수 없습니다.' }
   }
 
+  // 6. 용량 기준 사후 재분배 (targetSizeGB가 있을 때만)
+  if (targetSizeGB) {
+    themes = redistributeBySize(themes, videoMap, targetSizeGB)
+  }
+
   // videoMap을 plain object로 변환해 IPC 직렬화 가능하게 반환
   const videoMapObj = {}
   for (const [id, dto] of videoMap) videoMapObj[id] = dto
@@ -320,4 +346,4 @@ async function generateAiThemeFolders(videos, options = {}) {
   return { success: true, themes, candidateCount: candidates.length, videoMap: videoMapObj }
 }
 
-module.exports = { generateAiThemeFolders, sanitizeFolderName, validateAiThemeFolders }
+module.exports = { generateAiThemeFolders, sanitizeFolderName, validateAiThemeFolders, parseTargetSizeGB, redistributeBySize }
