@@ -31,6 +31,7 @@ const { parseFileName }       = require('./parser.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, createMtpThemeBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
 const { testOpenAIConnection }   = require('./services/openaiClient.cjs')
 const { generateAiThemeFolders } = require('./services/aiThemeFolderService.cjs')
+const { parseTargetSizeGB }      = require('./services/themeSizeHelper.cjs')
 const { createThemeFolders }     = require('./services/themeCopyService.cjs')
 const { askAiChatRecommend }     = require('./services/aiChatRecommendService.cjs')
 const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
@@ -2815,11 +2816,22 @@ function registerIpcHandlers() {
 
       // customPrompt에 언급된 배우/키워드와 일치하는 영상을 우선 후보에 강제 포함
       // → 점수가 낮아도 후보 안에 반드시 들어가게 함
+
+      // 용량 단위·동사·조사 등 콘텐츠 검색과 무관한 불용어
+      // → priorityIds 오염 방지 ("기가로", "만들어달라" 등이 태그 검색에 쓰이지 않도록)
+      const SIZE_STOP_WORDS = new Set([
+        '기가', '기가로', '기가바이트', '기가씩', '이하', '이상', '미만',
+        '단위', '폴더', '만들어', '달라', '나눠', '묶어', '주세요',
+        '만들어줘', '만들어달라', '나눠줘', '묶어줘', '넣기', '핸드폰',
+        '좋게', '좋은', '작품', '영상', '동영상', '전체', '모두', '다',
+      ])
+
       const priorityIds = new Set()
       if (customPrompt) {
-        // 2자 이상 한글·일본어(히라가나/가타카나/한자) 단어 추출
+        // 2자 이상 한글·일본어(히라가나/가타카나/한자) 단어 추출 + 불용어 제거
         const keywords = (customPrompt.match(/[\uAC00-\uD7A3\u3040-\u30FF\u4E00-\u9FFF]{2,}/g) ?? [])
           .map(k => k.toLowerCase())
+          .filter(k => !SIZE_STOP_WORDS.has(k))
         if (keywords.length > 0) {
           for (const v of filteredVideos) {
             const searchStr = [v.actors, ...v.tags].join(' ').toLowerCase()
@@ -2831,6 +2843,16 @@ function registerIpcHandlers() {
       }
       if (forcedTheme) {
         for (const id of forcedTheme.videoIds) priorityIds.add(id)
+      }
+
+      // ── 용량 단위 묶기 요청 + 콘텐츠 키워드 매칭 영상이 있으면
+      //    filteredVideos를 해당 영상으로만 좁히고 candidateLimit을 전체로 확장
+      // 이렇게 해야 "미약 구속" 영상이 많아도 cappedCandidates 문자 예산 초과로
+      // 일부가 잘려 AI에 전달되지 않는 문제를 방지할 수 있다.
+      const targetSizeForFilter = parseTargetSizeGB(customPrompt)
+      if (targetSizeForFilter && priorityIds.size >= 2 && !forcedTheme) {
+        filteredVideos = filteredVideos.filter(v => priorityIds.has(v.id))
+        candidateLimit = filteredVideos.length
       }
 
       return await generateAiThemeFolders(filteredVideos, {
