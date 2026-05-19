@@ -209,7 +209,7 @@ async function generateAiThemeFolders(videos, options = {}) {
 - [사용자 요청]이 있으면 그 내용을 최우선으로 반영하세요. 요청에 명시된 배우나 태그가 반드시 포함되어야 합니다.
 - **중요**: '싹다', '모두', '전부' 등 전체 포함 요청이 있으면 조건에 맞는 영상을 최대한 하나의 큰 폴더에 모아 주세요. '배우당 N개씩' 요청은 배우마다 별도 폴더를 만들지 말고, 하나의 폴더 안에 각 배우에서 N개씩 골라 포함하세요.${
     targetSizeGB
-      ? `\n- **용량 기준 묶기 (최우선)**: 사용자가 ${targetSizeGB}GB 단위 묶기를 요청했습니다. 각 themeFolder의 videoIds에 포함된 영상들의 fileSizeGB 합계(totalSizeGB)가 반드시 ${targetSizeGB}GB 이하가 되어야 합니다.\n  - 가능하면 각 폴더를 ${targetSizeGB}GB의 80~100% 범위(${(targetSizeGB * 0.8).toFixed(1)}~${targetSizeGB}GB)로 채우세요.\n  - 테마 일관성보다 용량 제한이 우선입니다. 같은 폴더에 넣을 영상을 고를 때 fileSizeGB 합계를 반드시 확인하세요.\n  - 같은 videoId 중복 금지.\n  - 용량을 맞추기 어려우면 마지막 폴더만 작아도 됩니다.\n  - 각 폴더의 videoIds 개수 상한(30개)보다 용량 제한을 우선하세요.`
+      ? `\n- **용량 기준 묶기 (최우선)**: 사용자가 ${targetSizeGB}GB 단위 묶기를 요청했습니다.\n  - **중요**: ${targetSizeGB}는 영상 개수(개수)가 아니라 GB 용량입니다. videoIds를 선택할 때 각 영상의 fileSizeGB를 직접 합산해서 총합이 ${targetSizeGB}GB 이하가 되도록 하세요.\n  - 각 themeFolder의 videoIds에 포함된 영상들의 fileSizeGB 합계가 반드시 ${targetSizeGB}GB 이하가 되어야 합니다.\n  - 가능하면 각 폴더를 ${targetSizeGB}GB의 80~100% 범위(${(targetSizeGB * 0.8).toFixed(1)}~${targetSizeGB}GB)로 채우세요.\n  - 용량 초과가 될 것 같으면 여러 개의 themeFolder로 나눠서 반환하세요. 하나의 폴더에 모두 넣으려 하지 마세요.\n  - 테마 일관성보다 용량 제한이 우선입니다.\n  - 같은 videoId 중복 금지.\n  - 용량을 맞추기 어려우면 마지막 폴더만 작아도 됩니다.`
       : ''
   }
 - **출력 규칙**: 반드시 JSON 객체 하나만 반환하세요. 그 외 어떤 텍스트(설명, 주석, 마크다운)도 절대 출력하지 마세요.
@@ -336,7 +336,19 @@ async function generateAiThemeFolders(videos, options = {}) {
 
   // 6. 용량 기준 사후 재분배 (targetSizeGB가 있을 때만)
   if (targetSizeGB) {
+    // 첫 번째 테마의 첫 5개 비디오 fileSize 샘플 로그
+    const sampleTheme = themes[0]
+    if (sampleTheme) {
+      const sampleIds = sampleTheme.videoIds.slice(0, 5)
+      const sampleSizes = sampleIds.map(id => {
+        const v = videoMap.get(id)
+        return `id=${id} fileSize=${v?.fileSize}`
+      })
+      console.log(`[aiThemeFolderService] 첫 테마 샘플 fileSize:`, sampleSizes)
+    }
+    console.log(`[aiThemeFolderService] redistributeBySize 호출: targetSizeGB=${targetSizeGB}, 테마 수=${themes.length}, 테마별 totalSizeGB=${themes.map(t => t.totalSizeGB).join(',')}`)
     themes = redistributeBySize(themes, videoMap, targetSizeGB)
+    console.log(`[aiThemeFolderService] redistributeBySize 완료: 결과 테마 수=${themes.length}, 테마별 totalSizeGB=${themes.map(t => t.totalSizeGB).join(',')}`)
   }
 
   // videoMap을 plain object로 변환해 IPC 직렬화 가능하게 반환
