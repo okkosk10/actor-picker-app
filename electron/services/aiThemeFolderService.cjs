@@ -209,7 +209,13 @@ async function generateAiThemeFolders(videos, options = {}) {
 - [사용자 요청]이 있으면 그 내용을 최우선으로 반영하세요. 요청에 명시된 배우나 태그가 반드시 포함되어야 합니다.
 - **중요**: '싹다', '모두', '전부' 등 전체 포함 요청이 있으면 조건에 맞는 영상을 최대한 하나의 큰 폴더에 모아 주세요. '배우당 N개씩' 요청은 배우마다 별도 폴더를 만들지 말고, 하나의 폴더 안에 각 배우에서 N개씩 골라 포함하세요.${
     targetSizeGB
-      ? `\n- **용량 기준 묶기 (최우선)**: 사용자가 ${targetSizeGB}GB 단위 묶기를 요청했습니다.\n  - **중요**: ${targetSizeGB}는 영상 개수(개수)가 아니라 GB 용량입니다. videoIds를 선택할 때 각 영상의 fileSizeGB를 직접 합산해서 총합이 ${targetSizeGB}GB 이하가 되도록 하세요.\n  - 각 themeFolder의 videoIds에 포함된 영상들의 fileSizeGB 합계가 반드시 ${targetSizeGB}GB 이하가 되어야 합니다.\n  - 가능하면 각 폴더를 ${targetSizeGB}GB의 80~100% 범위(${(targetSizeGB * 0.8).toFixed(1)}~${targetSizeGB}GB)로 채우세요.\n  - 용량 초과가 될 것 같으면 여러 개의 themeFolder로 나눠서 반환하세요. 하나의 폴더에 모두 넣으려 하지 마세요.\n  - 테마 일관성보다 용량 제한이 우선입니다.\n  - 같은 videoId 중복 금지.\n  - 용량을 맞추기 어려우면 마지막 폴더만 작아도 됩니다.`
+      ? (() => {
+          const wantsOne = /하나[의\s]*폴더|폴더[를을\s]*하나|한\s*개[의\s]*폴더|하나로\s*만|하나짜리/.test(customPrompt || '')
+          if (wantsOne) {
+            return `\n- **단일 폴더 + 용량 기준 큐레이션 (최우선)**: 사용자가 ${targetSizeGB}GB짜리 폴더 하나를 요청했습니다.\n  - themeFolders는 반드시 **정확히 1개**만 반환하세요. Part 2, 파트2 등 추가 폴더 절대 금지.\n  - 총 후보 영상이 ${targetSizeGB}GB를 초과하더라도 분할하지 말고, themeScore·rating 높은 순으로 추려서 합계가 ${targetSizeGB}GB 이하가 되도록 선별하세요.\n  - 가능하면 ${(targetSizeGB * 0.8).toFixed(1)}~${targetSizeGB}GB 범위를 채우세요.\n  - 같은 videoId 중복 금지.`
+          }
+          return `\n- **용량 기준 묶기 (최우선)**: 사용자가 ${targetSizeGB}GB 단위 묶기를 요청했습니다.\n  - **중요**: ${targetSizeGB}는 영상 개수(개수)가 아니라 GB 용량입니다. videoIds를 선택할 때 각 영상의 fileSizeGB를 직접 합산해서 총합이 ${targetSizeGB}GB 이하가 되도록 하세요.\n  - 각 themeFolder의 videoIds에 포함된 영상들의 fileSizeGB 합계가 반드시 ${targetSizeGB}GB 이하가 되어야 합니다.\n  - 가능하면 각 폴더를 ${targetSizeGB}GB의 80~100% 범위(${(targetSizeGB * 0.8).toFixed(1)}~${targetSizeGB}GB)로 채우세요.\n  - 용량 초과가 될 것 같으면 여러 개의 themeFolder로 나눠서 반환하세요. 하나의 폴더에 모두 넣으려 하지 마세요.\n  - 테마 일관성보다 용량 제한이 우선입니다.\n  - 같은 videoId 중복 금지.\n  - 용량을 맞추기 어려우면 마지막 폴더만 작아도 됩니다.`
+        })()
       : ''
   }
 - **출력 규칙**: 반드시 JSON 객체 하나만 반환하세요. 그 외 어떤 텍스트(설명, 주석, 마크다운)도 절대 출력하지 마세요.
