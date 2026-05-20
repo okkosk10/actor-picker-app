@@ -79,7 +79,9 @@ function buildThemeCandidates(videos, limit = 120, priorityIds = new Set()) {
       id:                   v.id,
       fileName:             v.fileName    ?? v.file_name    ?? '',
       folderName:           v.folderName  ?? v.folder_name  ?? '',
+      parentFolderName:     v.parentFolderName ?? '',
       actors:               v.actors      ?? v.actor_name   ?? '',
+
       primaryActor:         v.primaryActor ?? '',
       tags:                 Array.isArray(v.tags) ? v.tags : [],
       actorTags:            Array.isArray(v.actorTags) ? v.actorTags : [],

@@ -231,8 +231,8 @@ async function generateAiThemeFolders(videos, options = {}) {
 }`
 
   // AI 테마 분류에 필요한 필드만 남겨 토큰 절감 (watchScore, copyScore 등 내부 점수 제거)
-  const slimCandidates = candidates.map(({ id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore, fileSizeGB }) => ({
-    id, fileName, folderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore, fileSizeGB
+  const slimCandidates = candidates.map(({ id, fileName, folderName, parentFolderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore, fileSizeGB }) => ({
+    id, fileName, folderName, parentFolderName, actors, tags, actorTags, rating, playCount, copyCount, favorite, grade, themeScore, fileSizeGB
   }))
 
   // 문자 수 기반 동적 트런케이션

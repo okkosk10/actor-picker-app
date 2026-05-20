@@ -2646,7 +2646,8 @@ function registerIpcHandlers() {
         const actorList    = actorsMap[v.id] ?? []
         const actors       = v.actor_name || actorList.map(a => a.name).join(', ')
         const primaryActor = actorList[0]?.name ?? (v.actor_name || '')
-        const folderName   = v.folder_path ? path.basename(v.folder_path) : ''
+        const folderName       = v.folder_path ? path.basename(v.folder_path) : ''
+        const parentFolderName = v.folder_path ? path.basename(path.dirname(v.folder_path)) : ''
         const tags         = (v.tags || '').split(',').map(t => t.trim()).filter(Boolean)
         const actorTags    = [...new Set(actorList.flatMap(a => a.tags || []))]
         // 해당 배우의 총 복사 횟수 (대표 배우 기준)
@@ -2663,6 +2664,7 @@ function registerIpcHandlers() {
           fileName:             v.file_name,
           filePath:             v.file_path,
           folderName,
+          parentFolderName,
           folderPath:           v.folder_path,
           actors,
           primaryActor,
@@ -2835,7 +2837,7 @@ function registerIpcHandlers() {
           .filter(k => !SIZE_STOP_WORDS.has(k))
         if (keywords.length > 0) {
           for (const v of filteredVideos) {
-            const searchStr = [v.actors, ...v.tags].join(' ').toLowerCase()
+            const searchStr = [v.actors, ...v.tags, v.parentFolderName || '', v.folderPath || ''].join(' ').toLowerCase()
             if (keywords.some(kw => searchStr.includes(kw))) {
               priorityIds.add(v.id)
             }
