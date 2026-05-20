@@ -43,6 +43,18 @@ function parseFileName(fileName) {
     }
   }
 
+  // ── 패턴 3: 일반 작품명(배우명) fallback ───────────────────────────
+  // CODE 패턴이 없는 경우에도 파일명 끝 괄호에서 배우명을 추출한다.
+  // 예: 교복(Anastangel) → { code: null, actor_name: 'Anastangel' }
+  // 예: 교복_2(Anastangel) → { code: null, actor_name: 'Anastangel' }
+  const matchActorOnly = baseName.match(/\(([^)]+)\)\s*$/)
+  if (matchActorOnly) {
+    return {
+      code:       null,
+      actor_name: matchActorOnly[1].trim(),
+    }
+  }
+
   // ── 파싱 불가 ───────────────────────────────────────────────────
   return { code: null, actor_name: null }
 }
