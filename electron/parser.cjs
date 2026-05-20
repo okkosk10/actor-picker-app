@@ -47,11 +47,11 @@ function parseFileName(fileName) {
   // CODE 패턴이 없는 경우에도 파일명 끝 괄호에서 배우명을 추출한다.
   // 예: 교복(Anastangel) → { code: null, actor_name: 'Anastangel' }
   // 예: 교복_2(Anastangel) → { code: null, actor_name: 'Anastangel' }
-  const matchActorOnly = baseName.match(/\(([^)]+)\)\s*$/)
+  const matchActorOnly = baseName.match(/^(.+)\(([^)]+)\)\s*$/)
   if (matchActorOnly) {
     return {
-      code:       null,
-      actor_name: matchActorOnly[1].trim(),
+      code:       matchActorOnly[1].trim() || null,
+      actor_name: matchActorOnly[2].trim(),
     }
   }
 
