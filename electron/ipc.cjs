@@ -2741,6 +2741,55 @@ function registerIpcHandlers() {
         }
       }
 
+      // ── 암묵적 레이블/소속사 감지 ──
+      // "S1이랑 무디즈 특집" 처럼 소속/전속 키워드 없이 레이블명을 직접 언급하는 경우
+      // DB agency 컬럼과 프롬프트 단어를 대조해 해당 배우 영상만 필터링
+      // 단, 앞에서 이미 다른 필터가 적용된 경우(actorRatingFilter, 명시적 agency 등)엔 건너뜀
+      if (customPrompt && filteredVideos.length === videos.length) {
+        try {
+          const IMPLICIT_LABEL_STOP = new Set([
+            '배우', '배우들', '소속', '전속', '레이블', '특집', '총집합',
+            '이랑', '이고', '하고', '그리고', '만들어', '만들어줘', '만들어달라',
+            '폴더', '영상', '동영상', '전체', '모두', '싹다', '주세요', '달라',
+            '나눠', '묶어', '나눠줘', '묶어줘', '특집으로', '배우로', '좋게',
+          ])
+          const promptTokens = [
+            ...(customPrompt.match(/[\uAC00-\uD7A3]{2,}/g) ?? []),
+            ...(customPrompt.match(/[a-zA-Z][a-zA-Z0-9]*/g) ?? []),
+          ].map(w => w.toLowerCase()).filter(w => w.length >= 2 && !IMPLICIT_LABEL_STOP.has(w))
+
+          if (promptTokens.length > 0) {
+            const agencyRows = db.prepare(`
+              SELECT name, agency FROM actors
+              WHERE agency IS NOT NULL AND trim(agency) != ''
+            `).all()
+
+            const matchedActorNames = new Set()
+            for (const row of agencyRows) {
+              const agencyLower = row.agency.toLowerCase()
+              if (promptTokens.some(t => agencyLower.includes(t))) {
+                matchedActorNames.add(row.name.toLowerCase())
+              }
+            }
+
+            if (matchedActorNames.size > 0) {
+              const labelFiltered = filteredVideos.filter(v => {
+                const actorList = actorsMap[v.id] ?? []
+                if (actorList.some(a => matchedActorNames.has(a.name.toLowerCase()))) return true
+                const fallbackName = (v.actors || v.primaryActor || '').toLowerCase()
+                return matchedActorNames.has(fallbackName)
+              })
+              if (labelFiltered.length > 0) {
+                filteredVideos = labelFiltered
+                candidateLimit = Math.max(120, labelFiltered.length)
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[ai-theme-folders:generate] 암묵적 레이블 감지 실패:', err.message)
+        }
+      }
+
       // ── 배우 태그 키워드 감지 → 해당 태그를 가진 배우 출연 영상만 필터링 ──
       // 예: "청순 태그 배우 싹다", "배우 태그 청순 전부", "청순 태그에 해당하는 배우들"
       let forcedTheme = null
@@ -2827,12 +2876,20 @@ function registerIpcHandlers() {
         '만들어줘', '만들어달라', '나눠줘', '묶어줘', '넣기', '핸드폰',
         '좋게', '좋은', '작품', '영상', '동영상', '전체', '모두', '다',
         '하나', '둘', '셋', '넷', '다섯', '개씩', '개로', '특집',
+        // 조사·접속사 (검색어 오염 방지)
+        '이랑', '이고', '하고', '그리고', '배우들', '특집으로',
+        '에서', '으로', '들의', '들을', '들이', '들도', '에게',
       ])
 
       const priorityIds = new Set()
       if (customPrompt) {
-        // 2자 이상 한글·일본어(히라가나/가타카나/한자) 단어 추출 + 불용어 제거
-        const keywords = (customPrompt.match(/[\uAC00-\uD7A3\u3040-\u30FF\u4E00-\u9FFF]{2,}/g) ?? [])
+        // 한글·일본어(히라가나/가타카나/한자) 2자 이상 단어 추출
+        const korJpnWords = customPrompt.match(/[\uAC00-\uD7A3\u3040-\u30FF\u4E00-\u9FFF]{2,}/g) ?? []
+        // 영문+숫자 혼합 단어 추출 (S1, IPX, SOD 등 레이블/코드명 포함)
+        // 패턴: 영문자로 시작해 영문+숫자 조합으로 이어지는 2자 이상 단어
+        const LATIN_STOP = new Set(['and', 'or', 'the', 'for', 'not', 'but', 'you', 'are', 'all', 'in', 'on', 'at', 'to', 'of', 'is', 'it', 'be', 'pc', 'ok'])
+        const latinWords = (customPrompt.match(/[a-zA-Z][a-zA-Z0-9]*/g) ?? []).filter(w => w.length >= 2 && !LATIN_STOP.has(w.toLowerCase()))
+        const keywords = [...korJpnWords, ...latinWords]
           .map(k => k.toLowerCase())
           .filter(k => !SIZE_STOP_WORDS.has(k))
         if (keywords.length > 0) {
