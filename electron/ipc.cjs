@@ -2710,70 +2710,57 @@ function registerIpcHandlers() {
 
       // ── 소속사 키워드 감지 → 해당 소속 배우 출연 영상만 필터링 ──
       // 패턴: "XXX 소속", "XXX소속", "소속사 XXX", "소속 XXX", "XXX 전속"
-      if (customPrompt) {
-        const agencyMatch =
-          customPrompt.match(/([가-힣a-zA-Z0-9·\-]{2,})\s*소속/) ||
-          customPrompt.match(/소속사?\s+([가-힣a-zA-Z0-9·\-]{2,})/) ||
-          customPrompt.match(/([가-힣a-zA-Z0-9·\-]{2,})\s*전속/)
-        if (agencyMatch) {
-          const agencyKw = agencyMatch[1].trim()
-          const excluded = new Set(['배우', '소속', '전속', '레이블', '특집', '총집합'])
-          if (agencyKw.length >= 2 && !excluded.has(agencyKw)) {
-            // DB에서 agency 또는 tags에 해당 키워드를 가진 배우 조회
-            const agencyActorRows = db.prepare(`
-              SELECT name FROM actors
-              WHERE (agency LIKE ? OR tags LIKE ?)
-                AND (agency IS NOT NULL AND agency != '')
-            `).all(`%${agencyKw}%`, `%${agencyKw}%`)
-            const agencyActorNames = new Set(agencyActorRows.map(r => r.name.toLowerCase()))
-
-            if (agencyActorNames.size > 0) {
-              filteredVideos = filteredVideos.filter(v => {
-                const actorList = actorsMap[v.id] ?? []
-                if (actorList.some(a => agencyActorNames.has(a.name.toLowerCase()))) return true
-                // video_actors 연결 없는 폴백: actor_name 컬럼 직접 비교
-                const fallbackName = (v.actors || v.primaryActor || '').toLowerCase()
-                return agencyActorNames.has(fallbackName)
-              })
-              candidateLimit = Math.max(120, filteredVideos.length)
-            }
-          }
-        }
-      }
-
-      // ── 암묵적 레이블/소속사 감지 ──
-      // "S1이랑 무디즈 특집" 처럼 소속/전속 키워드 없이 레이블명을 직접 언급하는 경우
-      // DB agency 컬럼과 프롬프트 단어를 대조해 해당 배우 영상만 필터링
-      // 단, 앞에서 이미 다른 필터가 적용된 경우(actorRatingFilter, 명시적 agency 등)엔 건너뜀
-      if (customPrompt && filteredVideos.length === videos.length) {
+      // ── 소속사/레이블 다중 감지 (명시적 + 암묵적 통합) ──
+      // "S1이랑 무디즈", "무디즈랑 SI 소속" 등 여러 레이블을 한 번에 처리
+      // 배우 별점 필터가 없을 때만 실행 (actorRatingFilter와 충돌 방지)
+      if (customPrompt && actorRatingFilter === 0) {
         try {
-          const IMPLICIT_LABEL_STOP = new Set([
-            '배우', '배우들', '소속', '전속', '레이블', '특집', '총집합',
+          const LABEL_STOP = new Set([
+            '배우', '배우들', '소속', '소속사', '전속', '레이블', '특집', '총집합',
             '이랑', '이고', '하고', '그리고', '만들어', '만들어줘', '만들어달라',
             '폴더', '영상', '동영상', '전체', '모두', '싹다', '주세요', '달라',
             '나눠', '묶어', '나눠줘', '묶어줘', '특집으로', '배우로', '좋게',
           ])
-          const promptTokens = [
+
+          // 한국어 조사 제거 함수 (예: "무디즈랑" → "무디즈")
+          const stripParticle = w => w
+            .replace(/(?:이랑|랑|이고|하고|와|과|을|를|이가|가|이는|는|이은|은|의|에서|으로|로|도|만|들|에게|까지|부터)$/, '')
+
+          const rawTokens = [
             ...(customPrompt.match(/[\uAC00-\uD7A3]{2,}/g) ?? []),
             ...(customPrompt.match(/[a-zA-Z][a-zA-Z0-9]*/g) ?? []),
-          ].map(w => w.toLowerCase()).filter(w => w.length >= 2 && !IMPLICIT_LABEL_STOP.has(w))
+          ].map(w => w.toLowerCase())
+
+          // 원본 토큰 + 조사 제거 버전을 모두 포함 (중복 제거)
+          const promptTokens = [...new Set([
+            ...rawTokens,
+            ...rawTokens.map(stripParticle),
+          ])].filter(w => w.length >= 2 && !LABEL_STOP.has(w))
 
           if (promptTokens.length > 0) {
+            // agency 컬럼이 있는 배우 전체 조회 (agency + tags 모두 체크)
             const agencyRows = db.prepare(`
-              SELECT name, agency FROM actors
+              SELECT name, agency, tags AS actorTagStr FROM actors
               WHERE agency IS NOT NULL AND trim(agency) != ''
             `).all()
 
             const matchedActorNames = new Set()
             for (const row of agencyRows) {
               const agencyLower = row.agency.toLowerCase()
-              if (promptTokens.some(t => agencyLower.includes(t))) {
-                matchedActorNames.add(row.name.toLowerCase())
-              }
+              const tagStr = (row.actorTagStr || '').toLowerCase()
+              // 토큰이 agency 안에 포함되거나(짧은 코드명: s1, sod 등),
+              // agency가 토큰 안에 포함되는 경우(조사가 붙어도 매칭: "무디즈랑".includes("무디즈"))
+              const hit = promptTokens.some(t =>
+                agencyLower.includes(t) ||
+                (agencyLower.length >= 2 && t.includes(agencyLower)) ||
+                tagStr.includes(t)
+              )
+              if (hit) matchedActorNames.add(row.name.toLowerCase())
             }
 
             if (matchedActorNames.size > 0) {
-              const labelFiltered = filteredVideos.filter(v => {
+              // 원본 videos 기준으로 필터 (다중 레이블 union)
+              const labelFiltered = videos.filter(v => {
                 const actorList = actorsMap[v.id] ?? []
                 if (actorList.some(a => matchedActorNames.has(a.name.toLowerCase()))) return true
                 const fallbackName = (v.actors || v.primaryActor || '').toLowerCase()
@@ -2786,7 +2773,7 @@ function registerIpcHandlers() {
             }
           }
         } catch (err) {
-          console.warn('[ai-theme-folders:generate] 암묵적 레이블 감지 실패:', err.message)
+          console.warn('[ai-theme-folders:generate] 레이블 감지 실패:', err.message)
         }
       }
 
