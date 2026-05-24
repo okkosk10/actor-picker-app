@@ -2047,16 +2047,21 @@ function registerIpcHandlers() {
       if (dup) throw new Error(`이미 존재하는 배우 이름입니다: ${name}`)
     }
 
+    const isArchived = data.is_archived !== undefined
+      ? (data.is_archived ? 1 : 0)
+      : actor.is_archived
+
     db.prepare(`
       UPDATE actors
-      SET name       = ?,
-          image_path = ?,
-          category   = ?,
-          agency     = ?,
-          tags       = ?,
-          rating     = ?,
-          memo       = ?,
-          updated_at = CURRENT_TIMESTAMP
+      SET name        = ?,
+          image_path  = ?,
+          category    = ?,
+          agency      = ?,
+          tags        = ?,
+          rating      = ?,
+          memo        = ?,
+          is_archived = ?,
+          updated_at  = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       name,
@@ -2066,6 +2071,7 @@ function registerIpcHandlers() {
       data.tags       !== undefined ? (data.tags       || '').trim() : actor.tags,
       data.rating     !== undefined ? data.rating                    : actor.rating,
       data.memo       !== undefined ? (data.memo       || '').trim() : actor.memo,
+      isArchived,
       id,
     )
 
