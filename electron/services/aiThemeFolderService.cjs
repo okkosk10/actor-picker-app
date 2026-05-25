@@ -242,9 +242,12 @@ async function generateAiThemeFolders(videos, options = {}) {
   }))
 
   // 문자 수 기반 동적 트런케이션
-  // 일본어 1자 ≈ 1토큰 → 20,000자 이하 유지 시 후보 토큰 ≤ 20,000
-  // 시스템 프롬프트 ~2,000토큰 + 후보 ≤ 20,000 = 총 ≤ 22,000토큰 (30k 한도 이내)
-  const CANDIDATE_CHAR_BUDGET = 20000
+  // 일본어 1자 ≈ 1토큰 → 20,000자 기준 ~57개 후보 전달
+  // targetSizeGB가 클수록 더 많은 후보가 필요하므로 예산 확대:
+  //   360GB → ~102개 필요 → 36,000자 (gpt-4.1 128k 컨텍스트 내 충분)
+  const CANDIDATE_CHAR_BUDGET = targetSizeGB
+    ? Math.max(20000, Math.min(36000, Math.ceil(targetSizeGB / 5) * 600))
+    : 20000
   const cappedCandidates = []
   let charCount = 2 // JSON 배열 [] 포함
   for (const c of slimCandidates) {

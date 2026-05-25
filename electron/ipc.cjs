@@ -2908,6 +2908,12 @@ function registerIpcHandlers() {
         candidateLimit = filteredVideos.length
       }
 
+      // 용량 기준 요청 시 candidateLimit 최소 120 확보
+      // (CANDIDATE_CHAR_BUDGET도 같이 확대되므로 여기서 올려야 실제 전달량 증가)
+      if (targetSizeForFilter && candidateLimit < 120) {
+        candidateLimit = Math.min(120, filteredVideos.length)
+      }
+
       return await generateAiThemeFolders(filteredVideos, {
         customPrompt: customPrompt || '',
         priorityIds,
