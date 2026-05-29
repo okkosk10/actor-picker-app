@@ -249,13 +249,39 @@ async function generateAiThemeFolders(videos, options = {}) {
   const CANDIDATE_CHAR_BUDGET = targetSizeGB
     ? Math.max(20000, Math.min(36000, Math.ceil(targetSizeGB / 5) * 600))
     : 20000
+  // ── 배우 다양성을 유지하면서 character budget 내에서 후보 선택 ──
+  // 1차: 배우별 상한 35% → 특정 배우가 상위를 독점해도 다른 배우가 포함되도록
+  // 2차: 1차에서 cap으로 건너뛴 항목으로 잔여 예산 채우기
+  const perActorCharBudget = Math.ceil(CANDIDATE_CHAR_BUDGET * 0.35)
+  const actorCharMap = {}
   const cappedCandidates = []
   let charCount = 2 // JSON 배열 [] 포함
+
+  // 1차 패스: per-actor 35% cap 적용
   for (const c of slimCandidates) {
     const s = JSON.stringify(c)
     if (charCount + s.length + 1 > CANDIDATE_CHAR_BUDGET) break
+    const actor = (c.actors || '').trim()
+    if (actor) {
+      const used = actorCharMap[actor] || 0
+      if (used >= perActorCharBudget) continue  // 이 배우는 cap 초과, 건너뜀
+      actorCharMap[actor] = used + s.length + 1
+    }
     cappedCandidates.push(c)
     charCount += s.length + 1
+  }
+
+  // 2차 패스: 1차에서 cap으로 건너뛴 항목으로 잔여 예산 채우기
+  // (단일 배우 라이브러리이거나 다른 배우 후보가 부족하면 동일 배우로 채움)
+  if (charCount < CANDIDATE_CHAR_BUDGET * 0.85) {
+    const includedIds = new Set(cappedCandidates.map(c => c.id))
+    for (const c of slimCandidates) {
+      if (includedIds.has(c.id)) continue
+      const s = JSON.stringify(c)
+      if (charCount + s.length + 1 > CANDIDATE_CHAR_BUDGET) break
+      cappedCandidates.push(c)
+      charCount += s.length + 1
+    }
   }
 
   const userPromptBase = `다음은 내 영상 라이브러리의 상위 ${cappedCandidates.length}개 후보입니다. 특집 폴더를 제안해주세요.\n\n${JSON.stringify(cappedCandidates)}`

@@ -2753,13 +2753,12 @@ function registerIpcHandlers() {
             const matchedActorNames = new Set()
             for (const row of agencyRows) {
               const agencyLower = row.agency.toLowerCase()
-              const tagStr = (row.actorTagStr || '').toLowerCase()
+              // 소속사/레이블 이름만 매칭 (actor tags는 장르 키워드와 겹치므로 제외)
               // 토큰이 agency 안에 포함되거나(짧은 코드명: s1, sod 등),
               // agency가 토큰 안에 포함되는 경우(조사가 붙어도 매칭: "무디즈랑".includes("무디즈"))
               const hit = promptTokens.some(t =>
                 agencyLower.includes(t) ||
-                (agencyLower.length >= 2 && t.includes(agencyLower)) ||
-                tagStr.includes(t)
+                (agencyLower.length >= 2 && t.includes(agencyLower))
               )
               if (hit) matchedActorNames.add(row.name.toLowerCase())
             }
