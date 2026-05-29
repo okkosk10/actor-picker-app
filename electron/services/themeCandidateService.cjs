@@ -105,17 +105,35 @@ function buildThemeCandidates(videos, limit = 120, priorityIds = new Set()) {
   scored.sort((a, b) => b.themeScore - a.themeScore)
 
   // ── 우선 포함 항목 분리 (customPrompt에서 언급된 배우/태그 등)
-  // priorityIds에 해당하는 영상은 perActorLimit·점수 무관하게 먼저 포함
   const priorityItems   = scored.filter(v => priorityIds.has(v.id))
   const nonPriorityItems = scored.filter(v => !priorityIds.has(v.id))
 
-  // 배우별 상한선 적용: 동일 배우가 후보의 25% 이상을 차지하지 않도록 제한
-  // 단, 배우명이 없는 영상은 제한 없이 포함
   const mainLimit  = Math.max(1, limit - 1)   // 탐색 후보 1개를 위해 1 자리 확보
-  const nonPrioritySlots = Math.max(0, mainLimit - priorityItems.length)
+
+  // 우선 포함 항목에도 배우별 상한선(40%) 적용
+  // → 배우 이름 없이 태그만 요청했을 때 특정 배우가 후보를 독점하는 현상 방지
+  // 단, 배우명이 없는 영상은 제한 없이 포함
+  const perActorLimitPriority = Math.max(5, Math.ceil(mainLimit * 0.40))
+  const priorityActorCount    = {}
+  const cappedPriorityItems   = []
+  for (const v of priorityItems) {
+    const actor = (v.primaryActor || v.actors || '').trim()
+    if (!actor) {
+      cappedPriorityItems.push(v)
+    } else {
+      const cnt = priorityActorCount[actor] || 0
+      if (cnt < perActorLimitPriority) {
+        cappedPriorityItems.push(v)
+        priorityActorCount[actor] = cnt + 1
+      }
+    }
+  }
+
+  // 비우선 항목: 동일 배우가 25% 이상을 차지하지 않도록 제한
+  const nonPrioritySlots = Math.max(0, mainLimit - cappedPriorityItems.length)
   const perActorLimit = Math.max(5, Math.ceil(nonPrioritySlots * 0.25))
   const actorCount    = {}
-  const limited       = [...priorityItems]
+  const limited       = [...cappedPriorityItems]
   for (const v of nonPriorityItems) {
     if (limited.length >= mainLimit) break
     const actor = (v.primaryActor || v.actors || '').trim()
