@@ -2902,10 +2902,22 @@ function registerIpcHandlers() {
       //    filteredVideos를 해당 영상으로만 좁히고 candidateLimit을 전체로 확장
       // 이렇게 해야 "미약 구속" 영상이 많아도 cappedCandidates 문자 예산 초과로
       // 일부가 잘려 AI에 전달되지 않는 문제를 방지할 수 있다.
+      //
+      // 단, 키워드 매칭 영상의 총 용량이 목표 용량의 50% 미만이면 좁히지 않는다.
+      // 예: "150기가 미약 구속" 요청인데 매칭 영상이 21GB뿐이라면
+      //     전체 후보를 유지해 AI가 나머지를 다른 영상으로 채울 수 있게 한다.
       const targetSizeForFilter = parseTargetSizeGB(customPrompt)
       if (targetSizeForFilter && priorityIds.size >= 2 && !forcedTheme) {
-        filteredVideos = filteredVideos.filter(v => priorityIds.has(v.id))
-        candidateLimit = filteredVideos.length
+        const priorityTotalGB = filteredVideos
+          .filter(v => priorityIds.has(v.id))
+          .reduce((sum, v) => sum + (v.fileSize ? v.fileSize / 1073741824 : 0), 0)
+        if (priorityTotalGB >= targetSizeForFilter * 0.5) {
+          // 매칭 영상만으로 목표 용량의 50% 이상 → 기존대로 좁히기
+          filteredVideos = filteredVideos.filter(v => priorityIds.has(v.id))
+          candidateLimit = filteredVideos.length
+        }
+        // 용량 부족 시: filteredVideos를 좁히지 않고 전체 후보 유지
+        // (priorityIds는 buildThemeCandidates 내에서 우선 포함되므로 AI에 반드시 전달됨)
       }
 
       // 용량 기준 요청 시 candidateLimit 최소 120 확보
