@@ -34,6 +34,7 @@ const DEFAULT_FILTERS = {
   excludeDeleteGrade: false,   // 삭제요망 등급 제외
   excludeMissing:     true,    // status='missing' 제외 (기존 hideMissing 기본값 유지)
   excludeDeleted:     true,    // status='deleted' 제외
+  subtitleOnly:       false,   // 자막이 있는 영상만 표시
   grades:             [],      // 빈 배열 = 전체 등급 허용
   minRating:          0,       // 0 = 별점 필터 없음
 }

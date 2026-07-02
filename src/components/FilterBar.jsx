@@ -68,6 +68,13 @@ export default function FilterBar({ filters, onFiltersChange, totalCount, totalS
           ⭐ 추천작만
         </Checkbox>
 
+        <Checkbox
+          checked={filters.subtitleOnly}
+          onChange={(e) => onFiltersChange({ subtitleOnly: e.target.checked })}
+        >
+          자막 있음만
+        </Checkbox>
+
       </div>
 
       {/* ── 등급 체크박스 그룹 ─────────────────────────────── */}

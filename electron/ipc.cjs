@@ -35,6 +35,7 @@ const { parseTargetSizeGB }      = require('./services/themeSizeHelper.cjs')
 const { createThemeFolders }     = require('./services/themeCopyService.cjs')
 const { askAiChatRecommend }     = require('./services/aiChatRecommendService.cjs')
 const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
+const { parseSubtitlePaths } = require('./subtitles.cjs')
 
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
 // device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
@@ -260,6 +261,10 @@ function registerIpcHandlers() {
         modified_at   = @modified_at,
         code          = @code,
         actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
+        subtitle_paths = @subtitle_paths,
+        subtitle_exts  = @subtitle_exts,
+        subtitle_count = @subtitle_count,
+        subtitle_size  = @subtitle_size,
         file_identity = @file_identity,
         status        = CASE WHEN status = 'missing' THEN 'normal' ELSE status END,
         updated_at    = CURRENT_TIMESTAMP
@@ -277,6 +282,10 @@ function registerIpcHandlers() {
         modified_at   = @modified_at,
         code          = @code,
         actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
+        subtitle_paths = @subtitle_paths,
+        subtitle_exts  = @subtitle_exts,
+        subtitle_count = @subtitle_count,
+        subtitle_size  = @subtitle_size,
         file_identity = @file_identity,
         status        = 'normal',
         updated_at    = CURRENT_TIMESTAMP
@@ -286,10 +295,12 @@ function registerIpcHandlers() {
     const insertNew = db.prepare(`
       INSERT INTO videos
         (file_name, file_path, folder_path, extension, size, file_size, modified_at,
-         code, actor_name, file_identity, tags, is_new, updated_at)
+         code, actor_name, subtitle_paths, subtitle_exts, subtitle_count, subtitle_size,
+         file_identity, tags, is_new, updated_at)
       VALUES
         (@file_name, @file_path, @folder_path, @extension, @size, @size, @modified_at,
-         @code, @actor_name, @file_identity, @tags, 1, CURRENT_TIMESTAMP)
+         @code, @actor_name, @subtitle_paths, @subtitle_exts, @subtitle_count, @subtitle_size,
+         @file_identity, @tags, 1, CURRENT_TIMESTAMP)
     `)
 
     // ① 파일별 upsert (file_path → file_identity → INSERT 순)
@@ -591,6 +602,10 @@ function registerIpcHandlers() {
     // 추천작만 (tabMode가 recommended가 아닐 때만 적용)
     if (filters.recommendedOnly && tabMode !== 'recommended') {
       filterConditions.push(`recommended = 1`)
+    }
+
+    if (filters.subtitleOnly) {
+      filterConditions.push(`COALESCE(subtitle_count, 0) > 0`)
     }
 
     // 삭제요망 등급 제외
@@ -2560,7 +2575,9 @@ function registerIpcHandlers() {
     if (ids.length === 0) return []
     const placeholders = ids.map(() => '?').join(',')
     return db.prepare(
-      `SELECT id, file_name, file_path, size, status FROM videos WHERE id IN (${placeholders})`
+      `SELECT id, file_name, file_path, size, status,
+              subtitle_paths, subtitle_exts, subtitle_count, subtitle_size
+       FROM videos WHERE id IN (${placeholders})`
     ).all(...ids)
   })
 
@@ -2957,7 +2974,7 @@ function registerIpcHandlers() {
     const allIds = [...new Set(selectedThemes.flatMap(t => (t.videoIds ?? []).map(Number)))]
     const fileRows = allIds.length > 0
       ? db.prepare(
-          `SELECT id, file_path, status FROM videos WHERE id IN (${allIds.map(() => '?').join(',')})`
+          `SELECT id, file_path, status, subtitle_paths FROM videos WHERE id IN (${allIds.map(() => '?').join(',')})`
         ).all(...allIds)
       : []
 
@@ -2972,7 +2989,7 @@ function registerIpcHandlers() {
       if (validRows.length > 0) {
         themes.push({
           name:     t.folderName ?? t.title,
-          files:    validRows.map(r => r.file_path),
+          files:    validRows.flatMap(r => [r.file_path, ...parseSubtitlePaths(r.subtitle_paths)]),
           videoIds: validRows.map(r => r.id),
         })
       }
@@ -3056,12 +3073,16 @@ function registerIpcHandlers() {
       const allIds = [...new Set(selectedThemes.flatMap(t => (t.videoIds ?? []).map(Number)))]
       const placeholders = allIds.map(() => '?').join(',')
       const fileRows = allIds.length > 0
-        ? db.prepare(`SELECT id, file_path, file_name FROM videos WHERE id IN (${placeholders})`).all(...allIds)
+        ? db.prepare(`SELECT id, file_path, file_name, subtitle_paths FROM videos WHERE id IN (${placeholders})`).all(...allIds)
         : []
 
       const videoFileMap = new Map()
       for (const r of fileRows) {
-        videoFileMap.set(r.id, { filePath: r.file_path, fileName: r.file_name })
+        videoFileMap.set(r.id, {
+          filePath: r.file_path,
+          fileName: r.file_name,
+          subtitlePaths: parseSubtitlePaths(r.subtitle_paths),
+        })
       }
 
       return await createThemeFolders(targetRootPath, selectedThemes, videoFileMap)

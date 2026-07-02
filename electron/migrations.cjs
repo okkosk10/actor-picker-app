@@ -318,6 +318,27 @@ const MIGRATIONS = [
       `)
     },
   },
+  {
+    version: '015_add_video_subtitle_columns',
+    description: 'videos subtitle metadata columns',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+      const additions = [
+        { name: 'subtitle_paths', def: "TEXT DEFAULT '[]'" },
+        { name: 'subtitle_exts', def: "TEXT DEFAULT ''" },
+        { name: 'subtitle_count', def: 'INTEGER DEFAULT 0' },
+        { name: 'subtitle_size', def: 'INTEGER DEFAULT 0' },
+      ]
+
+      for (const col of additions) {
+        if (!cols.includes(col.name)) {
+          db.exec(`ALTER TABLE videos ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_videos_subtitle_count ON videos (subtitle_count)`)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

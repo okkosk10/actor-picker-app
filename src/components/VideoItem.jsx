@@ -101,6 +101,12 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
           <Tag color={STATUS_MISSING_COLOR}>삭제됨</Tag>
         )}
 
+        {video.subtitle_count > 0 && (
+          <Tag color="cyan">
+            자막 {video.subtitle_exts || video.subtitle_count}
+          </Tag>
+        )}
+
         {/* 사용자 태그 칩 */}
         {tagList.map((tag) => (
           <Tag key={tag} color="blue">{tag}</Tag>

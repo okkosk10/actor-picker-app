@@ -50,7 +50,9 @@
     "npmRebuild": true,
     "win": {
       "target": "portable",
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "sign": null,
+      "signingHashAlgorithms": null
     }
   },
   "dependencies": {

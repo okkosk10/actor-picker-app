@@ -33,6 +33,30 @@ const STATUS_LABEL = {
   done:        '🎉 전송 완료',
 }
 
+function parseSubtitlePaths(value) {
+  if (!value) return []
+  if (Array.isArray(value)) return value.filter((p) => typeof p === 'string' && p)
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((p) => typeof p === 'string' && p) : []
+  } catch {
+    return []
+  }
+}
+
+function expandCopyPaths(videos) {
+  const paths = []
+  const seen = new Set()
+  for (const video of videos) {
+    for (const fp of [video.file_path, ...parseSubtitlePaths(video.subtitle_paths)]) {
+      if (!fp || seen.has(fp)) continue
+      seen.add(fp)
+      paths.push(fp)
+    }
+  }
+  return paths
+}
+
 export default function FileCopyModal({ videos, selectedIds, onClose }) {
   const overlayRef = useRef(null)
   const [copying,      setCopying]      = useState(false)
@@ -58,7 +82,12 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
     )
   }, [videos, selectedIds])
 
-  const totalSize       = useMemo(() => targetVideos.reduce((s, v) => s + (v.size || 0), 0), [targetVideos])
+  const copyPaths       = useMemo(() => expandCopyPaths(targetVideos), [targetVideos])
+  const subtitleCount   = useMemo(() => targetVideos.reduce((s, v) => s + (v.subtitle_count || 0), 0), [targetVideos])
+  const totalSize       = useMemo(
+    () => targetVideos.reduce((s, v) => s + (v.size || 0) + (v.subtitle_size || 0), 0),
+    [targetVideos],
+  )
   const isSelectionMode = selectedIds && selectedIds.size > 0
 
   // ── progress 이벤트 구독 ───────────────────────────────────────
@@ -83,9 +112,8 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
     if (targetVideos.length === 0 || copying) return
     setCopying(true)
     setCopyResult(null)
-    const filePaths = targetVideos.map((v) => v.file_path)
     try {
-      const result = await (window.electronAPI ?? window.api).copyFilesToClipboard(filePaths)
+      const result = await (window.electronAPI ?? window.api).copyFilesToClipboard(copyPaths)
       setCopyResult(result)
       if (result.success) {
         message.success(`총 ${result.count}개 / ${formatFileSize(result.totalSize)} 클립보드에 복사됨`)
@@ -105,9 +133,8 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
     if (isTransferring) return
     setBulkStatus('running')
     const api   = window.electronAPI ?? window.api
-    const paths = targetVideos.map((v) => v.file_path)
     try {
-      const result = await api.copyFilesToDeviceBulk(paths)
+      const result = await api.copyFilesToDeviceBulk(copyPaths)
       if (result.action === 'cancelled') {
         setBulkStatus('cancelled')
       } else if (result.action === 'bulk-started' && result.success) {
@@ -140,18 +167,17 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
   }, [isTransferring])
 
   const handleStartQueue = () =>
-    handleQueueTransfer(targetVideos.map((v) => v.file_path))
+    handleQueueTransfer(copyPaths)
 
   const handleRetryQueue = () => {
     if (!retryFiles?.length || isTransferring) return
     const paths = retryFiles
-      .map((name) => targetVideos.find(
-        (v) => v.file_path?.endsWith(name) ||
-               v.file_path?.endsWith('\\' + name) ||
-               v.file_path?.endsWith('/' + name),
+      .map((name) => copyPaths.find(
+        (fp) => fp?.endsWith(name) ||
+                fp?.endsWith('\\' + name) ||
+                fp?.endsWith('/' + name),
       ))
       .filter(Boolean)
-      .map((v) => v.file_path)
     handleQueueTransfer(paths)
   }
 
@@ -209,6 +235,14 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
           <span className="stat-sep">·</span>
           <span className="stat-item">대기 <strong>{targetVideos.length}</strong>개</span>
           <span className="stat-sep">·</span>
+          <span className="stat-item">파일 <strong>{copyPaths.length}</strong>개</span>
+          {subtitleCount > 0 && (
+            <>
+              <span className="stat-sep">·</span>
+              <span className="stat-item">자막 <strong>{subtitleCount}</strong>개</span>
+            </>
+          )}
+          <span className="stat-sep">·</span>
           <span className="stat-item"><strong>{formatFileSize(totalSize)}</strong></span>
         </div>
 
@@ -227,7 +261,7 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                 onClick={handleClipboard}
                 disabled={copying || isTransferring}
               >
-                {copying ? '복사 중…' : `📋 클립보드에 복사 (${targetVideos.length}개 · ${formatFileSize(totalSize)})`}
+                {copying ? '복사 중…' : `📋 클립보드에 복사 (${copyPaths.length}개 · ${formatFileSize(totalSize)})`}
               </button>
               {copyResult?.success && (
                 <div className="fcr-ok">
@@ -326,7 +360,7 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                     >
                       {isBulkActive
                         ? '⏳ 전송 중… (Windows 복사 창에서 진행 상황 확인)'
-                        : `🪟 안정 모드로 전송 (${targetVideos.length}개 · ${formatFileSize(totalSize)})`}
+                        : `🪟 안정 모드로 전송 (${copyPaths.length}개 · ${formatFileSize(totalSize)})`}
                     </button>
                   )}
                 </div>
@@ -351,7 +385,7 @@ export default function FileCopyModal({ videos, selectedIds, onClose }) {
                     onClick={handleStartQueue}
                     disabled={isTransferring || isDone}
                   >
-                    {isQueueActive ? '전송 진행 중…' : `📱 큐 모드 전송 (${targetVideos.length}개)`}
+                    {isQueueActive ? '전송 진행 중…' : `📱 큐 모드 전송 (${copyPaths.length}개)`}
                   </button>
 
                   {transfer.status !== 'idle' && (

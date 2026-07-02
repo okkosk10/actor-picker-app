@@ -53,6 +53,10 @@ function initSchema() {
       -- 파일명에서 파싱한 정보
       code        TEXT,
       actor_name  TEXT,
+      subtitle_paths TEXT DEFAULT '[]',
+      subtitle_exts  TEXT DEFAULT '',
+      subtitle_count INTEGER DEFAULT 0,
+      subtitle_size  INTEGER DEFAULT 0,
 
       -- 사용자가 직접 입력하는 정보 (스캔 시 보존)
       memo        TEXT    DEFAULT '',
@@ -118,6 +122,18 @@ function migrateSchema() {
   if (!cols.includes('is_new')) {
     db.exec('ALTER TABLE videos ADD COLUMN is_new INTEGER DEFAULT 0')
     db.exec('CREATE INDEX IF NOT EXISTS idx_videos_is_new ON videos (is_new)')
+  }
+
+  const subtitleColumns = [
+    ['subtitle_paths', "TEXT DEFAULT '[]'"],
+    ['subtitle_exts', "TEXT DEFAULT ''"],
+    ['subtitle_count', 'INTEGER DEFAULT 0'],
+    ['subtitle_size', 'INTEGER DEFAULT 0'],
+  ]
+  for (const [name, def] of subtitleColumns) {
+    if (!cols.includes(name)) {
+      db.exec(`ALTER TABLE videos ADD COLUMN ${name} ${def}`)
+    }
   }
 }
 

@@ -13,6 +13,7 @@
 const fs = require('fs')
 const path = require('path')
 const { parseFileName } = require('./parser.cjs')
+const { findSubtitleFiles, serializeSubtitlePaths } = require('./subtitles.cjs')
 
 /** 스캔 대상 동영상 확장자 (소문자, 점 포함) */
 const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov'])
@@ -76,6 +77,7 @@ async function scanRecursive(dirPath, results) {
 
       // 파일명 파싱: 품번(code), 배우명(actor_name) 추출
       const parsed = parseFileName(entry.name)
+      const subtitles = await findSubtitleFiles(dirPath, entry.name)
 
       results.push({
         file_name:   entry.name,
@@ -86,6 +88,10 @@ async function scanRecursive(dirPath, results) {
         modified_at: stat.mtime.toISOString(),
         code:        parsed.code,
         actor_name:  parsed.actor_name,
+        subtitle_paths: serializeSubtitlePaths(subtitles.paths),
+        subtitle_exts:  subtitles.exts.join(','),
+        subtitle_count: subtitles.paths.length,
+        subtitle_size:  subtitles.totalSize,
       })
     }
   }
