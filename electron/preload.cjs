@@ -17,6 +17,25 @@ contextBridge.exposeInMainWorld('api', {
   selectFolder: () =>
     ipcRenderer.invoke('select-folder'),
 
+  // ── 자막 보관소 경로/복사 ────────────────────────────────────
+  getSubtitleArchivePath: () =>
+    ipcRenderer.invoke('get-subtitle-archive-path'),
+
+  selectSubtitleArchivePath: () =>
+    ipcRenderer.invoke('select-subtitle-archive-path'),
+
+  setSubtitleArchivePath: (archivePath) =>
+    ipcRenderer.invoke('set-subtitle-archive-path', archivePath),
+
+  copySubtitleFilesToArchive: (payload) =>
+    ipcRenderer.invoke('copy-subtitle-files-to-archive', payload),
+
+  restoreSubtitleFilesFromArchive: () =>
+    ipcRenderer.invoke('restore-subtitle-files-from-archive'),
+
+  previewSubtitleFilesFromArchive: () =>
+    ipcRenderer.invoke('preview-subtitle-files-from-archive'),
+
   // ── 폴더 스캔 및 DB 저장 ─────────────────────────────────────
   // @param folderPath {string}
   // 반환: { totalFiles, missingCount, scannedFolder }

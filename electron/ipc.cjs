@@ -37,6 +37,125 @@ const { askAiChatRecommend }     = require('./services/aiChatRecommendService.cj
 const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
 const { parseSubtitlePaths } = require('./subtitles.cjs')
 
+const SUBTITLE_ARCHIVE_DIR = 'subtitle-archive'
+const SUBTITLE_ARCHIVE_SETTINGS_FILE = 'subtitle-archive.json'
+
+function getSubtitleArchiveDefaultPath() {
+  return path.join(app.getPath('userData'), SUBTITLE_ARCHIVE_DIR)
+}
+
+function getSubtitleArchiveSettingsPath() {
+  return path.join(app.getPath('userData'), SUBTITLE_ARCHIVE_SETTINGS_FILE)
+}
+
+function readSubtitleArchiveConfig() {
+  try {
+    const raw = fs.readFileSync(getSubtitleArchiveSettingsPath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    return typeof parsed?.archivePath === 'string' && parsed.archivePath.trim()
+      ? parsed.archivePath.trim()
+      : ''
+  } catch {
+    return ''
+  }
+}
+
+function writeSubtitleArchiveConfig(archivePath) {
+  const settingsPath = getSubtitleArchiveSettingsPath()
+  const payload = JSON.stringify({ archivePath }, null, 2)
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+  fs.writeFileSync(settingsPath, payload, 'utf8')
+}
+
+function getSubtitleArchiveRoot() {
+  return readSubtitleArchiveConfig() || getSubtitleArchiveDefaultPath()
+}
+
+function sanitizePathSegment(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[.\s]+$/g, '')
+    .slice(0, 80) || 'subtitle'
+}
+
+async function ensureUniqueTargetPath(dirPath, fileName) {
+  const ext = path.extname(fileName)
+  const base = path.basename(fileName, ext)
+  let candidate = path.join(dirPath, fileName)
+  let index = 1
+
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(dirPath, `${base} (${index})${ext}`)
+    index += 1
+  }
+
+  return candidate
+}
+
+async function walkSubtitleFiles(rootPath) {
+  const results = []
+  async function walk(dirPath) {
+    let entries
+    try {
+      entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name)
+      if (entry.isDirectory()) {
+        await walk(fullPath)
+        continue
+      }
+
+      if (!entry.isFile()) continue
+      const ext = path.extname(entry.name).toLowerCase()
+      if (!['.srt', '.smi', '.ass'].includes(ext)) continue
+      results.push(fullPath)
+    }
+  }
+
+  await walk(rootPath)
+  return results
+}
+
+function buildSubtitleRestorePlan(archiveFiles, rows) {
+  const targetByStem = new Map()
+  for (const row of rows) {
+    const stem = path.basename(String(row.file_name || ''), path.extname(String(row.file_name || ''))).toLowerCase()
+    if (!stem || targetByStem.has(stem)) continue
+    targetByStem.set(stem, row)
+  }
+
+  const plans = []
+  const unmatchedFiles = []
+
+  for (const sourcePath of archiveFiles) {
+    const sourceName = path.basename(sourcePath)
+    const stem = path.basename(sourceName, path.extname(sourceName)).toLowerCase()
+    const target = targetByStem.get(stem)
+    if (!target) {
+      unmatchedFiles.push(sourceName)
+      continue
+    }
+
+    plans.push({
+      sourcePath,
+      sourceName,
+      sourceFolder: path.basename(path.dirname(sourcePath)),
+      targetFolder: target.folder_path,
+      targetFolderName: path.basename(target.folder_path || ''),
+      targetFileName: target.file_name,
+      targetPath: path.join(target.folder_path, sourceName),
+      stem,
+    })
+  }
+
+  return { plans, unmatchedFiles }
+}
+
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
 // device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
 let _resolveAction = null
@@ -197,6 +316,165 @@ function registerIpcHandlers() {
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle('get-subtitle-archive-path', async () => {
+    const archiveRoot = getSubtitleArchiveRoot()
+    await fs.promises.mkdir(archiveRoot, { recursive: true })
+    return archiveRoot
+  })
+
+  ipcMain.handle('select-subtitle-archive-path', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', 'createDirectory'],
+      title:      '자막 보관소 폴더 선택',
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const archivePath = result.filePaths[0]
+    await fs.promises.mkdir(archivePath, { recursive: true })
+    writeSubtitleArchiveConfig(archivePath)
+    return archivePath
+  })
+
+  ipcMain.handle('set-subtitle-archive-path', async (_event, archivePath) => {
+    if (typeof archivePath !== 'string' || !archivePath.trim()) {
+      return { success: false, error: '유효한 보관소 경로가 아닙니다.' }
+    }
+    const normalized = path.resolve(archivePath.trim())
+    await fs.promises.mkdir(normalized, { recursive: true })
+    writeSubtitleArchiveConfig(normalized)
+    return { success: true, archivePath: normalized }
+  })
+
+  ipcMain.handle('copy-subtitle-files-to-archive', async (_event, payload) => {
+    const filePaths = Array.isArray(payload?.filePaths) ? payload.filePaths.filter((fp) => typeof fp === 'string' && fp) : []
+    const groupName = sanitizePathSegment(payload?.groupName || 'subtitle')
+    if (filePaths.length === 0) {
+      return { success: false, error: '복사할 자막 파일이 없습니다.' }
+    }
+
+    const archiveRoot = getSubtitleArchiveRoot()
+    const targetDir = path.join(archiveRoot, groupName)
+    await fs.promises.mkdir(targetDir, { recursive: true })
+
+    const copiedFiles = []
+    const failedFiles = []
+
+    for (const sourcePath of filePaths) {
+      try {
+        const stat = await fs.promises.stat(sourcePath)
+        if (!stat.isFile()) {
+          failedFiles.push(sourcePath)
+          continue
+        }
+
+        const targetPath = await ensureUniqueTargetPath(targetDir, path.basename(sourcePath))
+        await fs.promises.copyFile(sourcePath, targetPath)
+        copiedFiles.push({ sourcePath, targetPath })
+      } catch {
+        failedFiles.push(sourcePath)
+      }
+    }
+
+    return {
+      success: copiedFiles.length > 0,
+      archiveRoot,
+      targetDir,
+      copiedCount: copiedFiles.length,
+      failedCount: failedFiles.length,
+      copiedFiles,
+      failedFiles,
+      error: copiedFiles.length > 0 ? null : '자막 보관소 복사에 실패했습니다.',
+    }
+  })
+
+  ipcMain.handle('preview-subtitle-files-from-archive', async () => {
+    const archiveRoot = getSubtitleArchiveRoot()
+    await fs.promises.mkdir(archiveRoot, { recursive: true })
+
+    const archiveFiles = await walkSubtitleFiles(archiveRoot)
+    if (archiveFiles.length === 0) {
+      return { success: false, error: '보관소에 미리볼 자막 파일이 없습니다.' }
+    }
+
+    const db = getDb()
+    const rows = db.prepare(`
+      SELECT file_name, folder_path, status, updated_at
+      FROM videos
+      WHERE folder_path IS NOT NULL AND folder_path <> ''
+        AND status NOT IN ('deleted')
+      ORDER BY CASE WHEN status = 'normal' THEN 0 ELSE 1 END ASC, updated_at DESC
+    `).all()
+
+    const { plans, unmatchedFiles } = buildSubtitleRestorePlan(archiveFiles, rows)
+    return {
+      success: true,
+      archiveRoot,
+      archiveCount: archiveFiles.length,
+      matchedCount: plans.length,
+      unmatchedCount: unmatchedFiles.length,
+      plans,
+      unmatchedFiles,
+    }
+  })
+
+  ipcMain.handle('restore-subtitle-files-from-archive', async () => {
+    const archiveRoot = getSubtitleArchiveRoot()
+    await fs.promises.mkdir(archiveRoot, { recursive: true })
+
+    const archiveFiles = await walkSubtitleFiles(archiveRoot)
+    if (archiveFiles.length === 0) {
+      return { success: false, error: '보관소에 복원할 자막 파일이 없습니다.' }
+    }
+
+    const db = getDb()
+    const rows = db.prepare(`
+      SELECT file_name, folder_path, status, updated_at
+      FROM videos
+      WHERE folder_path IS NOT NULL AND folder_path <> ''
+        AND status NOT IN ('deleted')
+      ORDER BY CASE WHEN status = 'normal' THEN 0 ELSE 1 END ASC, updated_at DESC
+    `).all()
+
+    const { plans, unmatchedFiles } = buildSubtitleRestorePlan(archiveFiles, rows)
+    let restoredCount = 0
+    let removedCount = 0
+    const removeFailedFiles = []
+
+    for (const plan of plans) {
+      if (path.resolve(plan.sourcePath) === path.resolve(plan.targetPath)) {
+        continue
+      }
+
+      try {
+        await fs.promises.mkdir(plan.targetFolder, { recursive: true })
+        await fs.promises.copyFile(plan.sourcePath, plan.targetPath)
+        restoredCount += 1
+
+        try {
+          await fs.promises.unlink(plan.sourcePath)
+          removedCount += 1
+        } catch {
+          removeFailedFiles.push(plan.sourceName)
+        }
+      } catch {
+        unmatchedFiles.push(plan.sourceName)
+      }
+    }
+
+    return {
+      success: restoredCount > 0,
+      archiveRoot,
+      restoredCount,
+      removedCount,
+      archiveCount: archiveFiles.length,
+      unmatchedCount: unmatchedFiles.length,
+      removeFailedCount: removeFailedFiles.length,
+      removeFailedFiles,
+      plans,
+      unmatchedFiles,
+      error: restoredCount > 0 ? null : '복원할 파일을 찾지 못했습니다.',
+    }
   })
 
   // ══════════════════════════════════════════════════════════════

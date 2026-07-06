@@ -1432,6 +1432,11 @@
   color: var(--text-muted);
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.subtitle-date-modal .ant-modal-title {
+  white-space: nowrap;
 }
 
 .subtitle-date-panel__clear {
@@ -1571,6 +1576,24 @@
   font-size: 11px;
 }
 
+.subtitle-archive-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.subtitle-archive-toolbar__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.subtitle-archive-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
 .filter-result-info {
   margin-left: auto;
   font-size: 12px;

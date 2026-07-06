@@ -26,10 +26,11 @@ import ActorsPage               from './pages/Actors/index.jsx'
 import RecommendationsPage      from './pages/Recommendations/index.jsx'
 import DashboardPage            from './pages/Dashboard/index.jsx'
 import StoragePage              from './pages/Storage/index.jsx'
+import SubtitlesPage            from './pages/Subtitles/index.jsx'
 import { getLocalDateKey }      from './utils/format.js'
 
 export default function App() {
-  // ── 앱 탭 ('library' | 'actors' | 'recommendations' | 'dashboard')
+  // ── 앱 탭 ('library' | 'actors' | 'recommendations' | 'dashboard' | 'storage' | 'subtitles')
   const [appTab, setAppTab] = useState('library')
 
   // ── 영상 검색 훅 ──────────────────────────────────────────────
@@ -275,6 +276,7 @@ export default function App() {
           {[
             { key: 'library',         label: '영상 관리' },
             { key: 'actors',          label: newActorCount > 0 ? `배우 관리 (${newActorCount})` : '배우 관리' },
+            { key: 'subtitles',       label: '자막 보관소' },
             { key: 'recommendations', label: '🎬 추천·탐색' },
             { key: 'dashboard',       label: '대시보드' },
             { key: 'storage',         label: '💾 저장소' },
@@ -318,6 +320,9 @@ export default function App() {
 
       {/* ── 배우 관리 탭 ─────────────────────────────────── */}
       {appTab === 'actors' && <ActorsPage />}
+
+      {/* ── 자막 보관소 탭 ───────────────────────────────── */}
+      {appTab === 'subtitles' && <SubtitlesPage />}
 
       {/* ── 추천·탐색 탭 ─────────────────────────────────── */}
       {/* display:none 방식으로 유지 — 탭 이동 시 AI 결과 state 보존 */}
@@ -384,7 +389,7 @@ export default function App() {
             open={showSubtitleDateModal}
             onCancel={() => setShowSubtitleDateModal(false)}
             footer={null}
-            width={920}
+            width={1120}
             title="자막 수정일"
             destroyOnClose={false}
             centered
