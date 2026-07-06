@@ -57,6 +57,8 @@ function initSchema() {
       subtitle_exts  TEXT DEFAULT '',
       subtitle_count INTEGER DEFAULT 0,
       subtitle_size  INTEGER DEFAULT 0,
+      subtitle_files TEXT DEFAULT '[]',
+      subtitle_added_at TEXT,
 
       -- 사용자가 직접 입력하는 정보 (스캔 시 보존)
       memo        TEXT    DEFAULT '',
@@ -129,6 +131,8 @@ function migrateSchema() {
     ['subtitle_exts', "TEXT DEFAULT ''"],
     ['subtitle_count', 'INTEGER DEFAULT 0'],
     ['subtitle_size', 'INTEGER DEFAULT 0'],
+    ['subtitle_files', "TEXT DEFAULT '[]'"],
+    ['subtitle_added_at', 'TEXT'],
   ]
   for (const [name, def] of subtitleColumns) {
     if (!cols.includes(name)) {

@@ -328,6 +328,8 @@ const MIGRATIONS = [
         { name: 'subtitle_exts', def: "TEXT DEFAULT ''" },
         { name: 'subtitle_count', def: 'INTEGER DEFAULT 0' },
         { name: 'subtitle_size', def: 'INTEGER DEFAULT 0' },
+        { name: 'subtitle_files', def: "TEXT DEFAULT '[]'" },
+        { name: 'subtitle_added_at', def: 'TEXT' },
       ]
 
       for (const col of additions) {
@@ -337,6 +339,11 @@ const MIGRATIONS = [
       }
 
       db.exec(`CREATE INDEX IF NOT EXISTS idx_videos_subtitle_count ON videos (subtitle_count)`)
+      db.exec(`
+        UPDATE videos
+        SET subtitle_added_at = COALESCE(subtitle_added_at, created_at)
+        WHERE COALESCE(subtitle_count, 0) > 0
+      `)
     },
   },
 ]

@@ -33,6 +33,14 @@ const RATING_OPTIONS = [
   { label: '★★★★★',   value: 5 },
 ]
 
+const SUBTITLE_ADDED_OPTIONS = [
+  { label: '전체', value: 0 },
+  { label: '7일 이내', value: 7 },
+  { label: '30일 이내', value: 30 },
+  { label: '90일 이내', value: 90 },
+  { label: '1년 이내', value: 365 },
+]
+
 export default function FilterBar({ filters, onFiltersChange, totalCount, totalSize }) {
   return (
     <div className="filter-bar">
@@ -123,6 +131,33 @@ export default function FilterBar({ filters, onFiltersChange, totalCount, totalS
             </span>
           )}
         </span>
+      </div>
+
+      <div className="filter-section filter-section--subtitle-date">
+        <span className="filter-label">자막 수정일</span>
+        <Select
+          value={filters.subtitleAddedDays}
+          onChange={(val) => onFiltersChange({ subtitleAddedDays: val })}
+          size="small"
+          style={{ minWidth: 110 }}
+          popupMatchSelectWidth={false}
+        >
+          {SUBTITLE_ADDED_OPTIONS.map((opt) => (
+            <Option key={opt.value} value={opt.value}>
+              {opt.label}
+            </Option>
+          ))}
+        </Select>
+        {filters.subtitleAddedDays > 0 && (
+          <button
+            className="filter-clear-btn"
+            type="button"
+            onClick={() => onFiltersChange({ subtitleAddedDays: 0 })}
+            title="자막 수정일 필터 초기화"
+          >
+            초기화
+          </button>
+        )}
       </div>
 
     </div>

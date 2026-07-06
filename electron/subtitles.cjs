@@ -20,6 +20,23 @@ function parseSubtitlePaths(value) {
   }
 }
 
+function serializeSubtitleFiles(files) {
+  return JSON.stringify(files)
+}
+
+function parseSubtitleFiles(value) {
+  if (!value) return []
+  if (Array.isArray(value)) {
+    return value.filter((file) => file && typeof file === 'object')
+  }
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((file) => file && typeof file === 'object') : []
+  } catch {
+    return []
+  }
+}
+
 async function findSubtitleFiles(folderPath, videoFileName) {
   const baseName = path.basename(videoFileName, path.extname(videoFileName)).toLowerCase()
   let entries
@@ -32,15 +49,23 @@ async function findSubtitleFiles(folderPath, videoFileName) {
   const subtitles = []
   for (const entry of entries) {
     if (!entry.isFile()) continue
-    const ext = path.extname(entry.name).toLowerCase()
+    const rawExt = path.extname(entry.name)
+    const ext = rawExt.toLowerCase()
     if (!SUBTITLE_EXTS.has(ext)) continue
-    const stem = path.basename(entry.name, ext).toLowerCase()
+    const stem = entry.name.slice(0, -rawExt.length).toLowerCase()
     if (stem !== baseName) continue
 
     const fullPath = path.join(folderPath, entry.name)
     try {
       const stat = await fs.promises.stat(fullPath)
-      if (stat.isFile()) subtitles.push({ path: fullPath, ext: ext.slice(1), size: stat.size })
+      if (stat.isFile()) {
+        subtitles.push({
+          path: fullPath,
+          ext: ext.slice(1),
+          size: stat.size,
+          modified_at: stat.mtime.toISOString(),
+        })
+      }
     } catch {
       // Ignore stale entries.
     }
@@ -51,6 +76,7 @@ async function findSubtitleFiles(folderPath, videoFileName) {
     paths: subtitles.map((s) => s.path),
     exts: [...new Set(subtitles.map((s) => s.ext))],
     totalSize: subtitles.reduce((sum, s) => sum + s.size, 0),
+    files: subtitles,
   }
 }
 
@@ -71,6 +97,8 @@ module.exports = {
   SUBTITLE_EXTS,
   serializeSubtitlePaths,
   parseSubtitlePaths,
+  serializeSubtitleFiles,
+  parseSubtitleFiles,
   findSubtitleFiles,
   expandWithSubtitlePaths,
 }

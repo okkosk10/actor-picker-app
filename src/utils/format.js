@@ -18,6 +18,28 @@ export function formatDate(isoStr) {
   return new Date(isoStr).toLocaleDateString('ko-KR')
 }
 
+export function formatDateTime(isoStr) {
+  if (!isoStr) return '-'
+  return new Date(isoStr).toLocaleString('ko-KR')
+}
+
+export function getLocalDateKey(isoStr) {
+  if (!isoStr) return ''
+  const date = new Date(isoStr)
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function formatMonthDay(isoStr) {
+  if (!isoStr) return '-'
+  const date = new Date(isoStr)
+  if (Number.isNaN(date.getTime())) return '-'
+  return `${date.getMonth() + 1}.${date.getDate()}`
+}
+
 // ── status: 시스템 관리용 (UI 최소 노출) ──────────────────────
 // normal  : 정상
 // hidden  : 숨김 (향후 확장용)
@@ -97,6 +119,7 @@ export const GRADE_BY_RATING = {
 export const SORT_OPTIONS = [
   { value: 'created_desc', label: '최신 추가순'    },
   { value: 'updated_desc', label: '최근 수정순'    },
+  { value: 'subtitle_added_desc', label: '자막 수정일순' },
   { value: 'rating_desc',  label: '별점 높은순'    },
   { value: 'rating_asc',   label: '별점 낮은순'    },
   { value: 'recommended',  label: '추천작 우선'    },

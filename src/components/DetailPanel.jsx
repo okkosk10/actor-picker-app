@@ -21,7 +21,7 @@ import { useState, useEffect } from 'react'
 import { Switch, Tag, Select, message } from 'antd'
 import StarRating from './StarRating.jsx'
 import { useVideoMeta } from '../hooks/useVideoMeta.js'
-import { formatFileSize, formatDate, GRADES, GRADE_COLORS, STATUS_LABELS, RATING_BY_GRADE, GRADE_BY_RATING, parseActors } from '../utils/format.js'
+import { formatFileSize, formatDate, formatDateTime, GRADES, GRADE_COLORS, RATING_BY_GRADE, GRADE_BY_RATING, parseActors } from '../utils/format.js'
 
 const { Option } = Select
 
@@ -179,6 +179,17 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
     ? tags.split(',').map((t) => t.trim()).filter(Boolean)
     : []
 
+  const subtitleFiles = (() => {
+    if (!video.subtitle_files) return []
+    if (Array.isArray(video.subtitle_files)) return video.subtitle_files.filter((item) => item && typeof item === 'object')
+    try {
+      const parsed = JSON.parse(video.subtitle_files)
+      return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item === 'object') : []
+    } catch {
+      return []
+    }
+  })()
+
   return (
     <div className="detail-content">
       {/* ── 파일명 ──────────────────────────────────────────────── */}
@@ -227,6 +238,28 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
           <span className="meta-label">추가일</span>
           <span className="meta-value">{formatDate(video.created_at)}</span>
         </div>
+        <div className="meta-row">
+          <span className="meta-label">자막 수정일</span>
+          <span className="meta-value">{formatDateTime(video.subtitle_added_at)}</span>
+        </div>
+        {subtitleFiles.length > 0 && (
+          <div className="meta-row meta-row--stacked">
+            <span className="meta-label">자막 파일 목록</span>
+            <div className="meta-value meta-value--stacked">
+              {subtitleFiles
+                .slice()
+                .sort((a, b) => String(a.modified_at || '').localeCompare(String(b.modified_at || '')))
+                .map((file, index) => (
+                    <div key={`${file.path || file.modified_at || index}`} className="subtitle-file-row">
+                    <span className="subtitle-file-name" title={file.path || ''}>
+                      {(file.path || '').split(/[\\/]/).pop() || file.path || '-'}
+                    </span>
+                    <span className="subtitle-file-date">{formatDateTime(file.modified_at)}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
         {/* missing 상태일 때만 경고 표시 */}
         {video.status === 'missing' && (
           <div className="meta-row">

@@ -69,6 +69,7 @@ END`
 const SORT_CLAUSES = {
   created_desc:  `created_at DESC`,
   updated_desc:  `updated_at DESC`,
+  subtitle_added_desc: `COALESCE(subtitle_added_at, created_at) DESC`,
   rating_desc:   `rating DESC, COALESCE(actor_name,'') ASC, COALESCE(code,'') ASC`,
   rating_asc:    `rating ASC,  COALESCE(actor_name,'') ASC, COALESCE(code,'') ASC`,
   recommended:   `recommended DESC, rating DESC, COALESCE(actor_name,'') ASC`,
@@ -265,6 +266,8 @@ function registerIpcHandlers() {
         subtitle_exts  = @subtitle_exts,
         subtitle_count = @subtitle_count,
         subtitle_size  = @subtitle_size,
+        subtitle_files = @subtitle_files,
+        subtitle_added_at = @subtitle_added_at,
         file_identity = @file_identity,
         status        = CASE WHEN status = 'missing' THEN 'normal' ELSE status END,
         updated_at    = CURRENT_TIMESTAMP
@@ -286,6 +289,8 @@ function registerIpcHandlers() {
         subtitle_exts  = @subtitle_exts,
         subtitle_count = @subtitle_count,
         subtitle_size  = @subtitle_size,
+        subtitle_files = @subtitle_files,
+        subtitle_added_at = @subtitle_added_at,
         file_identity = @file_identity,
         status        = 'normal',
         updated_at    = CURRENT_TIMESTAMP
@@ -296,10 +301,11 @@ function registerIpcHandlers() {
       INSERT INTO videos
         (file_name, file_path, folder_path, extension, size, file_size, modified_at,
          code, actor_name, subtitle_paths, subtitle_exts, subtitle_count, subtitle_size,
-         file_identity, tags, is_new, updated_at)
+         subtitle_files, subtitle_added_at, file_identity, tags, is_new, updated_at)
       VALUES
         (@file_name, @file_path, @folder_path, @extension, @size, @size, @modified_at,
          @code, @actor_name, @subtitle_paths, @subtitle_exts, @subtitle_count, @subtitle_size,
+         @subtitle_files, @subtitle_added_at,
          @file_identity, @tags, 1, CURRENT_TIMESTAMP)
     `)
 
@@ -558,6 +564,7 @@ function registerIpcHandlers() {
   //     excludeDeleteGrade: boolean  - true이면 grade='삭제요망' 제외
   //     excludeMissing:     boolean  - true이면 status='missing' 제외
   //     excludeDeleted:     boolean  - true이면 status='deleted' 제외
+  //     subtitleAddedDays:  number   - true이면 자막 추가일 기준 최근 N일 이내만 표시
   //     grades:             string[] - 지정 시 해당 등급만 (빈 배열=전체)
   //     minRating:          number   - 지정 시 rating >= 이 값
   //   }
@@ -606,6 +613,15 @@ function registerIpcHandlers() {
 
     if (filters.subtitleOnly) {
       filterConditions.push(`COALESCE(subtitle_count, 0) > 0`)
+    }
+
+    const subtitleAddedDays = typeof filters.subtitleAddedDays === 'number'
+      ? Math.floor(filters.subtitleAddedDays)
+      : 0
+    if (subtitleAddedDays > 0) {
+      filterConditions.push(`subtitle_added_at IS NOT NULL`)
+      filterConditions.push(`datetime(subtitle_added_at) >= datetime('now', ?)`)
+      filterParams.push(`-${subtitleAddedDays} days`)
     }
 
     // 삭제요망 등급 제외

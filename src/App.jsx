@@ -5,13 +5,14 @@
  * 앱 탭: library | actors | recommendations | dashboard
  * 라이브러리 서브탭: all | new | recommended
  */
-import { useState, useEffect, useCallback } from 'react'
-import { Alert } from 'antd'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Alert, Modal } from 'antd'
 import './App.css'
 
 import { useVideoSearch }       from './hooks/useVideoSearch.js'
 import SearchBar                from './components/SearchBar.jsx'
 import FilterBar                from './components/FilterBar.jsx'
+import SubtitleDatePanel        from './components/SubtitleDatePanel.jsx'
 import TabBar                   from './components/TabBar.jsx'
 import VideoList                from './components/VideoList.jsx'
 import DetailPanel              from './components/DetailPanel.jsx'
@@ -25,6 +26,7 @@ import ActorsPage               from './pages/Actors/index.jsx'
 import RecommendationsPage      from './pages/Recommendations/index.jsx'
 import DashboardPage            from './pages/Dashboard/index.jsx'
 import StoragePage              from './pages/Storage/index.jsx'
+import { getLocalDateKey }      from './utils/format.js'
 
 export default function App() {
   // ── 앱 탭 ('library' | 'actors' | 'recommendations' | 'dashboard')
@@ -57,6 +59,8 @@ export default function App() {
   const [newCount,          setNewCount]          = useState(0)
   const [newActorCount,     setNewActorCount]     = useState(0)
   const [isAutoScanning,    setIsAutoScanning]    = useState(false)
+  const [selectedSubtitleDateKey, setSelectedSubtitleDateKey] = useState(null)
+  const [showSubtitleDateModal, setShowSubtitleDateModal] = useState(false)
 
   // ── NEW 카운트 갱신 ───────────────────────────────────────────
   const refreshNewCount = useCallback(async () => {
@@ -79,6 +83,19 @@ export default function App() {
     refreshNewCount()
     refreshNewActorCount()
   }, [refreshNewCount, refreshNewActorCount])
+
+  const activeVideos = useMemo(() => {
+    if (!selectedSubtitleDateKey) return videos
+    return videos.filter((video) => getLocalDateKey(video.subtitle_added_at) === selectedSubtitleDateKey)
+  }, [videos, selectedSubtitleDateKey])
+
+  const visibleSelectedVideo = useMemo(() => {
+    if (!selectedSubtitleDateKey) return selectedVideo
+    if (selectedVideo && activeVideos.some((video) => video.id === selectedVideo.id)) {
+      return selectedVideo
+    }
+    return activeVideos[0] || null
+  }, [activeVideos, selectedSubtitleDateKey, selectedVideo])
 
   // ── 폴더 선택 ─────────────────────────────────────────────────
   const handleSelectFolder = async () => {
@@ -159,8 +176,13 @@ export default function App() {
     setCheckedIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
   }, [])
   const handleToggleAll = useCallback((checkAll) => {
-    setCheckedIds(checkAll ? new Set(videos.map((v) => v.id)) : new Set())
-  }, [videos])
+    setCheckedIds(checkAll ? new Set(activeVideos.map((v) => v.id)) : new Set())
+  }, [activeVideos])
+
+  const handleSelectSubtitleDate = useCallback((dateKey) => {
+    setSelectedSubtitleDateKey((prev) => (prev === dateKey ? null : dateKey))
+    setCheckedIds(new Set())
+  }, [])
 
   // ── NEW 해제 ──────────────────────────────────────────────────
   const handleClearCheckedNew = async () => {
@@ -236,6 +258,9 @@ export default function App() {
   }
 
   const viewLabel = currentFolder || '전체 라이브러리'
+  const subtitleSelectionLabel = selectedSubtitleDateKey
+    ? `${Number(selectedSubtitleDateKey.slice(5, 7))}.${Number(selectedSubtitleDateKey.slice(8, 10))}`
+    : null
 
   return (
     <div className="app">
@@ -269,7 +294,7 @@ export default function App() {
         <HeaderActionBar
           appTab={appTab}
           tabMode={tabMode}
-          videos={videos}
+          videos={activeVideos}
           checkedIds={checkedIds}
           scanning={scanning}
           actorPicking={actorPicking}
@@ -338,12 +363,47 @@ export default function App() {
           <FilterBar
             filters={filters}
             onFiltersChange={changeFilters}
-            totalCount={videos.length}
-            totalSize={videos.reduce((s, v) => s + (v.size || 0), 0)}
+            totalCount={activeVideos.length}
+            totalSize={activeVideos.reduce((s, v) => s + (v.size || 0), 0)}
           />
+          <div className="subtitle-date-toggle-bar">
+            <button
+              type="button"
+              className="subtitle-date-toggle-btn"
+              onClick={() => setShowSubtitleDateModal(true)}
+            >
+              자막 날짜 팝업 열기
+            </button>
+            {selectedSubtitleDateKey && (
+              <span className="subtitle-date-toggle-label">
+                선택됨: {subtitleSelectionLabel}
+              </span>
+            )}
+          </div>
+          <Modal
+            open={showSubtitleDateModal}
+            onCancel={() => setShowSubtitleDateModal(false)}
+            footer={null}
+            width={920}
+            title="자막 수정일"
+            destroyOnClose={false}
+            centered
+            className="subtitle-date-modal"
+          >
+            <SubtitleDatePanel
+              videos={videos}
+              selectedDateKey={selectedSubtitleDateKey}
+              onSelectDate={handleSelectSubtitleDate}
+            />
+          </Modal>
           <div className="view-indicator">
             <span className="view-indicator-label">현재 보기</span>
-            <span className="view-indicator-path" title={viewLabel}>{viewLabel}</span>
+            <span
+              className="view-indicator-path"
+              title={subtitleSelectionLabel ? `${viewLabel} · 자막 ${subtitleSelectionLabel}` : viewLabel}
+            >
+              {subtitleSelectionLabel ? `${viewLabel} · 자막 ${subtitleSelectionLabel}` : viewLabel}
+            </span>
             {isAutoScanning && (
               <span className="view-indicator-scanning">라이브러리 확인 중…</span>
             )}
@@ -399,8 +459,8 @@ export default function App() {
               refreshKey={folderRefreshKey}
             />
             <VideoList
-              videos={videos}
-              selectedId={selectedVideo?.id}
+              videos={activeVideos}
+              selectedId={visibleSelectedVideo?.id}
               onSelect={setSelectedVideo}
               loading={loading}
               checkedIds={checkedIds}
@@ -408,9 +468,9 @@ export default function App() {
               onToggleAll={handleToggleAll}
             />
             <div className="detail-panel-wrap">
-              {selectedVideo ? (
+              {visibleSelectedVideo ? (
                 <DetailPanel
-                  video={selectedVideo}
+                  video={visibleSelectedVideo}
                   onUpdate={handleVideoUpdated}
                   onOpenVideo={(fp) => window.api.openVideo(fp)}
                   onOpenFolder={(fp) => window.api.openFolder(fp)}
@@ -448,7 +508,7 @@ export default function App() {
       {/* 파일 복사 모달 */}
       {showFileCopyModal && (
         <FileCopyModal
-          videos={videos}
+          videos={activeVideos}
           selectedIds={checkedIds}
           onClose={() => { setShowFileCopyModal(false); setCheckedIds(new Set()) }}
         />

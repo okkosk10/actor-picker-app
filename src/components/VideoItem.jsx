@@ -19,7 +19,7 @@
 import { memo, useMemo } from 'react'
 import { Tag }      from 'antd'
 import StarRating   from './StarRating.jsx'
-import { GRADE_COLORS, parseActors } from '../utils/format.js'
+import { GRADE_COLORS, formatDate, parseActors } from '../utils/format.js'
 
 const STATUS_MISSING_COLOR = 'red'
 
@@ -102,8 +102,9 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
         )}
 
         {video.subtitle_count > 0 && (
-          <Tag color="cyan">
+          <Tag color="cyan" title={video.subtitle_added_at ? `자막 추가일: ${formatDate(video.subtitle_added_at)}` : undefined}>
             자막 {video.subtitle_exts || video.subtitle_count}
+            {video.subtitle_added_at ? ` · ${formatDate(video.subtitle_added_at)}` : ''}
           </Tag>
         )}
 

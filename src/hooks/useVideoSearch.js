@@ -35,6 +35,7 @@ const DEFAULT_FILTERS = {
   excludeMissing:     true,    // status='missing' 제외 (기존 hideMissing 기본값 유지)
   excludeDeleted:     true,    // status='deleted' 제외
   subtitleOnly:       false,   // 자막이 있는 영상만 표시
+  subtitleAddedDays:  0,       // 자막 추가일 기준 필터 (0 = 제한 없음)
   grades:             [],      // 빈 배열 = 전체 등급 허용
   minRating:          0,       // 0 = 별점 필터 없음
 }
