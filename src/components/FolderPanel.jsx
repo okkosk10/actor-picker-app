@@ -3,19 +3,20 @@
  * 스캔된 폴더 목록 사이드바 패널
  *
  * Props:
- *   currentFolder  {string|null} - 현재 선택된 폴더 경로 (null = 전체 라이브러리)
- *   onSelectFolder {Function}    - 폴더 선택 콜백 (path: string|null)
- *   refreshKey     {number}      - 이 값이 바뀌면 폴더 목록을 새로 조회한다
- *                                  (스캔/삭제 완료 후 App에서 증가시킴)
+ *   currentFolder     {string|null} - 현재 선택된 폴더 경로 (null = 전체 라이브러리)
+ *   onSelectFolder    {Function}    - 폴더 선택 콜백 (path: string|null)
+ *   onToggleFolderActive {Function} - 폴더 활성화/비활성화 토글 콜백 (path: string)
+ *   refreshKey        {number}      - 이 값이 바뀌면 폴더 목록을 새로 조회한다
+ *                                     (스캔/삭제 완료 후 App에서 증가시킴)
  *
  * 표시 항목:
  *   [전체 라이브러리]  N개
- *   [D:\VIDEO\A]      N개 / 추천 N / 삭제요망 N
+ *   [D:\VIDEO\A]      N개 / 추천 N / 삭제요망 N (활성화/비활성화 토글)
  *   ...
  */
 import { useState, useEffect, useCallback } from 'react'
 
-export default function FolderPanel({ currentFolder, onSelectFolder, refreshKey }) {
+export default function FolderPanel({ currentFolder, onSelectFolder, onToggleFolderActive, refreshKey }) {
   // { library: { total, recommended_count, delete_count }, folders: [...] }
   const [data,    setData]    = useState(null)
   const [loading, setLoading] = useState(false)
@@ -45,6 +46,14 @@ export default function FolderPanel({ currentFolder, onSelectFolder, refreshKey 
     const parts = fullPath.replace(/\\/g, '/').split('/').filter(Boolean)
     if (parts.length <= 2) return fullPath
     return '…\\' + parts.slice(-2).join('\\')
+  }
+
+  // 폴더 활성화/비활성화 토글 (App의 핸들러 호출)
+  const handleToggleFolderActive = async (e, folderPath) => {
+    e.stopPropagation()
+    if (onToggleFolderActive) {
+      await onToggleFolderActive(folderPath)
+    }
   }
 
   return (
@@ -92,29 +101,42 @@ export default function FolderPanel({ currentFolder, onSelectFolder, refreshKey 
           <p className="folder-panel-empty">스캔된 폴더 없음</p>
         )}
         {data?.folders.map((folder) => (
-          <button
+          <div
             key={folder.root_path}
-            type="button"
-            className={`folder-item ${currentFolder === folder.root_path ? 'folder-item--active' : ''}`}
-            onClick={() => onSelectFolder(folder.root_path)}
-            title={folder.root_path}
+            className={`folder-item-wrapper ${!folder.is_active ? 'folder-item-wrapper--disabled' : ''}`}
           >
-            <span className="folder-item-icon">📂</span>
-            <span className="folder-item-body">
-              <span className="folder-item-name" title={folder.root_path}>
-                {shortPath(folder.root_path)}
+            <button
+              type="button"
+              className={`folder-item ${currentFolder === folder.root_path ? 'folder-item--active' : ''} ${!folder.is_active ? 'folder-item--disabled' : ''}`}
+              onClick={() => onSelectFolder(folder.root_path)}
+              title={folder.root_path}
+            >
+              <span className="folder-item-icon">{folder.is_active ? '📂' : '📂‍🔒'}</span>
+              <span className="folder-item-body">
+                <span className="folder-item-name" title={folder.root_path}>
+                  {shortPath(folder.root_path)}
+                </span>
+                <span className="folder-item-stats">
+                  <span className="stat-total">{folder.total}개</span>
+                  {folder.recommended_count > 0 && (
+                    <span className="stat-rec">★{folder.recommended_count}</span>
+                  )}
+                  {folder.delete_count > 0 && (
+                    <span className="stat-del">🗑{folder.delete_count}</span>
+                  )}
+                </span>
               </span>
-              <span className="folder-item-stats">
-                <span className="stat-total">{folder.total}개</span>
-                {folder.recommended_count > 0 && (
-                  <span className="stat-rec">★{folder.recommended_count}</span>
-                )}
-                {folder.delete_count > 0 && (
-                  <span className="stat-del">🗑{folder.delete_count}</span>
-                )}
-              </span>
-            </span>
-          </button>
+            </button>
+            {/* 폴더 활성화/비활성화 토글 버튼 */}
+            <button
+              type="button"
+              className="folder-toggle-btn"
+              onClick={(e) => handleToggleFolderActive(e, folder.root_path)}
+              title={folder.is_active ? '폴더 비활성화 (파일 숨김)' : '폴더 활성화 (파일 표시)'}
+            >
+              {folder.is_active ? '👁' : '👁‍🗨'}
+            </button>
+          </div>
         ))}
       </div>
     </aside>

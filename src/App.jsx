@@ -62,6 +62,7 @@ export default function App() {
   const [isAutoScanning,    setIsAutoScanning]    = useState(false)
   const [selectedSubtitleDateKey, setSelectedSubtitleDateKey] = useState(null)
   const [showSubtitleDateModal, setShowSubtitleDateModal] = useState(false)
+  const [driveAlerts,       setDriveAlerts]       = useState([])
 
   // ── NEW 카운트 갱신 ───────────────────────────────────────────
   const refreshNewCount = useCallback(async () => {
@@ -84,6 +85,56 @@ export default function App() {
     refreshNewCount()
     refreshNewActorCount()
   }, [refreshNewCount, refreshNewActorCount])
+
+  // ── 드라이브 연결 상태 모니터링 ───────────────────────────────
+  useEffect(() => {
+    // 드라이브 연결 끊김 이벤트 수신
+    const unsubscribeDisconnect = window.api.onDriveDisconnected((payload) => {
+      const shortPath = payload.path.split(/[/\\]/).pop()
+      const alertId = `disconnect-${payload.path}`
+      setDriveAlerts((prev) => [
+        ...prev.filter((a) => a.id !== alertId), // 같은 경로의 이전 알림 제거
+        { 
+          id: alertId, 
+          type: 'error', 
+          title: '⚠️ 외장하드 연결 끊김',
+          message: `폴더 "${shortPath}" (${payload.path})에 접근할 수 없습니다.`,
+          path: payload.path,
+          timestamp: payload.timestamp,
+        },
+      ])
+      // 10초 후 자동 제거
+      setTimeout(() => {
+        setDriveAlerts((prev) => prev.filter((a) => a.id !== alertId))
+      }, 10000)
+    })
+
+    // 드라이브 재연결 이벤트 수신
+    const unsubscribeReconnect = window.api.onDriveReconnected((payload) => {
+      const shortPath = payload.path.split(/[/\\]/).pop()
+      const alertId = `reconnect-${payload.path}`
+      setDriveAlerts((prev) => [
+        ...prev.filter((a) => a.id !== alertId),
+        { 
+          id: alertId, 
+          type: 'success', 
+          title: '✓ 외장하드 재연결',
+          message: `폴더 "${shortPath}"이(가) 다시 연결되었습니다.`,
+          path: payload.path,
+          timestamp: new Date().toISOString(),
+        },
+      ])
+      // 5초 후 자동 제거
+      setTimeout(() => {
+        setDriveAlerts((prev) => prev.filter((a) => a.id !== alertId))
+      }, 5000)
+    })
+
+    return () => {
+      unsubscribeDisconnect()
+      unsubscribeReconnect()
+    }
+  }, [])
 
   const activeVideos = useMemo(() => {
     if (!selectedSubtitleDateKey) return videos
@@ -171,6 +222,25 @@ export default function App() {
 
   // ── 파일 복사 모달 ────────────────────────────────────────────
   const handleOpenFileCopy = useCallback(() => setShowFileCopyModal(true), [])
+
+  // ── 폴더 활성화/비활성화 토글 ───────────────────────────────
+  const handleToggleFolderActive = useCallback(async (folderPath) => {
+    try {
+      const result = await window.api.toggleFolderActive(folderPath)
+      if (result.success) {
+        // 검색 결과 갱신 (비활성화 폴더 파일 제외)
+        await refresh()
+        // 폴더 목록 새로고침
+        setFolderRefreshKey((k) => k + 1)
+      } else {
+        setError('폴더 활성화 상태 변경 실패: ' + result.error)
+      }
+    } catch (err) {
+      setError('폴더 활성화 상태 변경 중 오류: ' + err.message)
+    }
+  }, [refresh])
+
+  // ── 파일 복사 모달 ────────────────────────────────────────────
 
   // ── 체크박스 ──────────────────────────────────────────────────
   const handleToggleCheck = useCallback((_e, id) => {
@@ -457,10 +527,25 @@ export default function App() {
             />
           )}
 
+          {/* 드라이브 연결 상태 알림 */}
+          {driveAlerts.map((alert) => (
+            <Alert
+              key={alert.id}
+              type={alert.type}
+              showIcon
+              closable
+              onClose={() => setDriveAlerts((prev) => prev.filter((a) => a.id !== alert.id))}
+              message={alert.title}
+              description={alert.message}
+              style={{ borderRadius: 0, flexShrink: 0 }}
+            />
+          ))}
+
           <div className="app-content">
             <FolderPanel
               currentFolder={currentFolder}
               onSelectFolder={changeFolder}
+              onToggleFolderActive={handleToggleFolderActive}
               refreshKey={folderRefreshKey}
             />
             <VideoList

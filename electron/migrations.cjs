@@ -346,6 +346,18 @@ const MIGRATIONS = [
       `)
     },
   },
+
+  {
+    version: '016_add_scanned_roots_is_active',
+    description: 'scanned_roots 테이블에 is_active 컬럼 추가 (폴더 활성화/비활성화 토글)',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(scanned_roots)').all().map((c) => c.name)
+      if (!cols.includes('is_active')) {
+        db.exec(`ALTER TABLE scanned_roots ADD COLUMN is_active INTEGER DEFAULT 1`)
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_scanned_roots_is_active ON scanned_roots (is_active)`)
+      }
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

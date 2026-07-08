@@ -466,4 +466,57 @@ function getDashboardStats() {
   }
 }
 
-module.exports = { getDb, closeDb, recordVideoActivity, getDashboardStats }
+// ── 폴더 활성화/비활성화 관리 ─────────────────────────────────────
+
+/**
+ * 스캔된 루트 폴더 목록과 활성화 상태를 조회한다.
+ * 
+ * @returns {Array} [{ root_path, scanned_at, is_active }, ...]
+ */
+function getScannedRoots() {
+  const database = getDb()
+  return database.prepare(`
+    SELECT root_path, scanned_at, COALESCE(is_active, 1) AS is_active
+    FROM scanned_roots
+    ORDER BY scanned_at DESC
+  `).all()
+}
+
+/**
+ * 특정 폴더의 활성화 상태를 토글한다.
+ * 
+ * @param {string} folderPath - 토글할 폴더 경로
+ * @returns {boolean} 토글 후 is_active 상태
+ */
+function toggleFolderActive(folderPath) {
+  const database = getDb()
+  const root = database.prepare(`
+    SELECT id, is_active FROM scanned_roots WHERE root_path = ?
+  `).get(folderPath)
+
+  if (!root) {
+    console.warn('[toggleFolderActive] 존재하지 않는 폴더:', folderPath)
+    return null
+  }
+
+  const newState = root.is_active ? 0 : 1
+  database.prepare(`
+    UPDATE scanned_roots SET is_active = ? WHERE root_path = ?
+  `).run(newState, folderPath)
+
+  return newState === 1
+}
+
+/**
+ * 활성화된 폴더 경로들을 배열로 반환한다.
+ * 
+ * @returns {string[]}
+ */
+function getActiveFolderPaths() {
+  const database = getDb()
+  return database.prepare(`
+    SELECT root_path FROM scanned_roots WHERE is_active = 1
+  `).all().map(r => r.root_path)
+}
+
+module.exports = { getDb, closeDb, recordVideoActivity, getDashboardStats, getScannedRoots, toggleFolderActive, getActiveFolderPaths }

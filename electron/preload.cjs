@@ -374,5 +374,38 @@ contextBridge.exposeInMainWorld('api', {
   //        | { success: false, error }
   analyzeActorAi: (actorId, force = false) =>
     ipcRenderer.invoke('analyze-actor-ai', actorId, force),
+
+  // ── 폴더 활성화/비활성화 토글 ────────────────────────────────
+  // 활성화된 폴더의 파일만 검색 결과에 포함된다.
+  // @param folderPath {string} - 토글할 폴더 경로
+  // 반환: { success: true, isActive: boolean } | { success: false, error }
+  toggleFolderActive: (folderPath) =>
+    ipcRenderer.invoke('toggle-folder-active', folderPath),
+
+  // ── 드라이브 연결 끊김 이벤트 구독 ──────────────────────────
+  // callback: (payload) => void
+  //   payload: { path, timestamp }
+  // 반환: unsubscribe 함수
+  onDriveDisconnected: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('drive-disconnected', listener)
+    return () => ipcRenderer.removeListener('drive-disconnected', listener)
+  },
+
+  // ── 드라이브 재연결 이벤트 구독 ────────────────────────────
+  // callback: (payload) => void
+  //   payload: { path }
+  // 반환: unsubscribe 함수
+  onDriveReconnected: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('drive-reconnected', listener)
+    return () => ipcRenderer.removeListener('drive-reconnected', listener)
+  },
+
+  // ── 드라이브 이벤트 제거 ────────────────────────────────────
+  removeDriveEvents: () => {
+    ipcRenderer.removeAllListeners('drive-disconnected')
+    ipcRenderer.removeAllListeners('drive-reconnected')
+  },
 })
 

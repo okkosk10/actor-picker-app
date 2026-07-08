@@ -451,12 +451,24 @@
   margin: 0;
 }
 
+/* 폴더 항목 래퍼 (토글 버튼 포함) */
+.folder-item-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+}
+
+.folder-item-wrapper--disabled {
+  opacity: 0.6;
+}
+
 /* 폴더 항목 버튼 */
 .folder-item {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  width: 100%;
+  flex: 1;
   padding: 7px 10px;
   background: none;
   border: none;
@@ -473,6 +485,35 @@
   border-left-color: var(--accent);
   background: rgba(99, 102, 241, 0.10);
 }
+.folder-item--disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+.folder-item--disabled:hover {
+  background: none;
+}
+
+/* 폴더 활성화/비활성화 토글 버튼 */
+.folder-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 7px 8px;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  border-radius: 3px;
+}
+.folder-toggle-btn:hover:not(:disabled) {
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.08);
+}
+.folder-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 
 .folder-item-icon {
   font-size: 13px;

@@ -25,7 +25,7 @@
 const path = require('path')
 const fs   = require('fs')
 const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
-const { getDb, recordVideoActivity, getDashboardStats } = require('./db.cjs')
+const { getDb, recordVideoActivity, getDashboardStats, toggleFolderActive, getScannedRoots } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
 const { parseFileName }       = require('./parser.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, createMtpThemeBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
@@ -776,6 +776,7 @@ function registerIpcHandlers() {
   //   total             : 해당 루트 하위 normal 영상 수
   //   recommended_count : 추천작 수 (normal만)
   //   delete_count      : 삭제요망(grade) 중 normal인 수
+  //   is_active         : 폴더 활성화 상태
   //
   // 반환: { library: {...}, folders: FolderStat[] }
   //   library : 전체 라이브러리 합계 통계
@@ -794,9 +795,11 @@ function registerIpcHandlers() {
       WHERE status = 'normal'
     `).get()
 
-    // 루트 폴더 목록 (scanned_roots 테이블)
+    // 루트 폴더 목록 (scanned_roots 테이블, is_active 포함)
     const roots = db.prepare(`
-      SELECT root_path, scanned_at FROM scanned_roots ORDER BY root_path ASC
+      SELECT root_path, scanned_at, COALESCE(is_active, 1) AS is_active
+      FROM scanned_roots
+      ORDER BY root_path ASC
     `).all()
 
     // 각 루트별 통계 (folder_path 하위 파일 집계, status='normal'만)
@@ -817,6 +820,7 @@ function registerIpcHandlers() {
         return {
           root_path:         row.root_path,
           scanned_at:        row.scanned_at,
+          is_active:         row.is_active === 1,
           total:             stats.total,
           recommended_count: stats.recommended_count,
           delete_count:      stats.delete_count,
@@ -933,6 +937,14 @@ function registerIpcHandlers() {
       filterConditions.push(`rating >= ?`)
       filterParams.push(minRating)
     }
+
+    // ── 비활성화 폴더 제외 ────────────────────────────────────
+    // scanned_roots에서 is_active = 0인 폴더의 파일은 검색 결과에서 제외
+    filterConditions.push(`NOT EXISTS (
+      SELECT 1 FROM scanned_roots sr
+      WHERE sr.is_active = 0
+        AND (folder_path = sr.root_path OR folder_path LIKE (sr.root_path || '\\%') OR folder_path LIKE (sr.root_path || '/%'))
+    )`)
 
     // 필터 조건 SQL 문자열 조합
     const filterClause = filterConditions.length > 0
@@ -3484,6 +3496,21 @@ function registerIpcHandlers() {
     try {
       const db = getDb()
       return await analyzeActor(db, Number(actorId), force)
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── 폴더 활성화/비활성화 토글 ────────────────────────────────────────────────
+  // folderPath: string - 토글할 폴더 경로
+  // 반환: { success: true, isActive } | { success: false, error }
+  ipcMain.handle('toggle-folder-active', async (_event, folderPath) => {
+    try {
+      const isActive = toggleFolderActive(folderPath)
+      if (isActive === null) {
+        return { success: false, error: '폴더를 찾을 수 없습니다' }
+      }
+      return { success: true, isActive }
     } catch (err) {
       return { success: false, error: err.message }
     }
