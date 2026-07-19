@@ -267,7 +267,7 @@ export default function ActorDetailPanel({
       {actor && avdbsProfile?.detail && (
         <div className="actor-detail__meta-summary">
           <div className="actor-detail__meta-row">
-            <span className="actor-detail__meta-label">AVDBS</span>
+            <span className="actor-detail__meta-label">웹</span>
             <span className="actor-detail__meta-value">
               {avdbsLoading
                 ? '조회 중…'
