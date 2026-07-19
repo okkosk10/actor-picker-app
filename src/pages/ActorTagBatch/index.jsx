@@ -535,7 +535,7 @@ export default function ActorTagBatchPage() {
       } else {
         setAvdbsDetail(null)
       }
-      setStatus(`AVDBS 검색 결과 ${cached.results.length}건 (캐시)`)
+      setStatus(`웹 검색 결과 ${cached.results.length}건 (캐시)`)
       setError('')
       return
     }
@@ -563,9 +563,9 @@ export default function ActorTagBatchPage() {
         selected: first,
       })
 
-      setStatus(`AVDBS 검색 결과 ${results?.length || 0}건`)
+      setStatus(`웹 검색 결과 ${results?.length || 0}건`)
     } catch (err) {
-      setError(`AVDBS 검색 실패: ${err.message || '알 수 없는 오류'}`)
+      setError(`웹 검색 실패: ${err.message || '알 수 없는 오류'}`)
       setAvdbsResults([])
       setAvdbsSelected(null)
       setAvdbsDetail(null)
@@ -591,7 +591,7 @@ export default function ActorTagBatchPage() {
       setAvdbsDetail(detail)
       avdbsDetailCacheRef.current.set(result.actorIdx, detail)
     } catch (err) {
-      setError(`AVDBS 상세 조회 실패: ${err.message || '알 수 없는 오류'}`)
+      setError(`웹 상세 조회 실패: ${err.message || '알 수 없는 오류'}`)
     } finally {
       setAvdbsLoading(false)
     }
@@ -611,7 +611,7 @@ export default function ActorTagBatchPage() {
       return
     }
     if (!avdbsSelected?.actorIdx) {
-      setError('먼저 AVDBS 배우를 선택하세요')
+      setError('먼저 웹 검색 결과에서 배우를 선택하세요')
       return
     }
 
@@ -632,7 +632,7 @@ export default function ActorTagBatchPage() {
       })
 
       if (!res?.success) {
-        throw new Error('AVDBS 가져오기 실패')
+        throw new Error('웹 정보 가져오기 실패')
       }
 
       const actorId = targetActor.id
@@ -651,12 +651,12 @@ export default function ActorTagBatchPage() {
         message.warning(`일부 항목만 반영: ${res.warnings[0]}`)
       }
 
-      setStatus(`AVDBS 정보 반영 완료: ${res.actor?.name || targetActor.name}`)
+      setStatus(`웹 정보 반영 완료: ${res.actor?.name || targetActor.name}`)
       await loadActors()
-      message.success('AVDBS 정보를 가져왔습니다')
+      message.success('웹 정보를 가져왔습니다')
     } catch (err) {
-      setError(err.message || 'AVDBS 가져오기 실패')
-      message.error(err.message || 'AVDBS 가져오기 실패')
+      setError(err.message || '웹 정보 가져오기 실패')
+      message.error(err.message || '웹 정보 가져오기 실패')
     } finally {
       setSaving(false)
     }
@@ -900,7 +900,7 @@ export default function ActorTagBatchPage() {
           </div>
 
           <div className="actor-batch-preview-card">
-            <h3>AVDBS 가져오기</h3>
+            <h3>웹 정보 가져오기</h3>
             <p className="actor-batch-preview-hint">
               배우 리스트에서 이름을 클릭한 뒤, 버튼을 눌러 해당 배우명으로 조회합니다.
               {activeActor ? ` 현재 대상: ${activeActor.name}` : ' 아직 선택된 배우가 없습니다.'}
@@ -912,14 +912,14 @@ export default function ActorTagBatchPage() {
               onClick={searchAvdbsByActiveActor}
               disabled={avdbsLoading || !activeActor}
             >
-              {avdbsLoading ? '조회 중…' : '선택 배우명으로 AVDBS 조회'}
+              {avdbsLoading ? '조회 중…' : '선택 배우명으로 웹 조회'}
             </button>
 
             <div className="actor-batch-avdbs-results">
               {!activeActor ? (
                 <div className="actor-batch-preview-empty">왼쪽 목록에서 배우를 클릭하세요.</div>
               ) : avdbsResults.length === 0 ? (
-                <div className="actor-batch-preview-empty">검색 결과가 없습니다.</div>
+                <div className="actor-batch-preview-empty">웹 조회 결과가 없습니다.</div>
               ) : (
                 avdbsResults.map((result) => (
                   <button
@@ -953,7 +953,7 @@ export default function ActorTagBatchPage() {
                   <div><strong>이름</strong> {avdbsDetail.primaryName || '—'}</div>
                   <div><strong>별칭</strong> {(avdbsDetail.aliases || []).join(', ') || '—'}</div>
                   <div><strong>추천 태그</strong> {formatSuggestedTags(deriveAvdbsSuggestedTags(avdbsDetail, avdbsSelected))}</div>
-                  <div><strong>AVDBS 평점</strong> {avdbsDetail.avdbsAverageRating != null && Number.isFinite(Number(avdbsDetail.avdbsAverageRating)) ? Number(avdbsDetail.avdbsAverageRating).toFixed(1) : '—'}</div>
+                  <div><strong>웹 평점</strong> {avdbsDetail.avdbsAverageRating != null && Number.isFinite(Number(avdbsDetail.avdbsAverageRating)) ? Number(avdbsDetail.avdbsAverageRating).toFixed(1) : '—'}</div>
                   <div><strong>자동 평점(10점제)</strong> {formatActorRatingStars(toActorRatingFromAvdbs(avdbsDetail.avdbsAverageRating))}</div>
                   <div><strong>생년월일</strong> {avdbsDetail.profile?.birth || '—'}</div>
                   <div><strong>신장</strong> {avdbsDetail.profile?.height || '—'}</div>
