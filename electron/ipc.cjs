@@ -114,6 +114,17 @@ function toActorRatingFromAvdbs(averageRating) {
   return Number(clamped.toFixed(1))
 }
 
+function buildActorMemoFromAvdbs(existingMemo, detail) {
+  const current = String(existingMemo || '').trim()
+  const intro = String(detail?.profile?.intro || detail?.ogDescription || '').trim()
+  if (!intro) return current
+
+  if (!current) return intro
+  if (current.includes(intro)) return current
+
+  return `${current}\n\n${intro}`
+}
+
 async function ensureUniqueTargetPath(dirPath, fileName) {
   const ext = path.extname(fileName)
   const base = path.basename(fileName, ext)
@@ -2635,6 +2646,7 @@ function registerIpcHandlers() {
       agency: actor.agency || '',
       image_path: imageFileName || actor.image_path || '',
       rating: appliedRating,
+      memo: buildActorMemoFromAvdbs(actor.memo, detail),
     }
 
     db.prepare(`
@@ -2669,9 +2681,9 @@ function registerIpcHandlers() {
 
     db.prepare(`
       UPDATE actors
-      SET aliases = ?, agency = ?, image_path = ?, tags = ?, rating = ?, updated_at = CURRENT_TIMESTAMP
+      SET aliases = ?, agency = ?, image_path = ?, tags = ?, rating = ?, memo = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(updatePayload.aliases, updatePayload.agency, updatePayload.image_path, afterTags.join(', '), updatePayload.rating, actorId)
+    `).run(updatePayload.aliases, updatePayload.agency, updatePayload.image_path, afterTags.join(', '), updatePayload.rating, updatePayload.memo, actorId)
 
     if (added.length > 0 || removed.length > 0) {
       db.prepare(`
