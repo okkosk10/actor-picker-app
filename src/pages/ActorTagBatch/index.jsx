@@ -152,13 +152,13 @@ function downloadText(filename, text, mime = 'text/plain;charset=utf-8') {
   URL.revokeObjectURL(url)
 }
 
-function actorToExportRow(actor, draftTags) {
+function actorToExportRow(actor, draftTags, draftMemo) {
   return {
     id: actor.id,
     name: actor.name || '',
     aliases: actor.aliases || '',
     tags: joinTags(draftTags ?? actor.tags ?? ''),
-    memo: actor.memo || '',
+    memo: String(draftMemo ?? actor.memo ?? ''),
   }
 }
 
@@ -243,6 +243,7 @@ export default function ActorTagBatchPage() {
   const [showArchived, setShowArchived] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [draftTagsById, setDraftTagsById] = useState({})
+  const [draftMemoById, setDraftMemoById] = useState({})
   const [bulkAddText, setBulkAddText] = useState('')
   const [bulkRemoveText, setBulkRemoveText] = useState('')
   const [status, setStatus] = useState('')
@@ -269,10 +270,13 @@ export default function ActorTagBatchPage() {
       setActors(nextActors)
 
       const nextDrafts = {}
+      const nextMemos = {}
       for (const actor of nextActors) {
         nextDrafts[actor.id] = joinTags(actor.tags || '')
+        nextMemos[actor.id] = String(actor.memo || '')
       }
       setDraftTagsById(nextDrafts)
+      setDraftMemoById(nextMemos)
       setSelectedIds(new Set())
       setActiveActorId((prev) => (nextActors.some((actor) => actor.id === prev) ? prev : null))
       setStatus(`배우 ${nextActors.length}명 로드 완료`)
@@ -335,19 +339,25 @@ export default function ActorTagBatchPage() {
         const after = splitTags(draftTagsById[actor.id] ?? actor.tags ?? '')
         const beforeText = before.join(', ')
         const afterText = after.join(', ')
-        if (beforeText === afterText) return null
+        const beforeMemo = String(actor.memo || '')
+        const afterMemo = String(draftMemoById[actor.id] ?? actor.memo ?? '')
+        const memoChanged = beforeMemo !== afterMemo
+        if (beforeText === afterText && !memoChanged) return null
         const { added, removed } = diffTags(before, after)
         return {
           actorId: actor.id,
           name: actor.name,
           beforeText,
           afterText,
+          beforeMemo,
+          afterMemo,
+          memoChanged,
           added,
           removed,
         }
       })
       .filter(Boolean)
-  }, [actors, draftTagsById])
+  }, [actors, draftMemoById, draftTagsById])
 
   const selectedCount = selectedIds.size
   const pendingCount = pendingChanges.length
@@ -367,6 +377,10 @@ export default function ActorTagBatchPage() {
 
   const updateDraftTags = useCallback((actorId, value) => {
     setDraftTagsById((prev) => ({ ...prev, [actorId]: joinTags(value) }))
+  }, [])
+
+  const updateDraftMemo = useCallback((actorId, value) => {
+    setDraftMemoById((prev) => ({ ...prev, [actorId]: String(value || '') }))
   }, [])
 
   const applyBulkTransform = useCallback((mode) => {
@@ -424,7 +438,7 @@ export default function ActorTagBatchPage() {
       ? actors.filter((actor) => selectedIds.has(actor.id))
       : actors
 
-    const rows = source.map((actor) => actorToExportRow(actor, draftTagsById[actor.id]))
+    const rows = source.map((actor) => actorToExportRow(actor, draftTagsById[actor.id], draftMemoById[actor.id]))
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
 
     if (format === 'json') {
@@ -434,7 +448,7 @@ export default function ActorTagBatchPage() {
     }
 
     setStatus(`${selectedOnly && selectedIds.size > 0 ? '선택한' : '전체'} 배우 ${rows.length}명 내보내기 완료`)
-  }, [actors, draftTagsById, selectedIds])
+  }, [actors, draftMemoById, draftTagsById, selectedIds])
 
   const handleImportClick = useCallback(() => {
     importInputRef.current?.click()
@@ -464,6 +478,7 @@ export default function ActorTagBatchPage() {
       }
 
       const nextDrafts = { ...draftTagsById }
+      const nextMemos = { ...draftMemoById }
       let matched = 0
       let skipped = 0
 
@@ -475,17 +490,20 @@ export default function ActorTagBatchPage() {
         }
 
         const tags = record.tags ?? record.actorTags ?? record.actor_tags ?? ''
+        const memo = record.memo ?? record.actorMemo ?? record.actor_memo ?? actor.memo ?? ''
         nextDrafts[actor.id] = joinTags(tags)
+        nextMemos[actor.id] = String(memo || '')
         matched += 1
       }
 
       setDraftTagsById(nextDrafts)
+      setDraftMemoById(nextMemos)
       setStatus(`가져오기 완료: ${matched}명 반영, ${skipped}명 건너뜀`)
       setError('')
     } catch (err) {
       setError(`가져오기 실패: ${err.message || '알 수 없는 오류'}`)
     }
-  }, [actorsByAlias, actorsById, actorsByName, draftTagsById])
+  }, [actorsByAlias, actorsById, actorsByName, draftMemoById, draftTagsById])
 
   const handleSave = useCallback(async () => {
     if (pendingChanges.length === 0) {
@@ -503,6 +521,7 @@ export default function ActorTagBatchPage() {
       const updates = pendingChanges.map((change) => ({
         actorId: change.actorId,
         tags: draftTagsById[change.actorId] ?? '',
+        memo: draftMemoById[change.actorId] ?? '',
       }))
 
       const result = await window.api.bulkUpdateActorTags({
@@ -516,22 +535,35 @@ export default function ActorTagBatchPage() {
       }
 
       const updatesById = new Map(
-        updates.map((item) => [item.actorId, joinTags(item.tags || '')]),
+        updates.map((item) => [item.actorId, {
+          tags: joinTags(item.tags || ''),
+          memo: String(item.memo || ''),
+        }]),
       )
 
       setActors((prev) => prev.map((actor) => {
-        if (!updatesById.has(actor.id)) return actor
+        const next = updatesById.get(actor.id)
+        if (!next) return actor
         return {
           ...actor,
-          tags: updatesById.get(actor.id),
+          tags: next.tags,
+          memo: next.memo,
           updated_at: new Date().toISOString(),
         }
       }))
 
       setDraftTagsById((prev) => {
         const next = { ...prev }
-        for (const [actorId, tags] of updatesById.entries()) {
-          next[actorId] = tags
+        for (const [actorId, data] of updatesById.entries()) {
+          next[actorId] = data.tags
+        }
+        return next
+      })
+
+      setDraftMemoById((prev) => {
+        const next = { ...prev }
+        for (const [actorId, data] of updatesById.entries()) {
+          next[actorId] = data.memo
         }
         return next
       })
@@ -544,14 +576,17 @@ export default function ActorTagBatchPage() {
     } finally {
       setSaving(false)
     }
-  }, [draftTagsById, pendingChanges])
+  }, [draftMemoById, draftTagsById, pendingChanges])
 
   const handleReset = useCallback(() => {
     const nextDrafts = {}
+    const nextMemos = {}
     for (const actor of actors) {
       nextDrafts[actor.id] = joinTags(actor.tags || '')
+      nextMemos[actor.id] = String(actor.memo || '')
     }
     setDraftTagsById(nextDrafts)
+    setDraftMemoById(nextMemos)
     setSelectedIds(new Set())
     setStatus('변경사항을 초기화했습니다')
     setError('')
@@ -677,10 +712,14 @@ export default function ActorTagBatchPage() {
 
       const actorId = targetActor.id
       if (res.actor) {
-        setDraftTagsById((prev) => ({
+                      setDraftTagsById((prev) => ({
           ...prev,
           [actorId]: joinTags(res.actor.tags || ''),
         }))
+                      setDraftMemoById((prev) => ({
+                        ...prev,
+                        [actorId]: String(res.actor.memo || ''),
+                      }))
       }
 
       if (Number.isFinite(Number(res.appliedRating)) && Number(res.appliedRating) > 0) {
@@ -831,14 +870,18 @@ export default function ActorTagBatchPage() {
                   <th>별칭</th>
                   <th>기존 태그</th>
                   <th>편집 태그</th>
+                  <th>기존 메모</th>
+                  <th>편집 메모</th>
                 </tr>
               </thead>
               <tbody>
                 {actors.map((actor) => {
                   const isSelected = selectedIds.has(actor.id)
                   const currentTags = draftTagsById[actor.id] ?? actor.tags ?? ''
+                  const currentMemo = String(draftMemoById[actor.id] ?? actor.memo ?? '')
                   const originalTags = joinTags(actor.tags || '')
-                  const changed = currentTags !== originalTags
+                  const originalMemo = String(actor.memo || '')
+                  const changed = currentTags !== originalTags || currentMemo !== originalMemo
 
                   return (
                     <tr
@@ -875,13 +918,26 @@ export default function ActorTagBatchPage() {
                           placeholder="태그1, 태그2"
                         />
                       </td>
+                      <td className="actor-batch-col-memo">
+                        <span title={originalMemo || '메모 없음'}>{originalMemo || '—'}</span>
+                      </td>
+                      <td>
+                        <input
+                          className="actor-batch-tag-input"
+                          type="text"
+                          value={currentMemo}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => updateDraftMemo(actor.id, e.target.value)}
+                          placeholder="메모"
+                        />
+                      </td>
                     </tr>
                   )
                 })}
 
                 {!loading && actors.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="actor-batch-empty">배우 데이터가 없습니다.</td>
+                    <td colSpan={8} className="actor-batch-empty">배우 데이터가 없습니다.</td>
                   </tr>
                 )}
               </tbody>
@@ -914,6 +970,13 @@ export default function ActorTagBatchPage() {
                       <span className="actor-batch-preview-arrow">→</span>
                       <span className="actor-batch-preview-tags actor-batch-preview-tags--after">{change.afterText || '—'}</span>
                     </div>
+                    {change.memoChanged && (
+                      <div className="actor-batch-preview-line actor-batch-preview-line--compact">
+                        <span className="actor-batch-preview-tags actor-batch-preview-tags--before">{change.beforeMemo || '—'}</span>
+                        <span className="actor-batch-preview-arrow">→</span>
+                        <span className="actor-batch-preview-tags actor-batch-preview-tags--after">{change.afterMemo || '—'}</span>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {pendingChanges.length > 40 && (

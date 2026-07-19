@@ -2707,8 +2707,8 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
-  // 배우 태그 일괄 수정
-  // updates: [{ actorId, tags }]
+  // 배우 태그/메모 일괄 수정
+  // updates: [{ actorId, tags, memo? }]
   // changeSource: manual | import | collection
   // ══════════════════════════════════════════════════════════════
   ipcMain.handle('bulk-update-actor-tags', async (_event, payload = {}) => {
@@ -2723,7 +2723,7 @@ function registerIpcHandlers() {
 
     const updateOne = db.prepare(`
       UPDATE actors
-      SET tags = ?, updated_at = CURRENT_TIMESTAMP
+      SET tags = ?, memo = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `)
 
@@ -2741,16 +2741,17 @@ function registerIpcHandlers() {
           throw new Error(`유효하지 않은 actorId: ${item.actorId}`)
         }
 
-        const actor = db.prepare('SELECT id, name, tags FROM actors WHERE id = ?').get(actorId)
+        const actor = db.prepare('SELECT id, name, tags, memo FROM actors WHERE id = ?').get(actorId)
         if (!actor) {
           throw new Error(`존재하지 않는 배우 id: ${actorId}`)
         }
 
         const beforeTags = normalizeTagsList(actor.tags)
         const afterTags = normalizeTagsList(item.tags)
+        const nextMemo = String(item.memo ?? actor.memo ?? '')
         const { added, removed } = diffTagLists(beforeTags, afterTags)
 
-        updateOne.run(afterTags.join(', '), actorId)
+        updateOne.run(afterTags.join(', '), nextMemo, actorId)
         insertLog.run(
           actorId,
           actor.name,

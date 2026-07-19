@@ -212,8 +212,8 @@ contextBridge.exposeInMainWorld('api', {
   backupDatabase: () =>
     ipcRenderer.invoke('backup-database'),
 
-  // ── 배우 태그 일괄 수정 ───────────────────────────────────────
-  // @param payload {{ updates: [{ actorId, tags }], changeSource?, sourceDetail? }}
+  // ── 배우 태그/메모 일괄 수정 ──────────────────────────────────
+  // @param payload {{ updates: [{ actorId, tags, memo? }], changeSource?, sourceDetail? }}
   // 반환: { success: true, updatedCount, skippedCount }
   bulkUpdateActorTags: (payload) =>
     ipcRenderer.invoke('bulk-update-actor-tags', payload),
