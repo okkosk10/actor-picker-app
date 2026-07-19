@@ -114,9 +114,37 @@ function toActorRatingFromAvdbs(averageRating) {
   return Number(clamped.toFixed(1))
 }
 
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeAvdbsIntroText(text, detail) {
+  let cleaned = String(text || '')
+    .replace(/\s*\|\s*AVDBS\s*$/i, '')
+    .trim()
+
+  const nameCandidates = [
+    detail?.primaryName,
+    ...(Array.isArray(detail?.aliases) ? detail.aliases : []),
+  ]
+    .map((name) => String(name || '').trim())
+    .filter(Boolean)
+
+  for (const name of nameCandidates) {
+    const prefixRe = new RegExp(`^${escapeRegExp(name)}\\s*\/\\s*`, 'i')
+    if (prefixRe.test(cleaned)) {
+      cleaned = cleaned.replace(prefixRe, '').trim()
+      break
+    }
+  }
+
+  return cleaned
+}
+
 function buildActorMemoFromAvdbs(existingMemo, detail) {
   const current = String(existingMemo || '').trim()
-  const intro = String(detail?.profile?.intro || detail?.ogDescription || '').trim()
+  const rawIntro = String(detail?.profile?.intro || detail?.ogDescription || '').trim()
+  const intro = normalizeAvdbsIntroText(rawIntro, detail)
   if (!intro) return current
 
   if (!current) return intro
