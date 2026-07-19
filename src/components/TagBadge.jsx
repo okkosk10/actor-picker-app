@@ -12,9 +12,22 @@
  *   <TagBadge label="4K"   variant="tag" />
  *   <TagBadge label="삭제됨" variant="missing" />
  */
-export default function TagBadge({ label, variant = 'tag' }) {
+const AUTO_TAG_VARIANTS = {
+  '단신': 'actor-meta-size-small',
+  '장신': 'actor-meta-size-tall',
+  '빈유': 'actor-meta-cup-light',
+  '거유': 'actor-meta-cup-medium',
+  '폭유': 'actor-meta-cup-full',
+  '질사해금': 'actor-meta-flag',
+}
+
+export function getActorTagBadgeVariant(label) {
+  return AUTO_TAG_VARIANTS[String(label || '').trim()] || 'tag'
+}
+
+export default function TagBadge({ label, variant = 'tag', className = '' }) {
   return (
-    <span className={`tag-badge tag-badge--${variant}`}>
+    <span className={['tag-badge', `tag-badge--${variant}`, className].filter(Boolean).join(' ')}>
       {label}
     </span>
   )

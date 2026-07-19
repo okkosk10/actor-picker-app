@@ -4,6 +4,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import ActorImage from '../common/ActorImage.jsx'
+import TagBadge, { getActorTagBadgeVariant } from '../TagBadge.jsx'
 
 const EMPTY_FORM = {
   name:       '',
@@ -256,7 +257,12 @@ export default function ActorDetailPanel({
                 <span className="actor-detail__quick-chip actor-detail__quick-chip--empty">태그 없음</span>
               ) : (
                 tagPreviewList.map((tag) => (
-                  <span key={tag} className="actor-detail__quick-chip">{tag}</span>
+                  <TagBadge
+                    key={tag}
+                    label={tag}
+                    variant={getActorTagBadgeVariant(tag)}
+                    className="actor-detail__quick-chip"
+                  />
                 ))
               )}
             </div>

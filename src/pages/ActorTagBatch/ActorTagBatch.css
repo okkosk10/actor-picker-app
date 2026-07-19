@@ -532,6 +532,19 @@
   margin-bottom: 12px;
 }
 
+.actor-batch-auto-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.actor-batch-auto-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
 .actor-batch-avdbs-score {
   display: inline-flex;
   align-items: center;

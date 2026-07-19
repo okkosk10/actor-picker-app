@@ -302,9 +302,8 @@ function buildSuggestedTags(detail, searchResult = null) {
   const heightMatch = heightText.match(/(\d{3})\s*cm/i)
   const height = heightMatch ? Number(heightMatch[1]) : null
   if (height != null) {
-    if (height <= 154) tags.push('단신')
+    if (height <= 155) tags.push('단신')
     else if (height >= 165) tags.push('장신')
-    else tags.push('중간')
   }
 
   const cupText = String(detail.profile?.cup || '').toUpperCase()

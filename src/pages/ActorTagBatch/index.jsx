@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { message } from 'antd'
+import TagBadge, { getActorTagBadgeVariant } from '../../components/TagBadge.jsx'
 import './ActorTagBatch.css'
 
 function normalizeText(value) {
@@ -161,8 +162,20 @@ function actorToExportRow(actor, draftTags) {
   }
 }
 
-function formatSuggestedTags(tags) {
-  return Array.isArray(tags) && tags.length > 0 ? tags.join(', ') : '—'
+function renderSuggestedTags(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) return '—'
+  return (
+    <span className="actor-batch-auto-tags">
+      {tags.map((tag) => (
+        <TagBadge
+          key={tag}
+          label={tag}
+          variant={getActorTagBadgeVariant(tag)}
+          className="actor-batch-auto-tag"
+        />
+      ))}
+    </span>
+  )
 }
 
 function formatAvdbsRatings(ratings) {
@@ -979,7 +992,7 @@ export default function ActorTagBatchPage() {
                 <div className="actor-batch-avdbs-detail__fields">
                   <div><strong>이름</strong> {avdbsDetail.primaryName || '—'}</div>
                   <div><strong>별칭</strong> {(avdbsDetail.aliases || []).join(', ') || '—'}</div>
-                  <div><strong>추천 태그</strong> {formatSuggestedTags(deriveAvdbsSuggestedTags(avdbsDetail, avdbsSelected))}</div>
+                  <div><strong>추천 태그</strong> {renderSuggestedTags(deriveAvdbsSuggestedTags(avdbsDetail, avdbsSelected))}</div>
                   <div><strong>웹 평점</strong> {avdbsDetail.avdbsAverageRating != null && Number.isFinite(Number(avdbsDetail.avdbsAverageRating)) ? Number(avdbsDetail.avdbsAverageRating).toFixed(1) : '—'}</div>
                   <div><strong>자동 평점(10점제)</strong> {formatActorRatingStars(toActorRatingFromAvdbs(avdbsDetail.avdbsAverageRating))}</div>
                   <div><strong>생년월일</strong> {avdbsDetail.profile?.birth || '—'}</div>

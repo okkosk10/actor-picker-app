@@ -1134,6 +1134,36 @@
   color: var(--text-muted);
   border: 1px solid var(--border);
 }
+.tag-badge--actor-meta-size-small {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
+}
+.tag-badge--actor-meta-size-tall {
+  background: #ecfeff;
+  color: #0f766e;
+  border: 1px solid #67e8f9;
+}
+.tag-badge--actor-meta-cup-light {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fdba74;
+}
+.tag-badge--actor-meta-cup-medium {
+  background: #fefce8;
+  color: #a16207;
+  border: 1px solid #fde047;
+}
+.tag-badge--actor-meta-cup-full {
+  background: #fdf2f8;
+  color: #be185d;
+  border: 1px solid #f9a8d4;
+}
+.tag-badge--actor-meta-flag {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
 
 /* ── 추천 토글 버튼 ──────────────────────────────────────── */
 .btn-recommended {
@@ -3178,10 +3208,6 @@
 .actor-detail__quick-chip {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
 }
 .actor-detail__quick-chip--auto {
   border-color: rgba(34, 197, 94, 0.25);
