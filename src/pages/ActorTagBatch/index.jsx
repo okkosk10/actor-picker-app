@@ -495,8 +495,28 @@ export default function ActorTagBatchPage() {
         throw new Error('배치 저장 실패')
       }
 
+      const updatesById = new Map(
+        updates.map((item) => [item.actorId, joinTags(item.tags || '')]),
+      )
+
+      setActors((prev) => prev.map((actor) => {
+        if (!updatesById.has(actor.id)) return actor
+        return {
+          ...actor,
+          tags: updatesById.get(actor.id),
+          updated_at: new Date().toISOString(),
+        }
+      }))
+
+      setDraftTagsById((prev) => {
+        const next = { ...prev }
+        for (const [actorId, tags] of updatesById.entries()) {
+          next[actorId] = tags
+        }
+        return next
+      })
+
       setStatus(`저장 완료: ${result.updatedCount}건 반영, 백업 ${backupResult.backupPath}`)
-      await loadActors()
       message.success('배우 태그가 저장됐습니다')
     } catch (err) {
       setError(err.message || '저장 실패')
@@ -504,7 +524,7 @@ export default function ActorTagBatchPage() {
     } finally {
       setSaving(false)
     }
-  }, [draftTagsById, loadActors, pendingChanges])
+  }, [draftTagsById, pendingChanges])
 
   const handleReset = useCallback(() => {
     const nextDrafts = {}
