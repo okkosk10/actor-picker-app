@@ -40,18 +40,48 @@ async function fetchHtml(url) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      backgroundThrottling: false,
     },
   })
 
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const isChallengePage = (html) => {
+    const text = String(html || '')
+    return text.length < 2000 && /localStorage\s*\[['\"]ncc['\"]\]|window\.onload|setTimeout\(/i.test(text)
+  }
+
   try {
     win.webContents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0 Safari/537.36')
-    await win.loadURL(url)
+    let lastError = null
 
-    // AVDBS는 일부 페이지에서 렌더 후 JS로 결과를 채우므로, 짧게 대기한 뒤 DOM을 읽는다.
-    await new Promise((resolve) => setTimeout(resolve, 4500))
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await win.loadURL(url)
+      } catch (err) {
+        lastError = err
+        await sleep(900 * attempt)
+        continue
+      }
 
-    const html = await win.webContents.executeJavaScript('document.documentElement.outerHTML')
-    return String(html || '')
+      await sleep(2200)
+      let html = String(await win.webContents.executeJavaScript('document.documentElement.outerHTML') || '')
+
+      if (isChallengePage(html)) {
+        await sleep(1800)
+        win.webContents.reloadIgnoringCache()
+        await sleep(2600)
+        html = String(await win.webContents.executeJavaScript('document.documentElement.outerHTML') || '')
+      }
+
+      if (!isChallengePage(html) && html.length >= 1200) {
+        return html
+      }
+
+      lastError = new Error('AVDBS anti-bot challenge page detected')
+      await sleep(700 * attempt)
+    }
+
+    throw new Error(`AVDBS 페이지 로드 실패: ${lastError?.message || 'unknown error'}`)
   } finally {
     if (!win.isDestroyed()) win.destroy()
   }
