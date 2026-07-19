@@ -303,10 +303,17 @@ function buildSuggestedTags(detail, searchResult = null) {
   const height = heightMatch ? Number(heightMatch[1]) : null
   if (height != null) {
     if (height <= 154) tags.push('단신')
-    if (height >= 168) tags.push('장신')
+    else if (height >= 165) tags.push('장신')
+    else tags.push('중간')
   }
 
-  if (/FC2/i.test(joined)) tags.push('FC2')
+  const cupText = String(detail.profile?.cup || '').toUpperCase()
+  const cupLetter = cupText.match(/([A-Z])/i)?.[1]?.toUpperCase() || ''
+  if (cupLetter) {
+    if (['A', 'B', 'C'].includes(cupLetter)) tags.push('빈유')
+    else if (['D', 'E', 'F'].includes(cupLetter)) tags.push('거유')
+    else if (['G', 'H', 'I', 'J', 'K'].includes(cupLetter)) tags.push('폭유')
+  }
 
   if (/질내사\s*(?:정|[oO0ㅇ○◯●◎Ｏ])/.test(joined)) tags.push('질사해금')
 
