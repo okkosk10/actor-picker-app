@@ -207,6 +207,30 @@ contextBridge.exposeInMainWorld('api', {
   updateActor: (id, data) =>
     ipcRenderer.invoke('update-actor', id, data),
 
+  // ── DB 백업 ───────────────────────────────────────────────────
+  // 반환: { success: true, backupPath }
+  backupDatabase: () =>
+    ipcRenderer.invoke('backup-database'),
+
+  // ── 배우 태그 일괄 수정 ───────────────────────────────────────
+  // @param payload {{ updates: [{ actorId, tags }], changeSource?, sourceDetail? }}
+  // 반환: { success: true, updatedCount, skippedCount }
+  bulkUpdateActorTags: (payload) =>
+    ipcRenderer.invoke('bulk-update-actor-tags', payload),
+
+  // ── AVDBS 배우 검색/상세/가져오기 ───────────────────────────
+  searchAvdbsActors: (query) =>
+    ipcRenderer.invoke('search-avdbs-actors', query),
+
+  getAvdbsActorDetail: (actorIdx) =>
+    ipcRenderer.invoke('get-avdbs-actor-detail', actorIdx),
+
+  getActorAvdbsProfile: (actorId) =>
+    ipcRenderer.invoke('get-actor-avdbs-profile', actorId),
+
+  importAvdbsActor: (payload) =>
+    ipcRenderer.invoke('import-avdbs-actor', payload),
+
   // ── 배우 아카이브 (숨김 처리, 삭제 아님) ─────────────────────
   // @param id {number}
   // 반환: { success: true }

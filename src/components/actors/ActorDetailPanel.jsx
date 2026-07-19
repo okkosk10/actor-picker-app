@@ -3,13 +3,11 @@
  * 배우 상세 정보 표시 및 편집 폼
  */
 import { useState, useEffect, useCallback } from 'react'
-import StarRating from '../common/StarRating.jsx'
 import ActorImage from '../common/ActorImage.jsx'
 
 const EMPTY_FORM = {
   name:       '',
   image_path: '',
-  agency:     '',
   tags:       '',
   rating:     0,
   memo:       '',
@@ -20,11 +18,21 @@ function formFromActor(actor) {
   return {
     name:       actor.name       || '',
     image_path: actor.image_path || '',
-    agency:     actor.agency     || '',
     tags:       actor.tags       || '',
     rating:     actor.rating     || 0,
     memo:       actor.memo       || '',
   }
+}
+
+function splitTags(value) {
+  return String(value || '')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+}
+
+function joinTags(tags) {
+  return Array.from(new Set(tags)).join(', ')
 }
 
 const QUICK_FILTERS = [
@@ -34,6 +42,24 @@ const QUICK_FILTERS = [
   { key: 'recommended', label: '⭐추천작' },
   { key: 'not_copied',  label: '복사 안한작품' },
 ]
+
+function formatAvdbsAverage(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  const clamped = Math.max(0, Math.min(10, n))
+  return `${clamped.toFixed(1)} / 10`
+}
+
+function formatAvdbsRadar(ratings) {
+  if (!ratings || typeof ratings !== 'object') return '—'
+  const chips = Object.entries(ratings)
+    .map(([label, value]) => {
+      const n = Number(value)
+      return Number.isFinite(n) ? `${label} ${n.toFixed(1)}` : null
+    })
+    .filter(Boolean)
+  return chips.length > 0 ? chips.join('  |  ') : '—'
+}
 
 export default function ActorDetailPanel({
   actor,
@@ -56,6 +82,9 @@ export default function ActorDetailPanel({
   const [aiData,        setAiData]       = useState(null)   // 캐시된 분석 결과
   const [aiLoading,     setAiLoading]    = useState(false)
   const [aiError,       setAiError]      = useState(null)
+  const [avdbsProfile,  setAvdbsProfile] = useState(null)
+  const [avdbsLoading,  setAvdbsLoading] = useState(false)
+  const tagPreviewList = splitTags(form.tags).slice(0, 8)
 
   useEffect(() => {
     setForm(formFromActor(actor))
@@ -65,6 +94,7 @@ export default function ActorDetailPanel({
     setFilteredVids(videos)
     setAiData(null)
     setAiError(null)
+    setAvdbsProfile(null)
     // 배우 전환 시 캐시된 AI 분석 결과를 조회
     if (actor?.id) {
       window.api.getAiAnalysis('actor', actor.id).then((res) => {
@@ -76,6 +106,35 @@ export default function ActorDetailPanel({
   useEffect(() => {
     if (quickFilter === 'all') setFilteredVids(videos)
   }, [videos, quickFilter])
+
+  useEffect(() => {
+    let mounted = true
+    if (!actor?.id) {
+      setAvdbsProfile(null)
+      return () => { mounted = false }
+    }
+
+    setAvdbsLoading(true)
+    window.api.getActorAvdbsProfile(actor.id)
+      .then((res) => {
+        if (!mounted) return
+        if (res?.success) {
+          setAvdbsProfile(res)
+        } else {
+          setAvdbsProfile(null)
+        }
+      })
+      .catch((err) => {
+        if (!mounted) return
+        setAvdbsProfile(null)
+        console.warn('[ActorDetailPanel] AVDBS profile load failed:', err?.message || err)
+      })
+      .finally(() => {
+        if (mounted) setAvdbsLoading(false)
+      })
+
+    return () => { mounted = false }
+  }, [actor?.id])
 
   const handleQuickFilter = useCallback(async (filterKey) => {
     setQuickFilter(filterKey)
@@ -188,25 +247,114 @@ export default function ActorDetailPanel({
         </div>
       )}
 
+      {actor && (
+        <div className="actor-detail__quick-summary">
+          <div className="actor-detail__quick-row">
+            <span className="actor-detail__quick-label">현재 태그</span>
+            <div className="actor-detail__quick-chips">
+              {tagPreviewList.length === 0 ? (
+                <span className="actor-detail__quick-chip actor-detail__quick-chip--empty">태그 없음</span>
+              ) : (
+                tagPreviewList.map((tag) => (
+                  <span key={tag} className="actor-detail__quick-chip">{tag}</span>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {actor && avdbsProfile?.detail && (
+        <div className="actor-detail__meta-summary">
+          <div className="actor-detail__meta-row">
+            <span className="actor-detail__meta-label">AVDBS</span>
+            <span className="actor-detail__meta-value">
+              {avdbsLoading
+                ? '조회 중…'
+                : (avdbsProfile?.mapping?.external_name || avdbsProfile?.detail?.primaryName || '—')}
+            </span>
+          </div>
+
+          {!avdbsLoading && avdbsProfile?.detail && (
+            <>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">별칭</span>
+                <span className="actor-detail__meta-value">{(avdbsProfile.detail.aliases || []).join(', ') || '—'}</span>
+              </div>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">평점</span>
+                <span className="actor-detail__meta-value">{formatAvdbsAverage(avdbsProfile.detail.avdbsAverageRating)}</span>
+              </div>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">세부</span>
+                <span className="actor-detail__meta-value">{formatAvdbsRadar(avdbsProfile.detail.avdbsRatings)}</span>
+              </div>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">생년</span>
+                <span className="actor-detail__meta-value">{avdbsProfile.detail.profile?.birth || '—'}</span>
+              </div>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">신장</span>
+                <span className="actor-detail__meta-value">{avdbsProfile.detail.profile?.height || '—'}</span>
+              </div>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">사이즈</span>
+                <span className="actor-detail__meta-value">{avdbsProfile.detail.profile?.measurements || '—'}</span>
+              </div>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">컵</span>
+                <span className="actor-detail__meta-value">{avdbsProfile.detail.profile?.cup || '—'}</span>
+              </div>
+              <div className="actor-detail__meta-row">
+                <span className="actor-detail__meta-label">데뷔</span>
+                <span className="actor-detail__meta-value">{avdbsProfile.detail.profile?.debut || '—'}</span>
+              </div>
+            </>
+          )}
+
+        </div>
+      )}
+
       {/* 폼 필드 */}
-      <div className="detail-edit">
+      <div className="detail-edit actor-detail__edit-grid">
         <div className="edit-field">
           <label className="edit-label">이름 *</label>
           <input className="edit-input" value={form.name} onChange={(e) => handleChange('name', e.target.value)} placeholder="배우 이름" />
         </div>
-        <div className="edit-field">
-          <label className="edit-label">소속사</label>
-          <input className="edit-input" value={form.agency} onChange={(e) => handleChange('agency', e.target.value)} placeholder="소속사명" />
-        </div>
-        <div className="edit-field">
+
+        <div className="edit-field actor-detail__edit-main">
           <label className="edit-label">태그 (쉼표 구분)</label>
           <input className="edit-input" value={form.tags} onChange={(e) => handleChange('tags', e.target.value)} placeholder="태그1, 태그2" />
+
+          <label className="edit-label">평점 (10점 만점)</label>
+          <input
+            className="edit-input"
+            type="number"
+            min={0}
+            max={10}
+            step={0.1}
+            value={form.rating}
+            onChange={(e) => {
+              const raw = Number(e.target.value)
+              const safe = Number.isFinite(raw) ? Math.max(0, Math.min(10, raw)) : 0
+              handleChange('rating', safe)
+            }}
+            placeholder="0 ~ 10"
+          />
+
+          <div className="detail-save-row actor-detail__detail-save-row--inline">
+            <button className="btn-save" type="button" onClick={handleSave} disabled={saving}>
+              {saving ? '저장 중…' : (actor ? '저장' : '배우 등록')}
+            </button>
+            {actor && (
+              <button className="btn-secondary" type="button" onClick={handleArchive} disabled={archiving}>
+                {archiving ? '처리 중…' : (actor.is_archived ? '📤 복구' : '📦 보관함')}
+              </button>
+            )}
+          </div>
         </div>
-        <div className="edit-field">
-          <label className="edit-label">별점</label>
-          <StarRating value={form.rating} onChange={(v) => handleChange('rating', v)} />
-        </div>
-        <div className="edit-field">
+
+        <div className="edit-field actor-detail__memo-block">
           <label className="edit-label">메모</label>
           <textarea className="edit-textarea" rows={3} value={form.memo} onChange={(e) => handleChange('memo', e.target.value)} placeholder="메모" />
         </div>
@@ -215,18 +363,6 @@ export default function ActorDetailPanel({
       {/* 오류/성공 메시지 */}
       {error   && <div style={{ color: '#ef4444', fontSize: 13 }}>{error}</div>}
       {success && <div style={{ color: '#22c55e', fontSize: 13 }}>{success}</div>}
-
-      {/* 저장/보관 버튼 */}
-      <div className="detail-save-row">
-        <button className="btn-save" type="button" onClick={handleSave} disabled={saving}>
-          {saving ? '저장 중…' : (actor ? '저장' : '배우 등록')}
-        </button>
-        {actor && (
-          <button className="btn-secondary" type="button" onClick={handleArchive} disabled={archiving}>
-            {archiving ? '처리 중…' : (actor.is_archived ? '📤 복구' : '📦 보관함')}
-          </button>
-        )}
-      </div>
 
       {/* TOP 영상 */}
       {actor && topVideos.length > 0 && (

@@ -10,7 +10,6 @@ import ActorDetailPanel from '../../components/actors/ActorDetailPanel.jsx'
 
 const DEFAULT_FILTERS = {
   minRating:     0,
-  agency:        '',
   tag:           '',
   minVideoCount: 0,
   sortBy:        'name_asc',
@@ -52,7 +51,6 @@ export default function ActorsPage() {
         query:         q.trim() || undefined,
         archived:      arch ? undefined : false,
         minRating:     flt.minRating  || undefined,
-        agency:        flt.agency     || undefined,
         tag:           flt.tag        || undefined,
         minVideoCount: flt.minVideoCount || undefined,
         sortBy:        flt.sortBy,

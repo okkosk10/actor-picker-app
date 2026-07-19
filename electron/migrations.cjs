@@ -358,6 +358,92 @@ const MIGRATIONS = [
       }
     },
   },
+
+  {
+    version: '017_create_actor_tag_change_logs',
+    description: 'actor 태그 변경 로그 테이블 생성',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS actor_tag_change_logs (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_id         INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+          actor_name       TEXT    NOT NULL,
+          before_tags      TEXT    DEFAULT '',
+          after_tags       TEXT    DEFAULT '',
+          added_tags       TEXT    DEFAULT '',
+          removed_tags     TEXT    DEFAULT '',
+          change_source    TEXT    DEFAULT 'manual',
+          source_detail    TEXT    DEFAULT '',
+          created_at       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_actor_tag_change_logs_actor_id ON actor_tag_change_logs (actor_id);
+        CREATE INDEX IF NOT EXISTS idx_actor_tag_change_logs_created_at ON actor_tag_change_logs (created_at);
+      `)
+    },
+  },
+
+  {
+    version: '018_create_actor_external_mappings',
+    description: '외부 배우 매핑 테이블 생성',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS actor_external_mappings (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_id        INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+          source_name     TEXT    NOT NULL,
+          external_id     TEXT    NOT NULL,
+          external_url    TEXT    NOT NULL,
+          external_name   TEXT    DEFAULT '',
+          match_status    TEXT    DEFAULT 'pending',
+          last_checked_at TEXT    DEFAULT CURRENT_TIMESTAMP,
+          created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (actor_id, source_name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_actor_external_mappings_actor ON actor_external_mappings (actor_id);
+        CREATE INDEX IF NOT EXISTS idx_actor_external_mappings_source ON actor_external_mappings (source_name, external_id);
+      `)
+    },
+  },
+  {
+    version: '019_create_actor_external_profiles',
+    description: '배우 외부 프로필 캐시 테이블 생성 (로컬 표시용)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS actor_external_profiles (
+          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_id            INTEGER NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+          source_name         TEXT    NOT NULL,
+          external_id         TEXT    NOT NULL,
+          profile_json        TEXT    NOT NULL DEFAULT '{}',
+          avdbs_average_rating REAL,
+          fetched_at          TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          created_at          TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at          TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (actor_id, source_name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_actor_external_profiles_actor
+          ON actor_external_profiles (actor_id);
+        CREATE INDEX IF NOT EXISTS idx_actor_external_profiles_source
+          ON actor_external_profiles (source_name, external_id);
+      `)
+    },
+  },
+  {
+    version: '020_migrate_actor_rating_scale_to_10',
+    description: '기존 5점제 배우 평점을 10점제로 변환',
+    up(db) {
+      db.exec(`
+        UPDATE actors
+        SET rating = ROUND(rating * 2, 1),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE rating > 0 AND rating <= 5
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

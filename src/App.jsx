@@ -27,10 +27,11 @@ import RecommendationsPage      from './pages/Recommendations/index.jsx'
 import DashboardPage            from './pages/Dashboard/index.jsx'
 import StoragePage              from './pages/Storage/index.jsx'
 import SubtitlesPage            from './pages/Subtitles/index.jsx'
+import ActorTagBatchPage        from './pages/ActorTagBatch/index.jsx'
 import { getLocalDateKey }      from './utils/format.js'
 
 export default function App() {
-  // ── 앱 탭 ('library' | 'actors' | 'recommendations' | 'dashboard' | 'storage' | 'subtitles')
+  // ── 앱 탭 ('library' | 'actors' | 'actor-tags' | 'recommendations' | 'dashboard' | 'storage' | 'subtitles')
   const [appTab, setAppTab] = useState('library')
 
   // ── 영상 검색 훅 ──────────────────────────────────────────────
@@ -346,6 +347,7 @@ export default function App() {
           {[
             { key: 'library',         label: '영상 관리' },
             { key: 'actors',          label: newActorCount > 0 ? `배우 관리 (${newActorCount})` : '배우 관리' },
+            { key: 'actor-tags',      label: '배우 태그 일괄 관리' },
             { key: 'subtitles',       label: '자막 보관소' },
             { key: 'recommendations', label: '🎬 추천·탐색' },
             { key: 'dashboard',       label: '대시보드' },
@@ -390,6 +392,9 @@ export default function App() {
 
       {/* ── 배우 관리 탭 ─────────────────────────────────── */}
       {appTab === 'actors' && <ActorsPage />}
+
+      {/* ── 배우 태그 일괄 관리 탭 ────────────────────────── */}
+      {appTab === 'actor-tags' && <ActorTagBatchPage />}
 
       {/* ── 자막 보관소 탭 ───────────────────────────────── */}
       {appTab === 'subtitles' && <SubtitlesPage />}

@@ -35,6 +35,7 @@ const { parseTargetSizeGB }      = require('./services/themeSizeHelper.cjs')
 const { createThemeFolders }     = require('./services/themeCopyService.cjs')
 const { askAiChatRecommend }     = require('./services/aiChatRecommendService.cjs')
 const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
+const { searchAvdbsActors, fetchAvdbsActorDetail, downloadImageToUserData, buildSuggestedTags } = require('./services/avdbsScraper.cjs')
 const { parseSubtitlePaths } = require('./subtitles.cjs')
 
 const SUBTITLE_ARCHIVE_DIR = 'subtitle-archive'
@@ -77,6 +78,40 @@ function sanitizePathSegment(value) {
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
     .replace(/[.\s]+$/g, '')
     .slice(0, 80) || 'subtitle'
+}
+
+function normalizeTagsList(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(',')
+
+  const seen = new Set()
+  const result = []
+  for (const item of source) {
+    const tag = String(item || '').trim()
+    if (!tag || seen.has(tag)) continue
+    seen.add(tag)
+    result.push(tag)
+  }
+  return result
+}
+
+function diffTagLists(beforeTags, afterTags) {
+  const beforeSet = new Set(beforeTags)
+  const afterSet = new Set(afterTags)
+  return {
+    added: afterTags.filter((tag) => !beforeSet.has(tag)),
+    removed: beforeTags.filter((tag) => !afterSet.has(tag)),
+  }
+}
+
+function toActorRatingFromAvdbs(averageRating) {
+  const raw = Number(averageRating)
+  if (!Number.isFinite(raw)) return 0
+
+  // AVDBS 평균점수는 10점 스케일로 취급한다.
+  const clamped = Math.max(0, Math.min(10, raw))
+  return Number(clamped.toFixed(1))
 }
 
 async function ensureUniqueTargetPath(dirPath, fileName) {
@@ -1802,9 +1837,11 @@ function registerIpcHandlers() {
     const params     = []
 
     // 아카이브 필터 (기본: 활성 배우만)
-    const archived = options.archived === true ? 1 : 0
-    conditions.push('a.is_archived = ?')
-    params.push(archived)
+    if (options.archived !== 'all') {
+      const archived = options.archived === true ? 1 : 0
+      conditions.push('a.is_archived = ?')
+      params.push(archived)
+    }
 
     // 신규 배우 필터 (New Actors 탭 — isNew=true 일 때만)
     if (options.isNew === true) {
@@ -2378,6 +2415,7 @@ function registerIpcHandlers() {
           image_path  = ?,
           category    = ?,
           agency      = ?,
+          aliases     = ?,
           tags        = ?,
           rating      = ?,
           memo        = ?,
@@ -2389,6 +2427,7 @@ function registerIpcHandlers() {
       data.image_path !== undefined ? (data.image_path || '').trim() : actor.image_path,
       data.category   !== undefined ? (data.category   || '').trim() : actor.category,
       data.agency     !== undefined ? (data.agency     || '').trim() : actor.agency,
+      data.aliases    !== undefined ? (data.aliases    || '').trim() : actor.aliases,
       data.tags       !== undefined ? (data.tags       || '').trim() : actor.tags,
       data.rating     !== undefined ? data.rating                    : actor.rating,
       data.memo       !== undefined ? (data.memo       || '').trim() : actor.memo,
@@ -2435,6 +2474,299 @@ function registerIpcHandlers() {
     `).run(id)
 
     return { success: true }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // DB 백업
+  // 기존 videos.db 파일을 userData/backups/ 아래로 복사한다.
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('backup-database', async () => {
+    const userDataDir = app.getPath('userData')
+    const sourcePath = path.join(userDataDir, 'videos.db')
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error('백업할 데이터베이스 파일이 없습니다.')
+    }
+
+    const backupDir = path.join(userDataDir, 'backups')
+    fs.mkdirSync(backupDir, { recursive: true })
+
+    const stamp = new Date().toISOString().replace(/[.:]/g, '-').replace('T', '_').replace('Z', '')
+    const backupPath = path.join(backupDir, `videos-backup-${stamp}.db`)
+    fs.copyFileSync(sourcePath, backupPath)
+
+    return { success: true, backupPath }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // AVDBS 배우 검색
+  // query: 배우명
+  // 반환: [{ actorIdx, name, aliasText, aliases, recommendationCount, agency, imageUrl, url }]
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('search-avdbs-actors', async (_event, query) => {
+    return searchAvdbsActors(query)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // AVDBS 배우 상세 조회
+  // 반환: { actorIdx, url, title, primaryName, aliases, imageUrl, ogDescription, profile }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-avdbs-actor-detail', async (_event, actorIdx) => {
+    return fetchAvdbsActorDetail(actorIdx)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 기준 AVDBS 매핑/상세 조회
+  // @param actorId {number}
+  // 반환: { success, mapping, detail, warning? }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-actor-avdbs-profile', async (_event, actorId) => {
+    const db = getDb()
+    const parsedActorId = Number(actorId)
+    if (!Number.isFinite(parsedActorId) || parsedActorId <= 0) {
+      throw new Error(`유효하지 않은 actorId: ${actorId}`)
+    }
+
+    const mapping = db.prepare(`
+      SELECT actor_id, source_name, external_id, external_url, external_name, match_status, last_checked_at, updated_at
+      FROM actor_external_mappings
+      WHERE actor_id = ? AND source_name = 'avdbs'
+      LIMIT 1
+    `).get(parsedActorId)
+
+    if (!mapping) {
+      return { success: true, mapping: null, detail: null }
+    }
+
+    const profileRow = db.prepare(`
+      SELECT profile_json, avdbs_average_rating, fetched_at, updated_at
+      FROM actor_external_profiles
+      WHERE actor_id = ? AND source_name = 'avdbs'
+      LIMIT 1
+    `).get(parsedActorId)
+
+    if (!profileRow) {
+      return {
+        success: true,
+        mapping,
+        detail: null,
+        warning: '로컬 AVDBS 프로필이 없습니다. 배우 태그 일괄 관리에서 가져오기를 1회 실행하세요.',
+      }
+    }
+
+    let detail = null
+    try {
+      detail = JSON.parse(profileRow.profile_json || '{}')
+    } catch {
+      detail = null
+    }
+
+    if (!detail || typeof detail !== 'object') {
+      return {
+        success: true,
+        mapping,
+        detail: null,
+        warning: '로컬 AVDBS 프로필 데이터가 손상되었습니다. 다시 가져오기를 실행하세요.',
+      }
+    }
+
+    if (detail.avdbsAverageRating == null && Number.isFinite(Number(profileRow.avdbs_average_rating))) {
+      detail.avdbsAverageRating = Number(profileRow.avdbs_average_rating)
+    }
+
+    return {
+      success: true,
+      mapping,
+      detail,
+      fetchedAt: profileRow.fetched_at,
+      updatedAt: profileRow.updated_at,
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // AVDBS 배우 정보 + 이미지 가져오기
+  // payload: { actorId, externalId, externalName?, applySuggestedTags? }
+  // 반환: { success, actor, detail, suggestedTags, imageFileName }
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('import-avdbs-actor', async (_event, payload = {}) => {
+    const db = getDb()
+    const actorId = Number(payload.actorId)
+    const externalId = Number(payload.externalId)
+    if (!Number.isFinite(actorId) || actorId <= 0) {
+      throw new Error(`유효하지 않은 actorId: ${payload.actorId}`)
+    }
+    if (!Number.isFinite(externalId) || externalId <= 0) {
+      throw new Error(`유효하지 않은 externalId: ${payload.externalId}`)
+    }
+
+    const actor = db.prepare('SELECT * FROM actors WHERE id = ?').get(actorId)
+    if (!actor) throw new Error(`존재하지 않는 배우 id: ${actorId}`)
+
+    const payloadDetail = payload?.detail && typeof payload.detail === 'object' ? payload.detail : null
+    const detail = payloadDetail && Number(payloadDetail.actorIdx) === externalId
+      ? payloadDetail
+      : await fetchAvdbsActorDetail(externalId)
+    const suggestedTags = buildSuggestedTags(detail, { aliasText: payload.externalName || '' })
+    let imageFileName = null
+    let imageDownloadError = ''
+    try {
+      imageFileName = await downloadImageToUserData(detail.imageUrl, actorId, actor.name, externalId)
+    } catch (err) {
+      imageDownloadError = err?.message || '이미지 다운로드 실패'
+      console.warn('[import-avdbs-actor] image download failed:', imageDownloadError)
+    }
+    const beforeTags = normalizeTagsList(actor.tags)
+    const afterTags = normalizeTagsList([...beforeTags, ...suggestedTags])
+    const { added, removed } = diffTagLists(beforeTags, afterTags)
+
+    const nextAliases = Array.from(new Set([
+      ...(String(actor.aliases || '').split(',').map((v) => v.trim()).filter(Boolean)),
+      detail.primaryName,
+      ...detail.aliases,
+      payload.externalName ? String(payload.externalName).trim() : '',
+    ].filter(Boolean)))
+
+    const actorCurrentRating = Number(actor.rating) || 0
+    const importedRating = toActorRatingFromAvdbs(detail.avdbsAverageRating)
+    const appliedRating = importedRating > 0 ? importedRating : actorCurrentRating
+    const ratingUpdated = actorCurrentRating !== appliedRating
+
+    const updatePayload = {
+      aliases: nextAliases.join(', '),
+      agency: actor.agency || '',
+      image_path: imageFileName || actor.image_path || '',
+      rating: appliedRating,
+    }
+
+    db.prepare(`
+      INSERT INTO actor_external_mappings
+        (actor_id, source_name, external_id, external_url, external_name, match_status, last_checked_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'confirmed', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(actor_id, source_name) DO UPDATE SET
+        external_id = excluded.external_id,
+        external_url = excluded.external_url,
+        external_name = excluded.external_name,
+        match_status = 'confirmed',
+        last_checked_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(actorId, 'avdbs', String(externalId), detail.url, detail.primaryName || '')
+
+    db.prepare(`
+      INSERT INTO actor_external_profiles
+        (actor_id, source_name, external_id, profile_json, avdbs_average_rating, fetched_at, updated_at)
+      VALUES (?, 'avdbs', ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(actor_id, source_name) DO UPDATE SET
+        external_id = excluded.external_id,
+        profile_json = excluded.profile_json,
+        avdbs_average_rating = excluded.avdbs_average_rating,
+        fetched_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      actorId,
+      String(externalId),
+      JSON.stringify(detail || {}),
+      Number.isFinite(Number(detail.avdbsAverageRating)) ? Number(detail.avdbsAverageRating) : null,
+    )
+
+    db.prepare(`
+      UPDATE actors
+      SET aliases = ?, agency = ?, image_path = ?, tags = ?, rating = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(updatePayload.aliases, updatePayload.agency, updatePayload.image_path, afterTags.join(', '), updatePayload.rating, actorId)
+
+    if (added.length > 0 || removed.length > 0) {
+      db.prepare(`
+        INSERT INTO actor_tag_change_logs
+          (actor_id, actor_name, before_tags, after_tags, added_tags, removed_tags, change_source, source_detail)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        actorId,
+        actor.name,
+        beforeTags.join(', '),
+        afterTags.join(', '),
+        added.join(', '),
+        removed.join(', '),
+        'import',
+        `avdbs:${externalId}`,
+      )
+    }
+
+    const updatedActor = db.prepare('SELECT * FROM actors WHERE id = ?').get(actorId)
+    return {
+      success: true,
+      actor: updatedActor,
+      detail,
+      suggestedTags,
+      addedTags: added,
+      removedTags: removed,
+      importedRating,
+      appliedRating,
+      ratingUpdated,
+      imageFileName,
+      warnings: imageDownloadError ? [imageDownloadError] : [],
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 태그 일괄 수정
+  // updates: [{ actorId, tags }]
+  // changeSource: manual | import | collection
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('bulk-update-actor-tags', async (_event, payload = {}) => {
+    const db = getDb()
+    const updates = Array.isArray(payload.updates) ? payload.updates : []
+    if (updates.length === 0) {
+      return { success: true, updatedCount: 0, skippedCount: 0 }
+    }
+
+    const changeSource = String(payload.changeSource || 'manual')
+    const sourceDetail = String(payload.sourceDetail || '')
+
+    const updateOne = db.prepare(`
+      UPDATE actors
+      SET tags = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `)
+
+    const insertLog = db.prepare(`
+      INSERT INTO actor_tag_change_logs
+        (actor_id, actor_name, before_tags, after_tags, added_tags, removed_tags, change_source, source_detail)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    const run = db.transaction(() => {
+      let updatedCount = 0
+      for (const item of updates) {
+        const actorId = Number(item.actorId)
+        if (!Number.isFinite(actorId) || actorId <= 0) {
+          throw new Error(`유효하지 않은 actorId: ${item.actorId}`)
+        }
+
+        const actor = db.prepare('SELECT id, name, tags FROM actors WHERE id = ?').get(actorId)
+        if (!actor) {
+          throw new Error(`존재하지 않는 배우 id: ${actorId}`)
+        }
+
+        const beforeTags = normalizeTagsList(actor.tags)
+        const afterTags = normalizeTagsList(item.tags)
+        const { added, removed } = diffTagLists(beforeTags, afterTags)
+
+        updateOne.run(afterTags.join(', '), actorId)
+        insertLog.run(
+          actorId,
+          actor.name,
+          beforeTags.join(', '),
+          afterTags.join(', '),
+          added.join(', '),
+          removed.join(', '),
+          changeSource,
+          sourceDetail,
+        )
+        updatedCount += 1
+      }
+      return { success: true, updatedCount, skippedCount: 0 }
+    })
+
+    return run()
   })
 
   // ══════════════════════════════════════════════════════════════

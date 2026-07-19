@@ -27,6 +27,26 @@ function TagList({ tags, max = 3 }) {
   )
 }
 
+function AliasSummary({ aliases }) {
+  const list = String(aliases || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+
+  if (list.length === 0) return null
+  return <div className="actor-list__alias">{list.slice(0, 2).join(' / ')}</div>
+}
+
+function MemoSummary({ memo }) {
+  const text = String(memo || '').trim()
+  if (!text) return null
+
+  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)[0] || ''
+  if (!firstLine) return null
+
+  return <div className="actor-list__memo" title={text}>{firstLine}</div>
+}
+
 export default function ActorList({ actors, selectedId, onSelect, loading, onConfirmNew, onDismissNew }) {
   if (loading) {
     return <div className="actor-list actor-list--loading">불러오는 중…</div>
@@ -76,16 +96,17 @@ export default function ActorList({ actors, selectedId, onSelect, loading, onCon
                 )}
               </span>
               {actor.rating > 0 && (
-                <span className="actor-list__rating">{'★'.repeat(actor.rating)}</span>
+                <span className="actor-list__rating">{Number(actor.rating).toFixed(1)} / 10</span>
               )}
             </div>
 
-            {actor.agency && (
-              <span className="actor-list__meta">{actor.agency}</span>
-            )}
-
             {/* 태그 */}
-            <TagList tags={actor.tags} max={3} />
+            <TagList tags={actor.tags} max={5} />
+
+            <AliasSummary aliases={actor.aliases} />
+
+            {/* 메모 요약 */}
+            <MemoSummary memo={actor.memo} />
 
             {/* 통계 뱃지 */}
             <div className="actor-list__stats">

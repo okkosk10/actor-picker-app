@@ -3,9 +3,9 @@
  * 배우 관리 탭 상단 툴바 — 검색 + 필터 + 액션 버튼
  *
  * Props:
- *   query         {string}   - 검색어 (이름/별칭/태그/메모/소속사 통합)
+ *   query         {string}   - 검색어 (이름/별칭/태그/메모 통합)
  *   onQueryChange {Function} - 검색어 변경 콜백
- *   filters       {object}   - { minRating, agency, tag, sortBy, minVideoCount }
+ *   filters       {object}   - { minRating, tag, sortBy, minVideoCount }
  *   onFiltersChange {Function} - 필터 변경 콜백 (patch)
  *   showArchived  {boolean}  - 아카이브 표시 여부
  *   onToggleArchived {Function}
@@ -34,11 +34,11 @@ export default function ActorToolbar({
 
   return (
     <div className="actor-toolbar">
-      {/* 검색 (이름/별칭/태그/메모/소속사 통합) */}
+      {/* 검색 (이름/별칭/태그/메모 통합) */}
       <input
         className="actor-toolbar__search"
         type="search"
-        placeholder="이름·별칭·태그·소속사 검색…"
+        placeholder="이름·별칭·태그·메모 검색…"
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
       />
@@ -60,15 +60,6 @@ export default function ActorToolbar({
             <option value={5}>5</option>
           </select>
         </label>
-
-        {/* 소속사 필터 */}
-        <input
-          className="actor-toolbar__filter-agency"
-          type="text"
-          placeholder="소속사 필터"
-          value={filters.agency ?? ''}
-          onChange={(e) => onFiltersChange({ agency: e.target.value })}
-        />
 
         {/* 태그 필터 */}
         <input
