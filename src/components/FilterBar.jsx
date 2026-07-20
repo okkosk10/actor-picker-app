@@ -16,7 +16,7 @@
  * Ant Design: Checkbox, Checkbox.Group, Select 사용
  */
 import { Checkbox, Select } from 'antd'
-import { GRADES, formatFileSize } from '../utils/format.js'
+import { ACTOR_TIER_FILTER_OPTIONS, GRADES, formatFileSize } from '../utils/format.js'
 
 const { Option } = Select
 
@@ -158,6 +158,23 @@ export default function FilterBar({ filters, onFiltersChange, totalCount, totalS
             초기화
           </button>
         )}
+      </div>
+
+      <div className="filter-section filter-section--actor-tier">
+        <span className="filter-label">배우 티어</span>
+        <Select
+          value={filters.actorTierFilter || 'all'}
+          onChange={(val) => onFiltersChange({ actorTierFilter: val })}
+          size="small"
+          style={{ minWidth: 150 }}
+          popupMatchSelectWidth={false}
+        >
+          {ACTOR_TIER_FILTER_OPTIONS.map((opt) => (
+            <Option key={opt.value} value={opt.value}>
+              {opt.label}
+            </Option>
+          ))}
+        </Select>
       </div>
 
     </div>

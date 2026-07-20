@@ -22,6 +22,12 @@ export default function ActorsPage() {
   const [filters,      setFilters]      = useState(DEFAULT_FILTERS)
   const [showArchived, setShowArchived] = useState(false)
   const [syncStatus,   setSyncStatus]   = useState(null)
+  const [tierFilter,   setTierFilter]   = useState('all')
+  const [tierCounts,   setTierCounts]   = useState({ S: 0, A: 0, B: 0, unranked: 0, total: 0, limits: { S: 10, A: 20, B: 30 } })
+  const [tierModalOpen, setTierModalOpen] = useState(false)
+  const [tierManageData, setTierManageData] = useState({ S: [], A: [], B: [] })
+  const [tierManageQuery, setTierManageQuery] = useState('')
+  const [tierManageBusy, setTierManageBusy] = useState(false)
 
   // ── 새 배우 탭 ──────────────────────────────────────────────
   const [actorTabMode,   setActorTabMode]   = useState('all')   // 'all' | 'new'
@@ -43,6 +49,18 @@ export default function ActorsPage() {
     } catch { /* 조용히 무시 */ }
   }, [])
 
+  const refreshTierCounts = useCallback(async () => {
+    try {
+      const counts = await window.api.getActorTierCounts({
+        archived: false,
+        isNew: actorTabMode === 'new',
+      })
+      setTierCounts(counts)
+    } catch {
+      // ignore
+    }
+  }, [actorTabMode])
+
   // ── 배우 목록 조회 ──────────────────────────────────────────
   const fetchActors = useCallback(async (q, flt, arch, tabMode) => {
     setLoading(true)
@@ -55,6 +73,7 @@ export default function ActorsPage() {
         minVideoCount: flt.minVideoCount || undefined,
         sortBy:        flt.sortBy,
         isNew:         tabMode === 'new' ? true : undefined,
+        tierFilter:    tierFilter,
       })
       setActors(result)
     } catch (e) {
@@ -62,21 +81,23 @@ export default function ActorsPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [tierFilter])
 
   // 검색어/필터/탭 변경 시 디바운스 조회
   useEffect(() => {
     clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       fetchActors(query, filters, showArchived, actorTabMode)
+      refreshTierCounts()
     }, 300)
     return () => clearTimeout(debounceRef.current)
-  }, [query, filters, showArchived, actorTabMode, fetchActors])
+  }, [query, filters, showArchived, actorTabMode, fetchActors, refreshTierCounts])
 
   // 초기 + 탭 마운트 시 새 배우 카운트 조회
   useEffect(() => {
     refreshNewActorCount()
-  }, [refreshNewActorCount])
+    refreshTierCounts()
+  }, [refreshNewActorCount, refreshTierCounts])
 
   // ── 필터 패치 ───────────────────────────────────────────────
   const handleFiltersChange = (patch) => {
@@ -110,6 +131,7 @@ export default function ActorsPage() {
   const handleSaved = async (savedActor) => {
     await fetchActors(query, filters, showArchived, actorTabMode)
     await refreshNewActorCount()
+    await refreshTierCounts()
     setIsCreating(false)
     setSelectedActor(savedActor)
     setDetailLoading(true)
@@ -127,6 +149,7 @@ export default function ActorsPage() {
   const handleArchived = async (updated) => {
     await fetchActors(query, filters, showArchived, actorTabMode)
     await refreshNewActorCount()
+    await refreshTierCounts()
     setSelectedActor(updated)
     setActorDetail((prev) =>
       prev ? { ...prev, actor: updated } : { actor: updated, videos: [], stats: {}, topVideos: [] }
@@ -141,6 +164,7 @@ export default function ActorsPage() {
       setSyncStatus(`완료 — ${result.synced}개 영상 동기화됨`)
       await fetchActors(query, filters, showArchived, actorTabMode)
       await refreshNewActorCount()
+      await refreshTierCounts()
       if (selectedActor) {
         const detail = await window.api.getActorDetail(selectedActor.id)
         setActorDetail(detail)
@@ -169,6 +193,7 @@ export default function ActorsPage() {
             setSyncStatus(`고아 배우 ${result.deletedCount}명 정리 완료: ${names}${extra}`)
             await fetchActors(query, filters, showArchived, actorTabMode)
             await refreshNewActorCount()
+            await refreshTierCounts()
           }
         } catch (e) {
           setSyncStatus('고아 배우 정리 실패: ' + e.message)
@@ -184,6 +209,7 @@ export default function ActorsPage() {
       await window.api.clearActorNew(actorId)
       await fetchActors(query, filters, showArchived, actorTabMode)
       await refreshNewActorCount()
+      await refreshTierCounts()
       // 상세 패널이 열려 있으면 업데이트
       if (selectedActor?.id === actorId) {
         const detail = await window.api.getActorDetail(actorId)
@@ -194,7 +220,7 @@ export default function ActorsPage() {
       setSyncStatus('확인 처리 실패: ' + e.message)
       setTimeout(() => setSyncStatus(null), 4000)
     }
-  }, [query, filters, showArchived, actorTabMode, fetchActors, refreshNewActorCount, selectedActor])
+  }, [query, filters, showArchived, actorTabMode, fetchActors, refreshNewActorCount, refreshTierCounts, selectedActor])
 
   // ── 새 배우 "무시" 액션 (is_new 해제 + 아카이브) ─────────────
   const handleDismissNew = useCallback(async (actorId) => {
@@ -203,6 +229,7 @@ export default function ActorsPage() {
       await window.api.archiveActor(actorId)
       await fetchActors(query, filters, showArchived, actorTabMode)
       await refreshNewActorCount()
+      await refreshTierCounts()
       if (selectedActor?.id === actorId) {
         setSelectedActor(null)
         setActorDetail(null)
@@ -211,7 +238,77 @@ export default function ActorsPage() {
       setSyncStatus('무시 처리 실패: ' + e.message)
       setTimeout(() => setSyncStatus(null), 4000)
     }
-  }, [query, filters, showArchived, actorTabMode, fetchActors, refreshNewActorCount, selectedActor])
+  }, [query, filters, showArchived, actorTabMode, fetchActors, refreshNewActorCount, refreshTierCounts, selectedActor])
+
+  const loadTierManageData = useCallback(async () => {
+    const [sList, aList, bList] = await Promise.all([
+      window.api.getActorsByTier('S', { archived: false }),
+      window.api.getActorsByTier('A', { archived: false }),
+      window.api.getActorsByTier('B', { archived: false }),
+    ])
+    setTierManageData({ S: sList || [], A: aList || [], B: bList || [] })
+  }, [])
+
+  const handleOpenTierManager = useCallback(async () => {
+    setTierModalOpen(true)
+    setTierManageBusy(true)
+    try {
+      await loadTierManageData()
+    } finally {
+      setTierManageBusy(false)
+    }
+  }, [loadTierManageData])
+
+  const handleDemoteTierActor = useCallback(async (actorId) => {
+    await window.api.updateActor(actorId, { tier: null })
+    await Promise.all([
+      fetchActors(query, filters, showArchived, actorTabMode),
+      refreshTierCounts(),
+      loadTierManageData(),
+    ])
+  }, [actorTabMode, fetchActors, filters, loadTierManageData, query, refreshTierCounts, showArchived])
+
+  const handleTierUpdated = useCallback((updatedActor, prevTier = null) => {
+    const nextTier = updatedActor?.tier ?? null
+
+    setActors((prev) => {
+      const normalized = prev.map((item) =>
+        item.id === updatedActor.id ? { ...item, tier: nextTier } : item
+      )
+
+      if (tierFilter === 'all') return normalized
+      if (tierFilter === 'unranked') return normalized.filter((item) => (item.tier ?? null) === null)
+      return normalized.filter((item) => (item.tier ?? null) === tierFilter)
+    })
+
+    setSelectedActor((prev) => (prev && prev.id === updatedActor.id ? { ...prev, tier: nextTier } : prev))
+    setActorDetail((prev) => {
+      if (!prev?.actor || prev.actor.id !== updatedActor.id) return prev
+      return { ...prev, actor: { ...prev.actor, tier: nextTier } }
+    })
+
+    setTierCounts((prev) => {
+      const before = prevTier ?? null
+      if (before === nextTier) return prev
+      const next = {
+        ...prev,
+        S: Number(prev.S || 0),
+        A: Number(prev.A || 0),
+        B: Number(prev.B || 0),
+        unranked: Number(prev.unranked || 0),
+      }
+      if (before === 'S') next.S = Math.max(0, next.S - 1)
+      if (before === 'A') next.A = Math.max(0, next.A - 1)
+      if (before === 'B') next.B = Math.max(0, next.B - 1)
+      if (before === null) next.unranked = Math.max(0, next.unranked - 1)
+
+      if (nextTier === 'S') next.S += 1
+      if (nextTier === 'A') next.A += 1
+      if (nextTier === 'B') next.B += 1
+      if (nextTier === null) next.unranked += 1
+      return next
+    })
+  }, [tierFilter])
 
   const showPanel   = isCreating || selectedActor !== null
   const panelActor  = isCreating ? null : (actorDetail?.actor ?? selectedActor)
@@ -258,6 +355,10 @@ export default function ActorsPage() {
         onNewActor={handleNewActor}
         onSync={handleSync}
         onCleanupOrphans={handleCleanupOrphans}
+        tierCounts={tierCounts}
+        tierFilter={tierFilter}
+        onTierFilterChange={setTierFilter}
+        onOpenTierManager={handleOpenTierManager}
       />
 
       {syncStatus && (
@@ -297,7 +398,9 @@ export default function ActorsPage() {
                 videos={panelVideos}
                 stats={panelStats}
                 topVideos={panelTop}
+                tierCounts={tierCounts}
                 onSaved={handleSaved}
+                onTierUpdated={handleTierUpdated}
                 onArchived={handleArchived}
               />
             )
@@ -312,6 +415,56 @@ export default function ActorsPage() {
           )}
         </div>
       </div>
+
+      <Modal
+        open={tierModalOpen}
+        onCancel={() => setTierModalOpen(false)}
+        footer={null}
+        width={860}
+        title="티어 관리"
+      >
+        <div className="actor-tier-manage__toolbar">
+          <input
+            type="search"
+            className="actor-toolbar__search"
+            placeholder="이름 검색"
+            value={tierManageQuery}
+            onChange={(e) => setTierManageQuery(e.target.value)}
+          />
+          <button className="btn-secondary" type="button" onClick={loadTierManageData} disabled={tierManageBusy}>
+            새로고침
+          </button>
+        </div>
+        {['S', 'A', 'B'].map((tier) => {
+          const list = (tierManageData[tier] || []).filter((actor) => {
+            const q = tierManageQuery.trim().toLowerCase()
+            if (!q) return true
+            return String(actor.name || '').toLowerCase().includes(q)
+          })
+          const limit = tierCounts?.limits?.[tier] || { S: 10, A: 20, B: 30 }[tier]
+          return (
+            <section key={tier} className="actor-tier-manage__section">
+              <h3 className="actor-tier-manage__title">{tier}급 ({tierCounts?.[tier] ?? 0}/{limit})</h3>
+              <ul className="actor-tier-manage__list">
+                {list.map((tierActor) => (
+                  <li key={tierActor.id} className="actor-tier-manage__item">
+                    <span className="actor-tier-manage__name">{tierActor.name}</span>
+                    <span className="actor-tier-manage__meta">평점 {Number(tierActor.rating || 0).toFixed(1)} · 작품 {tierActor.video_count || 0}</span>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => handleDemoteTierActor(tierActor.id)}
+                    >
+                      무등급으로 내리기
+                    </button>
+                  </li>
+                ))}
+                {list.length === 0 && <li className="actor-tier-manage__empty">표시할 배우가 없습니다.</li>}
+              </ul>
+            </section>
+          )
+        })}
+      </Modal>
     </div>
   )
 }

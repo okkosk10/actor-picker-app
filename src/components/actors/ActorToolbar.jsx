@@ -22,6 +22,10 @@ export default function ActorToolbar({
   onNewActor,
   onSync,
   onCleanupOrphans,
+  tierCounts,
+  tierFilter,
+  onTierFilterChange,
+  onOpenTierManager,
 }) {
   const SORT_OPTIONS = [
     { value: 'name_asc',         label: '이름 오름차순' },
@@ -30,7 +34,10 @@ export default function ActorToolbar({
     { value: 'copy_count_desc',  label: '복사 많은 순' },
     { value: 'open_count_desc',  label: '재생 많은 순' },
     { value: 'updated_desc',     label: '최근 수정순' },
+    { value: 'tier_desc',        label: '등급 높은 순' },
   ]
+
+  const counts = tierCounts || { S: 0, A: 0, B: 0, unranked: 0, total: 0, limits: { S: 10, A: 20, B: 30 } }
 
   return (
     <div className="actor-toolbar">
@@ -106,6 +113,41 @@ export default function ActorToolbar({
 
       {/* 액션 버튼 */}
       <div className="actor-toolbar__actions">
+        <div className="actor-toolbar__tier-summary" aria-label="배우 티어 요약">
+          <span>활성 기준 · 전체 {counts.total}</span>
+          <span>| S {counts.S}/{counts.limits?.S ?? 10}</span>
+          <span>| A {counts.A}/{counts.limits?.A ?? 20}</span>
+          <span>| B {counts.B}/{counts.limits?.B ?? 30}</span>
+          <span>| 무등급 {counts.unranked}</span>
+        </div>
+        <div className="actor-toolbar__tier-filters" role="group" aria-label="배우 티어 필터">
+          {[
+            { key: 'all', label: '전체' },
+            { key: 'S', label: 'S' },
+            { key: 'A', label: 'A' },
+            { key: 'B', label: 'B' },
+            { key: 'unranked', label: '무등급' },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              className={`actor-toolbar__tier-filter-btn${tierFilter === opt.key ? ' actor-toolbar__tier-filter-btn--active' : ''}`}
+              onClick={() => onTierFilterChange?.(opt.key)}
+              aria-pressed={tierFilter === opt.key}
+              title={`티어 필터: ${opt.label}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <button
+          className="btn-secondary"
+          type="button"
+          onClick={onOpenTierManager}
+          title="티어 관리"
+        >
+          티어 관리
+        </button>
         <button
           className="btn-primary actor-toolbar__new-btn"
           type="button"

@@ -206,7 +206,11 @@ export default function App() {
   // ── 랜덤 추천 ─────────────────────────────────────────────────
   const handleRandomPick = async () => {
     try {
-      const result = await window.api.randomPick(searchQuery, { hideMissing: filters.excludeMissing, currentFolder })
+      const result = await window.api.randomPick(searchQuery, {
+        hideMissing: filters.excludeMissing,
+        currentFolder,
+        actorTierFilter: filters.actorTierFilter,
+      })
       setRandomResult(result)
     } catch (e) { setError('랜덤 추천 실패: ' + e.message) }
   }
@@ -215,7 +219,11 @@ export default function App() {
   const handleActorPick = async () => {
     setActorPicking(true)
     try {
-      const result = await window.api.pickOnePerActor(searchQuery, { hideMissing: filters.excludeMissing, currentFolder })
+      const result = await window.api.pickOnePerActor(searchQuery, {
+        hideMissing: filters.excludeMissing,
+        currentFolder,
+        actorTierFilter: filters.actorTierFilter,
+      })
       setActorPickResult(result)
     } catch (e) { setError('배우별 추출 실패: ' + e.message) }
     finally { setActorPicking(false) }

@@ -38,6 +38,7 @@ const DEFAULT_FILTERS = {
   subtitleAddedDays:  0,       // 자막 추가일 기준 필터 (0 = 제한 없음)
   grades:             [],      // 빈 배열 = 전체 등급 허용
   minRating:          0,       // 0 = 별점 필터 없음
+  actorTierFilter:    'all',   // 배우 티어 기준 영상 필터
 }
 
 export function useVideoSearch() {

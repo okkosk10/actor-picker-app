@@ -19,12 +19,14 @@
 import { memo, useMemo } from 'react'
 import { Tag }      from 'antd'
 import StarRating   from './StarRating.jsx'
+import ActorTierBadge from './actors/ActorTierBadge.jsx'
 import { GRADE_COLORS, formatDate, parseActors } from '../utils/format.js'
 
 const STATUS_MISSING_COLOR = 'red'
 
 const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, onToggle }) {
   const borderClass = video.status === 'missing' ? ' video-item--missing' : ''
+  const hasSTierActor = Array.isArray(video.actorsList) && video.actorsList.some((a) => a?.tier === 'S')
 
   const tagList = useMemo(
     () => video.tags ? video.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
@@ -32,10 +34,20 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
   )
 
   const actors = useMemo(() => parseActors(video.actor_name), [video.actor_name])
+  const actorTokens = useMemo(() => {
+    if (Array.isArray(video.actorsList) && video.actorsList.length > 0) {
+      return video.actorsList.map((a) => ({
+        key: `id-${a.actor_id || a.id || a.name}`,
+        name: a.name,
+        tier: a.tier ?? null,
+      }))
+    }
+    return actors.map((name, idx) => ({ key: `name-${name}-${idx}`, name, tier: null }))
+  }, [video.actorsList, actors])
 
   return (
     <div
-      className={`video-item${selected ? ' video-item--selected' : ''}${borderClass}`}
+      className={`video-item${selected ? ' video-item--selected' : ''}${borderClass}${hasSTierActor ? ' video-item--actor-tier-s' : ''}`}
       onClick={() => onClick(video)}
       role="button"
       tabIndex={0}
@@ -66,12 +78,18 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
             : <span className="code-badge code-badge--empty">-</span>
           }
           <span className="actor-name">
-            {actors.length === 0
+            {actorTokens.length === 0
               ? '(배우 미상)'
               : <>
-                  <span className="actor-primary">{actors[0]}</span>
-                  {actors.length > 1 && (
-                    <span className="actor-secondary">, {actors.slice(1).join(', ')}</span>
+                  {actorTokens.slice(0, 3).map((token, idx) => (
+                    <span key={token.key} className="actor-name__token">
+                      <ActorTierBadge tier={token.tier} size="sm" compact className="actor-name__tier" />
+                      <span className={idx === 0 ? 'actor-primary' : 'actor-secondary'}>{token.name}</span>
+                      {idx < Math.min(actorTokens.length, 3) - 1 && <span className="actor-secondary">, </span>}
+                    </span>
+                  ))}
+                  {actorTokens.length > 3 && (
+                    <span className="actor-secondary"> +{actorTokens.length - 3}</span>
                   )}
                 </>
             }

@@ -125,7 +125,22 @@ export const SORT_OPTIONS = [
   { value: 'recommended',  label: '추천작 우선'    },
   { value: 'grade_asc',    label: '등급 우선'      },
   { value: 'rec_grade',    label: '추천 + 등급 우선' },
+  { value: 'actor_tier_desc', label: '배우 티어 높은순' },
   { value: 'actor_asc',    label: '배우명순'       },
   { value: 'code_asc',     label: '품번순'        },
   { value: 'random',       label: '랜덤순'        },
+]
+
+export const ACTOR_TIER_LIMITS = {
+  S: 10,
+  A: 20,
+  B: 30,
+}
+
+export const ACTOR_TIER_FILTER_OPTIONS = [
+  { value: 'all', label: '전체' },
+  { value: 'S', label: 'S급 배우 작품' },
+  { value: 'A_OR_HIGHER', label: 'A급 이상' },
+  { value: 'B_OR_HIGHER', label: 'B급 이상' },
+  { value: 'UNRANKED_ONLY', label: '무등급 배우 작품' },
 ]

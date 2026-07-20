@@ -444,6 +444,20 @@ const MIGRATIONS = [
       `)
     },
   },
+  {
+    version: '021_add_actor_tier',
+    description: 'actors 테이블에 tier 컬럼 및 인덱스 추가',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(actors)').all().map((c) => c.name)
+      if (!cols.includes('tier')) {
+        db.exec(`ALTER TABLE actors ADD COLUMN tier TEXT DEFAULT NULL`)
+      }
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_actors_tier ON actors (tier)
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

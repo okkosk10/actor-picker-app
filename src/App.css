@@ -1887,6 +1887,7 @@
 .video-item:hover        { background: var(--surface); }
 .video-item--selected    { background: rgba(99, 102, 241, 0.1); }
 .video-item--selected:hover { background: rgba(99, 102, 241, 0.14); }
+.video-item--actor-tier-s { border-left: 3px solid #d4a017; }
 
 /* 체크된 VideoItem 배경 강조 */
 .video-item:has(.vi-checkbox:checked) {
@@ -3134,6 +3135,23 @@
   gap: 6px;
   min-width: 0;
 }
+.actor-list__item--tier-s {
+  border-left: 3px solid #d4a017;
+  background: linear-gradient(90deg, rgba(212,160,23,0.12), transparent 40%);
+}
+.actor-list__item--tier-a {
+  border-left: 3px solid #7c3aed;
+  background: linear-gradient(90deg, rgba(124,58,237,0.1), transparent 40%);
+}
+.actor-list__item--tier-b {
+  border-left: 3px solid #2563eb;
+  background: linear-gradient(90deg, rgba(37,99,235,0.08), transparent 40%);
+}
+.actor-list__item--active.actor-list__item--tier-s,
+.actor-list__item--active.actor-list__item--tier-a,
+.actor-list__item--active.actor-list__item--tier-b {
+  background: rgba(99, 102, 241, 0.1);
+}
 .actor-list__tags { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 2px; }
 .actor-list__tag {
   font-size: 11px;
@@ -3171,6 +3189,48 @@
 .actor-list__stat { font-size: 11px; color: var(--text-muted); }
 .actor-list__stat--copy { color: #0891b2; }
 .actor-list__stat--open { color: #16a34a; }
+
+.actor-tier {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.actor-tier--sm {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.actor-tier--md {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+.actor-tier--compact {
+  margin-right: 4px;
+}
+.actor-tier--s {
+  background: rgba(212, 160, 23, 0.15);
+  border-color: rgba(212, 160, 23, 0.45);
+  color: #9a6a00;
+}
+.actor-tier--a {
+  background: rgba(124, 58, 237, 0.14);
+  border-color: rgba(124, 58, 237, 0.4);
+  color: #6d28d9;
+}
+.actor-tier--b {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: rgba(37, 99, 235, 0.4);
+  color: #1d4ed8;
+}
 
 /* ActorDetailPanel 확장 */
 .actor-detail__activity-stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0; }
@@ -3301,6 +3361,222 @@
 .actor-detail__badge-rating { font-size: 10px; color: #f59e0b; }
 .actor-detail__video-rating { font-size: 11px; color: #f59e0b; }
 .actor-detail__videos-loading { font-size: 12px; color: var(--text-muted); padding: 8px 0; }
+
+.actor-detail__tier-selector {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.actor-detail__tier-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.actor-detail__tier-btn:active {
+  transform: translateY(1px);
+}
+.actor-detail__tier-btn--active {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+.actor-detail__tier-btn--s { color: #9a6a00; border-color: rgba(212, 160, 23, 0.5); }
+.actor-detail__tier-btn--a { color: #6d28d9; border-color: rgba(124, 58, 237, 0.5); }
+.actor-detail__tier-btn--b { color: #1d4ed8; border-color: rgba(37, 99, 235, 0.5); }
+.actor-detail__tier-btn--none { color: var(--text-muted); }
+.actor-detail__tier-btn--s.actor-detail__tier-btn--active {
+  background: linear-gradient(180deg, rgba(212, 160, 23, 0.2), rgba(212, 160, 23, 0.1));
+  border-color: rgba(212, 160, 23, 0.85);
+}
+.actor-detail__tier-btn--a.actor-detail__tier-btn--active {
+  background: linear-gradient(180deg, rgba(124, 58, 237, 0.2), rgba(124, 58, 237, 0.1));
+  border-color: rgba(124, 58, 237, 0.85);
+}
+.actor-detail__tier-btn--b.actor-detail__tier-btn--active {
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.2), rgba(37, 99, 235, 0.1));
+  border-color: rgba(37, 99, 235, 0.85);
+}
+.actor-detail__tier-btn--none.actor-detail__tier-btn--active {
+  background: rgba(107, 114, 128, 0.12);
+  border-color: rgba(107, 114, 128, 0.75);
+}
+.actor-detail__tier-btn--busy {
+  opacity: 0.7;
+  cursor: wait;
+}
+.actor-detail__tier-counts {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.actor-detail__tier-create-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.actor-detail__replace-help {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.actor-detail__replace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.actor-detail__replace-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.actor-detail__replace-item--active {
+  border-color: var(--accent);
+}
+.actor-detail__replace-pick {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  padding: 8px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.actor-detail__replace-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  object-fit: cover;
+  background: var(--border);
+}
+.actor-detail__replace-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+.actor-detail__replace-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actor-detail__replace-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.actor-detail__replace-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px;
+}
+
+.actor-toolbar__tier-summary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.actor-toolbar__tier-filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.actor-toolbar__tier-filter-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.actor-toolbar__tier-filter-btn--active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.actor-tier-manage__toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.actor-tier-manage__section {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.actor-tier-manage__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.actor-tier-manage__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.actor-tier-manage__item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.actor-tier-manage__name {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 120px;
+}
+.actor-tier-manage__meta {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.actor-tier-manage__empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px;
+}
+
+.actor-name__token {
+  display: inline-flex;
+  align-items: center;
+}
+
+.detail-actor-list {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.detail-actor-item {
+  display: inline-flex;
+  align-items: center;
+}
 
 /* AI 배우 분석 섹션 */
 .actor-detail__ai-section {

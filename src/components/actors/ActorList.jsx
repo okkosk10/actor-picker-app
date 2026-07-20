@@ -11,6 +11,7 @@
  *   onDismissNew   {Function|null} - 제공 시 "무시" 버튼 표시 (actorId) => void
  */
 import ActorImage from '../common/ActorImage.jsx'
+import ActorTierBadge from './ActorTierBadge.jsx'
 
 function TagList({ tags, max = 3 }) {
   if (!tags) return null
@@ -65,13 +66,23 @@ export default function ActorList({ actors, selectedId, onSelect, loading, onCon
 
   return (
     <ul className="actor-list" role="listbox" aria-label="배우 목록">
-      {actors.map((actor) => (
+      {actors.map((actor) => {
+        const tier = actor.tier || null
+        const tierClass = tier === 'S'
+          ? 'actor-list__item--tier-s'
+          : tier === 'A'
+            ? 'actor-list__item--tier-a'
+            : tier === 'B'
+              ? 'actor-list__item--tier-b'
+              : ''
+        return (
         <li
           key={actor.id}
           role="option"
           aria-selected={selectedId === actor.id}
           className={[
             'actor-list__item',
+            tierClass,
             selectedId === actor.id ? 'actor-list__item--active' : '',
             actor.is_archived ? 'actor-list__item--archived' : '',
           ].filter(Boolean).join(' ')}
@@ -89,6 +100,7 @@ export default function ActorList({ actors, selectedId, onSelect, loading, onCon
 
           <div className="actor-list__info">
             <div className="actor-list__name-row">
+              <ActorTierBadge tier={tier} size="sm" />
               <span className="actor-list__name">
                 {actor.name}
                 {actor.is_archived === 1 && (
@@ -154,7 +166,8 @@ export default function ActorList({ actors, selectedId, onSelect, loading, onCon
             )}
           </div>
         </li>
-      ))}
+        )
+      })}
     </ul>
   )
 }

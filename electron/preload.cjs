@@ -172,10 +172,22 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.send('bulk-copy-close'),
 
   // ── 배우 목록 조회 ────────────────────────────────────────────
-  // @param options {{ query?, category?, agency?, minRating?, archived?, isNew? }}
+  // @param options {{ query?, category?, agency?, minRating?, archived?, isNew?, tierFilter?, sortBy? }}
   // 반환: Actor[]
   getActors: (options) =>
     ipcRenderer.invoke('get-actors', options),
+
+  // ── 배우 티어 카운트 조회 ───────────────────────────────────
+  // @param options {{ archived?: boolean, isNew?: boolean }}
+  // 반환: { S, A, B, unranked, total, limits }
+  getActorTierCounts: (options) =>
+    ipcRenderer.invoke('get-actor-tier-counts', options),
+
+  // ── 특정 티어 배우 목록 조회 ────────────────────────────────
+  // @param tier {'S'|'A'|'B'}
+  // @param options {{ archived?: boolean }}
+  getActorsByTier: (tier, options) =>
+    ipcRenderer.invoke('get-actors-by-tier', tier, options),
 
   // ── 새 배우 카운트 조회 (is_new=1) ───────────────────────────
   // 반환: { count: number }
@@ -202,10 +214,16 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── 배우 수정 ─────────────────────────────────────────────────
   // @param id   {number}
-  // @param data {{ name?, image_path?, category?, agency?, tags?, rating?, memo? }}
+  // @param data {{ name?, image_path?, category?, agency?, tags?, rating?, memo?, tier?, is_archived? }}
   // 반환: 수정된 Actor 레코드
   updateActor: (id, data) =>
     ipcRenderer.invoke('update-actor', id, data),
+
+  // ── 티어 교체 저장 ───────────────────────────────────────────
+  // @param payload {{ targetActorId, replacedActorId, tier }}
+  // 반환: { success, actor }
+  replaceActorTier: (payload) =>
+    ipcRenderer.invoke('replace-actor-tier', payload),
 
   // ── DB 백업 ───────────────────────────────────────────────────
   // 반환: { success: true, backupPath }

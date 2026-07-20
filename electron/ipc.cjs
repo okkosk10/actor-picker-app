@@ -257,6 +257,88 @@ const GRADE_CASE = `CASE grade
   ELSE 7
 END`
 
+const ACTOR_TIER_LIMITS = {
+  S: 10,
+  A: 20,
+  B: 30,
+}
+
+const ACTOR_TIER_CASE = `CASE a.tier
+  WHEN 'S' THEN 1
+  WHEN 'A' THEN 2
+  WHEN 'B' THEN 3
+  ELSE 4
+END`
+
+const VALID_ACTOR_TIERS = new Set(['S', 'A', 'B', null])
+
+const ACTOR_TIER_LABELS = {
+  S: 'S급',
+  A: 'A급',
+  B: 'B급',
+}
+
+function parseActorTierInput(value) {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (typeof value !== 'string') return '__INVALID__'
+  if (value === '') return '__INVALID_EMPTY__'
+  const normalized = value.trim().toUpperCase()
+  if (normalized === 'S' || normalized === 'A' || normalized === 'B') return normalized
+  return '__INVALID__'
+}
+
+function buildActorTierFullError(tier, count) {
+  const limit = ACTOR_TIER_LIMITS[tier]
+  return {
+    success: false,
+    code: 'ACTOR_TIER_FULL',
+    tier,
+    limit,
+    count,
+    message: `${ACTOR_TIER_LABELS[tier]}은 최대 ${limit}명까지 지정할 수 있습니다.`,
+  }
+}
+
+function throwStructuredError(payload) {
+  throw new Error(JSON.stringify(payload))
+}
+
+function ensureValidActorTierValue(nextTier) {
+  if (nextTier === '__INVALID_EMPTY__') {
+    throw new Error('빈 문자열 tier는 허용되지 않습니다. 무등급은 null을 사용하세요.')
+  }
+  if (nextTier === '__INVALID__' || !VALID_ACTOR_TIERS.has(nextTier)) {
+    throw new Error('유효하지 않은 배우 tier 값입니다. 허용값: S, A, B, null')
+  }
+}
+
+function getActorTierCount(db, tier, { archived = false } = {}) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM actors a
+    WHERE a.tier = ?
+      AND a.is_archived = ?
+  `).get(tier, archived ? 1 : 0)
+  return Number(row?.count || 0)
+}
+
+function assertTierCapacityOrThrow(db, actorId, currentTier, nextTier) {
+  if (nextTier == null || nextTier === currentTier) return
+  const count = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM actors a
+    WHERE a.tier = ?
+      AND a.is_archived = 0
+      AND a.id != ?
+  `).get(nextTier, actorId)?.count || 0
+  const currentCount = Number(count) + (currentTier === nextTier ? 1 : 0)
+  const limit = ACTOR_TIER_LIMITS[nextTier]
+  if (currentCount >= limit) {
+    throwStructuredError(buildActorTierFullError(nextTier, currentCount))
+  }
+}
+
 // ── 정렬 조건 화이트리스트 ─────────────────────────────────────
 // SQL Injection 방지: ORDER BY 절에 직접 사용할 값을 사전 정의된 맵으로만 허용
 const SORT_CLAUSES = {
@@ -273,6 +355,36 @@ const SORT_CLAUSES = {
   grade_asc:     `${GRADE_CASE} ASC, rating DESC`,
   // 추천 + 등급: 추천작 먼저, 그 다음 등급 순위
   rec_grade:     `recommended DESC, ${GRADE_CASE} ASC, rating DESC`,
+  actor_tier_desc: `
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id = id AND a.tier = 'S'
+      ) THEN 1
+      WHEN EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id = id AND a.tier = 'A'
+      ) THEN 2
+      WHEN EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id = id AND a.tier = 'B'
+      ) THEN 3
+      WHEN EXISTS (
+        SELECT 1
+        FROM video_actors va
+        WHERE va.video_id = id
+      ) THEN 4
+      ELSE 5
+    END ASC,
+    rating DESC,
+    updated_at DESC
+  `,
 }
 /** 허용되지 않은 정렬 키가 들어오면 기본값 반환 */
 function getSortClause(key) {
@@ -1012,6 +1124,48 @@ function registerIpcHandlers() {
       filterParams.push(minRating)
     }
 
+    const actorTierFilter = typeof filters.actorTierFilter === 'string'
+      ? filters.actorTierFilter
+      : 'all'
+    if (actorTierFilter === 'S') {
+      filterConditions.push(`EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id = id
+          AND a.tier = 'S'
+      )`)
+    } else if (actorTierFilter === 'A_OR_HIGHER') {
+      filterConditions.push(`EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id = id
+          AND a.tier IN ('S', 'A')
+      )`)
+    } else if (actorTierFilter === 'B_OR_HIGHER') {
+      filterConditions.push(`EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id = id
+          AND a.tier IN ('S', 'A', 'B')
+      )`)
+    } else if (actorTierFilter === 'UNRANKED_ONLY') {
+      filterConditions.push(`EXISTS (
+        SELECT 1
+        FROM video_actors va
+        WHERE va.video_id = id
+      )`)
+      filterConditions.push(`NOT EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actors a ON a.id = va.actor_id
+        WHERE va.video_id = id
+          AND a.tier IN ('S', 'A', 'B')
+      )`)
+    }
+
     // ── 비활성화 폴더 제외 ────────────────────────────────────
     // scanned_roots에서 is_active = 0인 폴더의 파일은 검색 결과에서 제외
     filterConditions.push(`NOT EXISTS (
@@ -1076,7 +1230,7 @@ function registerIpcHandlers() {
     for (let i = 0; i < matchedIds.length; i += MAX_PARAMS) {
       const chunk = matchedIds.slice(i, i + MAX_PARAMS)
       const rows = db.prepare(`
-        SELECT va.video_id, a.id AS actor_id, a.name, a.rating, a.tags,
+        SELECT va.video_id, a.id AS actor_id, a.name, a.rating, a.tags, a.tier,
                a.agency, a.image_path
         FROM video_actors va
         JOIN actors a ON a.id = va.actor_id
@@ -1287,6 +1441,53 @@ function registerIpcHandlers() {
       `).all(q, q, q, q, q, ...folderParams)
     }
 
+    const actorTierFilter = typeof options.actorTierFilter === 'string' ? options.actorTierFilter : 'all'
+    if (actorTierFilter !== 'all') {
+      videos = videos.filter((video) => {
+        if (!video?.id) return false
+        if (actorTierFilter === 'S') {
+          return !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ? AND a.tier = 'S'
+            LIMIT 1
+          `).get(video.id)
+        }
+        if (actorTierFilter === 'A_OR_HIGHER') {
+          return !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ? AND a.tier IN ('S', 'A')
+            LIMIT 1
+          `).get(video.id)
+        }
+        if (actorTierFilter === 'B_OR_HIGHER') {
+          return !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ? AND a.tier IN ('S', 'A', 'B')
+            LIMIT 1
+          `).get(video.id)
+        }
+        if (actorTierFilter === 'UNRANKED_ONLY') {
+          const hasAny = !!db.prepare(`SELECT 1 FROM video_actors va WHERE va.video_id = ? LIMIT 1`).get(video.id)
+          const hasRanked = !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ?
+              AND a.tier IN ('S', 'A', 'B')
+            LIMIT 1
+          `).get(video.id)
+          return hasAny && !hasRanked
+        }
+        return true
+      })
+    }
+
     if (videos.length === 0) {
       return { pickedList: [], searchText: '', totalFiles: 0, actorCount: 0, pickedCount: 0 }
     }
@@ -1362,6 +1563,53 @@ function registerIpcHandlers() {
           AND (file_name LIKE ? OR code LIKE ? OR actor_name LIKE ? OR memo LIKE ? OR tags LIKE ?)
           ${folderClause}
       `).all(q, q, q, q, q, ...folderParams)
+    }
+
+    const actorTierFilter = typeof options.actorTierFilter === 'string' ? options.actorTierFilter : 'all'
+    if (actorTierFilter !== 'all') {
+      videos = videos.filter((video) => {
+        if (!video?.id) return false
+        if (actorTierFilter === 'S') {
+          return !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ? AND a.tier = 'S'
+            LIMIT 1
+          `).get(video.id)
+        }
+        if (actorTierFilter === 'A_OR_HIGHER') {
+          return !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ? AND a.tier IN ('S', 'A')
+            LIMIT 1
+          `).get(video.id)
+        }
+        if (actorTierFilter === 'B_OR_HIGHER') {
+          return !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ? AND a.tier IN ('S', 'A', 'B')
+            LIMIT 1
+          `).get(video.id)
+        }
+        if (actorTierFilter === 'UNRANKED_ONLY') {
+          const hasAny = !!db.prepare(`SELECT 1 FROM video_actors va WHERE va.video_id = ? LIMIT 1`).get(video.id)
+          const hasRanked = !!db.prepare(`
+            SELECT 1
+            FROM video_actors va
+            JOIN actors a ON a.id = va.actor_id
+            WHERE va.video_id = ?
+              AND a.tier IN ('S', 'A', 'B')
+            LIMIT 1
+          `).get(video.id)
+          return hasAny && !hasRanked
+        }
+        return true
+      })
     }
 
     if (videos.length === 0) {
@@ -1930,6 +2178,13 @@ function registerIpcHandlers() {
       params.push(options.minVideoCount)
     }
 
+    if (options.tierFilter === 'S' || options.tierFilter === 'A' || options.tierFilter === 'B') {
+      conditions.push('a.tier = ?')
+      params.push(options.tierFilter)
+    } else if (options.tierFilter === 'unranked') {
+      conditions.push('a.tier IS NULL')
+    }
+
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : ''
 
     // 정렬 기준 (SQL Injection 방지: 화이트리스트)
@@ -1937,6 +2192,7 @@ function registerIpcHandlers() {
       name_asc:          'a.name ASC',
       name_desc:         'a.name DESC',
       rating_desc:       'a.rating DESC, a.name ASC',
+      tier_desc:         `${ACTOR_TIER_CASE} ASC, a.rating DESC, a.name ASC`,
       video_count_desc:  'video_count DESC, a.name ASC',
       open_count_desc:   'open_count DESC, a.name ASC',
       copy_count_desc:   'copy_count DESC, a.name ASC',
@@ -1959,6 +2215,59 @@ function registerIpcHandlers() {
       GROUP BY a.id
       ORDER BY ${sortClause}
     `).all(...params)
+  })
+
+  ipcMain.handle('get-actor-tier-counts', async (_event, options = {}) => {
+    const db = getDb()
+    const archived = options.archived === true
+    const isNewOnly = options.isNew === true
+
+    const modeClause = archived
+      ? 'a.is_archived = 1'
+      : 'a.is_archived = 0'
+
+    const newClause = isNewOnly ? 'AND a.is_new = 1' : ''
+
+    const rows = db.prepare(`
+      SELECT
+        SUM(CASE WHEN a.tier = 'S' THEN 1 ELSE 0 END) AS s_count,
+        SUM(CASE WHEN a.tier = 'A' THEN 1 ELSE 0 END) AS a_count,
+        SUM(CASE WHEN a.tier = 'B' THEN 1 ELSE 0 END) AS b_count,
+        SUM(CASE WHEN a.tier IS NULL THEN 1 ELSE 0 END) AS unranked_count,
+        COUNT(*) AS total_count
+      FROM actors a
+      WHERE ${modeClause}
+      ${newClause}
+    `).get() || {}
+
+    return {
+      S: Number(rows.s_count || 0),
+      A: Number(rows.a_count || 0),
+      B: Number(rows.b_count || 0),
+      unranked: Number(rows.unranked_count || 0),
+      total: Number(rows.total_count || 0),
+      limits: { ...ACTOR_TIER_LIMITS },
+    }
+  })
+
+  ipcMain.handle('get-actors-by-tier', async (_event, tier, options = {}) => {
+    const db = getDb()
+    if (tier !== 'S' && tier !== 'A' && tier !== 'B') {
+      throw new Error('유효하지 않은 tier입니다. S/A/B만 허용됩니다.')
+    }
+    const archived = options.archived === true ? 1 : 0
+
+    return db.prepare(`
+      SELECT
+        a.*,
+        COUNT(DISTINCT va.video_id) AS video_count
+      FROM actors a
+      LEFT JOIN video_actors va ON va.actor_id = a.id
+      WHERE a.tier = ?
+        AND a.is_archived = ?
+      GROUP BY a.id
+      ORDER BY a.rating ASC, a.name ASC
+    `).all(tier, archived)
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -2371,7 +2680,7 @@ function registerIpcHandlers() {
       const chunk = videoIds.slice(i, i + MAX_PARAMS)
       const ph = chunk.map(() => '?').join(',')
       const actorRows = db.prepare(`
-        SELECT va.video_id, a.id AS actor_id, a.name, a.rating, a.tags,
+        SELECT va.video_id, a.id AS actor_id, a.name, a.rating, a.tags, a.tier,
                a.agency, a.image_path, a.aliases
         FROM video_actors va
         JOIN actors a ON a.id = va.actor_id
@@ -2408,8 +2717,8 @@ function registerIpcHandlers() {
     if (existing) throw new Error(`이미 존재하는 배우입니다: ${name}`)
 
     const info = db.prepare(`
-      INSERT INTO actors (name, image_path, category, agency, tags, rating, memo)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO actors (name, image_path, category, agency, tags, rating, memo, tier)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       name,
       (data.image_path || '').trim(),
@@ -2418,6 +2727,7 @@ function registerIpcHandlers() {
       (data.tags       || '').trim(),
       typeof data.rating === 'number' ? data.rating : 0,
       (data.memo       || '').trim(),
+      null,
     )
 
     return db.prepare('SELECT * FROM actors WHERE id = ?').get(info.lastInsertRowid)
@@ -2448,6 +2758,14 @@ function registerIpcHandlers() {
       ? (data.is_archived ? 1 : 0)
       : actor.is_archived
 
+    const parsedTier = parseActorTierInput(data.tier)
+    ensureValidActorTierValue(parsedTier)
+    const nextTier = parsedTier === undefined ? actor.tier : parsedTier
+
+    if (isArchived === 0) {
+      assertTierCapacityOrThrow(db, id, actor.tier, nextTier)
+    }
+
     db.prepare(`
       UPDATE actors
       SET name        = ?,
@@ -2458,6 +2776,7 @@ function registerIpcHandlers() {
           tags        = ?,
           rating      = ?,
           memo        = ?,
+          tier        = ?,
           is_archived = ?,
           updated_at  = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -2470,11 +2789,75 @@ function registerIpcHandlers() {
       data.tags       !== undefined ? (data.tags       || '').trim() : actor.tags,
       data.rating     !== undefined ? data.rating                    : actor.rating,
       data.memo       !== undefined ? (data.memo       || '').trim() : actor.memo,
+      nextTier,
       isArchived,
       id,
     )
 
     return db.prepare('SELECT * FROM actors WHERE id = ?').get(id)
+  })
+
+  ipcMain.handle('replace-actor-tier', async (_event, payload = {}) => {
+    const db = getDb()
+    const targetActorId = Number(payload.targetActorId)
+    const replacedActorId = Number(payload.replacedActorId)
+    const nextTier = parseActorTierInput(payload.tier)
+    ensureValidActorTierValue(nextTier)
+
+    if (!Number.isFinite(targetActorId) || targetActorId <= 0) {
+      throw new Error('유효하지 않은 targetActorId입니다.')
+    }
+    if (!Number.isFinite(replacedActorId) || replacedActorId <= 0) {
+      throw new Error('유효하지 않은 replacedActorId입니다.')
+    }
+    if (targetActorId === replacedActorId) {
+      throw new Error('교체 대상 배우와 지정 배우는 같을 수 없습니다.')
+    }
+    if (nextTier !== 'S' && nextTier !== 'A' && nextTier !== 'B') {
+      throw new Error('교체 기능은 S/A/B tier에만 사용할 수 있습니다.')
+    }
+
+    const tx = db.transaction(() => {
+      const target = db.prepare('SELECT id, tier, is_archived FROM actors WHERE id = ?').get(targetActorId)
+      if (!target) throw new Error('대상 배우를 찾을 수 없습니다.')
+      if (target.is_archived) throw new Error('아카이브된 배우는 티어를 지정할 수 없습니다.')
+
+      const replaced = db.prepare('SELECT id, tier, is_archived FROM actors WHERE id = ?').get(replacedActorId)
+      if (!replaced) throw new Error('교체될 배우를 찾을 수 없습니다.')
+      if (replaced.is_archived) throw new Error('아카이브된 배우는 교체 대상으로 지정할 수 없습니다.')
+      if (replaced.tier !== nextTier) throw new Error('교체 대상 배우의 현재 tier가 일치하지 않습니다.')
+
+      const occupied = db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM actors a
+        WHERE a.tier = ?
+          AND a.is_archived = 0
+          AND a.id != ?
+      `).get(nextTier, targetActorId)?.count || 0
+      if (Number(occupied) < ACTOR_TIER_LIMITS[nextTier]) {
+        throw new Error('교체 없이도 배정 가능한 상태로 변경되었습니다. 다시 저장해 주세요.')
+      }
+
+      db.prepare(`
+        UPDATE actors
+        SET tier = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(replacedActorId)
+
+      db.prepare(`
+        UPDATE actors
+        SET tier = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(nextTier, targetActorId)
+    })
+
+    tx()
+    return {
+      success: true,
+      actor: db.prepare('SELECT * FROM actors WHERE id = ?').get(targetActorId),
+    }
   })
 
   // ══════════════════════════════════════════════════════════════

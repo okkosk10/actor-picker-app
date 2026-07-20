@@ -2,9 +2,12 @@
  * src/components/actors/ActorDetailPanel.jsx
  * 배우 상세 정보 표시 및 편집 폼
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Modal } from 'antd'
 import ActorImage from '../common/ActorImage.jsx'
 import TagBadge, { getActorTagBadgeVariant } from '../TagBadge.jsx'
+import ActorTierBadge from './ActorTierBadge.jsx'
+import { ACTOR_TIER_LIMITS } from '../../utils/format.js'
 
 const EMPTY_FORM = {
   name:       '',
@@ -12,6 +15,7 @@ const EMPTY_FORM = {
   tags:       '',
   rating:     0,
   memo:       '',
+  tier:       null,
 }
 
 function formFromActor(actor) {
@@ -22,6 +26,15 @@ function formFromActor(actor) {
     tags:       actor.tags       || '',
     rating:     actor.rating     || 0,
     memo:       actor.memo       || '',
+    tier:       actor.tier       ?? null,
+  }
+}
+
+function parseIpcStructuredError(error) {
+  try {
+    return JSON.parse(String(error?.message || ''))
+  } catch {
+    return null
   }
 }
 
@@ -30,10 +43,6 @@ function splitTags(value) {
     .split(',')
     .map((tag) => tag.trim())
     .filter(Boolean)
-}
-
-function joinTags(tags) {
-  return Array.from(new Set(tags)).join(', ')
 }
 
 const QUICK_FILTERS = [
@@ -67,7 +76,9 @@ export default function ActorDetailPanel({
   videos = [],
   stats = {},
   topVideos = [],
+  tierCounts,
   onSaved,
+  onTierUpdated,
   onArchived,
 }) {
   const [form,         setForm]         = useState(formFromActor(actor))
@@ -85,6 +96,15 @@ export default function ActorDetailPanel({
   const [aiError,       setAiError]      = useState(null)
   const [avdbsProfile,  setAvdbsProfile] = useState(null)
   const [avdbsLoading,  setAvdbsLoading] = useState(false)
+  const [replaceModalOpen, setReplaceModalOpen] = useState(false)
+  const [replaceCandidates, setReplaceCandidates] = useState([])
+  const [replaceTargetId, setReplaceTargetId] = useState(null)
+  const [replaceTier, setReplaceTier] = useState(null)
+  const [replaceBusy, setReplaceBusy] = useState(false)
+  const [replaceInfo, setReplaceInfo] = useState(null)
+  const [replaceMode, setReplaceMode] = useState('save')
+  const [tierSaving, setTierSaving] = useState(false)
+  const avdbsCacheRef = useRef(new Map())
   const tagPreviewList = splitTags(form.tags).slice(0, 8)
 
   useEffect(() => {
@@ -95,7 +115,6 @@ export default function ActorDetailPanel({
     setFilteredVids(videos)
     setAiData(null)
     setAiError(null)
-    setAvdbsProfile(null)
     // 배우 전환 시 캐시된 AI 분석 결과를 조회
     if (actor?.id) {
       window.api.getAiAnalysis('actor', actor.id).then((res) => {
@@ -115,19 +134,22 @@ export default function ActorDetailPanel({
       return () => { mounted = false }
     }
 
+    const cached = avdbsCacheRef.current.get(actor.id)
+    if (cached?.detail) {
+      setAvdbsProfile(cached)
+    }
+
     setAvdbsLoading(true)
     window.api.getActorAvdbsProfile(actor.id)
       .then((res) => {
         if (!mounted) return
-        if (res?.success) {
+        if (res?.success && res?.detail) {
+          avdbsCacheRef.current.set(actor.id, res)
           setAvdbsProfile(res)
-        } else {
-          setAvdbsProfile(null)
         }
       })
       .catch((err) => {
         if (!mounted) return
-        setAvdbsProfile(null)
         console.warn('[ActorDetailPanel] AVDBS profile load failed:', err?.message || err)
       })
       .finally(() => {
@@ -155,6 +177,45 @@ export default function ActorDetailPanel({
   const handleChange = (field, value) =>
     setForm((prev) => ({ ...prev, [field]: value }))
 
+  const handleTierSelect = async (value) => {
+    if (!actor) {
+      handleChange('tier', value)
+      return
+    }
+    if (form.tier === value || tierSaving) return
+
+    setTierSaving(true)
+    setError(null)
+    setSuccess(null)
+
+    const prevTier = form.tier ?? null
+    try {
+      const updated = await window.api.updateActor(actor.id, { tier: value })
+      setForm((prev) => ({ ...prev, tier: updated?.tier ?? value }))
+      setSuccess('배우 등급이 즉시 반영됐습니다')
+      onTierUpdated?.(updated, prevTier)
+    } catch (e) {
+      const parsed = parseIpcStructuredError(e)
+      if (parsed?.code === 'ACTOR_TIER_FULL' && actor?.id) {
+        setReplaceMode('instant')
+        setReplaceTier(parsed.tier)
+        setReplaceInfo(parsed)
+        setReplaceTargetId(null)
+        setReplaceModalOpen(true)
+        try {
+          const list = await window.api.getActorsByTier(parsed.tier, { archived: false })
+          setReplaceCandidates((list || []).filter((row) => row.id !== actor.id))
+        } catch {
+          setReplaceCandidates([])
+        }
+      } else {
+        setError(e.message || '배우 등급 저장 실패')
+      }
+    } finally {
+      setTierSaving(false)
+    }
+  }
+
   const handleSave = async () => {
     if (!form.name.trim()) { setError('이름을 입력하세요'); return }
     setSaving(true); setError(null); setSuccess(null)
@@ -168,9 +229,56 @@ export default function ActorDetailPanel({
       setSuccess(actor ? '저장됐습니다' : '배우가 등록됐습니다')
       onSaved?.(saved)
     } catch (e) {
-      setError(e.message || '저장 실패')
+      const parsed = parseIpcStructuredError(e)
+      if (parsed?.code === 'ACTOR_TIER_FULL' && actor?.id) {
+        setReplaceMode('save')
+        setReplaceTier(parsed.tier)
+        setReplaceInfo(parsed)
+        setReplaceTargetId(null)
+        setReplaceModalOpen(true)
+        try {
+          const list = await window.api.getActorsByTier(parsed.tier, { archived: false })
+          setReplaceCandidates((list || []).filter((row) => row.id !== actor.id))
+        } catch {
+          setReplaceCandidates([])
+        }
+      } else {
+        setError(e.message || '저장 실패')
+      }
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleReplaceTier = async () => {
+    if (!actor?.id || !replaceTier || !replaceTargetId) return
+    setReplaceBusy(true)
+    setError(null)
+    try {
+      const result = await window.api.replaceActorTier({
+        targetActorId: actor.id,
+        tier: replaceTier,
+        replacedActorId: replaceTargetId,
+      })
+      setReplaceModalOpen(false)
+      setReplaceCandidates([])
+      setReplaceTargetId(null)
+      setReplaceTier(null)
+      setReplaceInfo(null)
+      setReplaceMode('save')
+      setSuccess('티어 교체가 완료됐습니다')
+      if (result?.actor) {
+        setForm((prev) => ({ ...prev, tier: result.actor.tier ?? replaceTier }))
+        if (replaceMode === 'instant') {
+          onTierUpdated?.(result.actor)
+        } else {
+          onSaved?.(result.actor)
+        }
+      }
+    } catch (e) {
+      setError(e.message || '티어 교체 실패')
+    } finally {
+      setReplaceBusy(false)
     }
   }
 
@@ -326,6 +434,45 @@ export default function ActorDetailPanel({
         <div className="edit-field">
           <label className="edit-label">이름 *</label>
           <input className="edit-input" value={form.name} onChange={(e) => handleChange('name', e.target.value)} placeholder="배우 이름" />
+
+          {actor ? (
+            <>
+              <label className="edit-label" style={{ marginTop: 10 }}>배우 등급</label>
+              <div className="actor-detail__tier-selector" role="group" aria-label="배우 티어 선택">
+                {[
+                  { value: 'S', label: 'S급', className: 'actor-detail__tier-btn--s' },
+                  { value: 'A', label: 'A급', className: 'actor-detail__tier-btn--a' },
+                  { value: 'B', label: 'B급', className: 'actor-detail__tier-btn--b' },
+                  { value: null, label: '무등급', className: 'actor-detail__tier-btn--none' },
+                ].map((opt) => (
+                  <button
+                    key={String(opt.value)}
+                    type="button"
+                    className={[
+                      'actor-detail__tier-btn',
+                      opt.className,
+                      form.tier === opt.value ? 'actor-detail__tier-btn--active' : '',
+                      tierSaving ? 'actor-detail__tier-btn--busy' : '',
+                    ].filter(Boolean).join(' ')}
+                    onClick={() => handleTierSelect(opt.value)}
+                    aria-pressed={form.tier === opt.value}
+                    title={`배우 티어 ${opt.label}`}
+                    aria-label={`배우 티어 ${opt.label}`}
+                    disabled={tierSaving}
+                  >
+                    {form.tier === opt.value ? `✓ ${opt.label}` : opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="actor-detail__tier-counts">
+                S {tierCounts?.S ?? 0}/{ACTOR_TIER_LIMITS.S} · A {tierCounts?.A ?? 0}/{ACTOR_TIER_LIMITS.A} · B {tierCounts?.B ?? 0}/{ACTOR_TIER_LIMITS.B}
+              </div>
+            </>
+          ) : (
+            <div className="actor-detail__tier-create-note">
+              신규 배우는 무등급으로 생성됩니다. 저장 후 상세에서 S/A/B를 지정할 수 있습니다.
+            </div>
+          )}
         </div>
 
         <div className="edit-field actor-detail__edit-main">
@@ -432,6 +579,65 @@ export default function ActorDetailPanel({
           onAnalyze={handleAiAnalyze}
         />
       )}
+
+      <Modal
+        open={replaceModalOpen}
+        title={`${replaceTier || ''}급 정원 교체`}
+        onCancel={() => {
+          if (replaceBusy) return
+          setReplaceModalOpen(false)
+          setReplaceTargetId(null)
+        }}
+        onOk={handleReplaceTier}
+        okButtonProps={{
+          disabled: !replaceTargetId || replaceBusy,
+          loading: replaceBusy,
+        }}
+        okText="교체 실행"
+        cancelText="취소"
+      >
+        <p className="actor-detail__replace-help">
+          {replaceInfo?.message || `${replaceTier}급 정원이 가득 찼습니다.`}
+        </p>
+        <p className="actor-detail__replace-help">
+          현재 배우를 {replaceTier}급으로 지정하려면 기존 {replaceTier}급 배우 한 명을 무등급으로 내려야 합니다.
+        </p>
+        <ul className="actor-detail__replace-list">
+          {replaceCandidates.map((candidate) => (
+            <li
+              key={candidate.id}
+              className={[
+                'actor-detail__replace-item',
+                replaceTargetId === candidate.id ? 'actor-detail__replace-item--active' : '',
+              ].join(' ')}
+            >
+              <button
+                type="button"
+                className="actor-detail__replace-pick"
+                onClick={() => setReplaceTargetId(candidate.id)}
+                aria-pressed={replaceTargetId === candidate.id}
+              >
+                <ActorImage
+                  fileName={candidate.image_path}
+                  alt={candidate.name}
+                  className="actor-detail__replace-thumb"
+                  placeholderClass="actor-detail__replace-thumb"
+                />
+                <span className="actor-detail__replace-name-wrap">
+                  <ActorTierBadge tier={candidate.tier} size="sm" />
+                  <span className="actor-detail__replace-name">{candidate.name}</span>
+                </span>
+                <span className="actor-detail__replace-meta">
+                  평점 {Number(candidate.rating || 0).toFixed(1)} / 10 · 작품 {candidate.video_count || 0}
+                </span>
+              </button>
+            </li>
+          ))}
+          {replaceCandidates.length === 0 && (
+            <li className="actor-detail__replace-empty">교체 가능한 배우가 없습니다.</li>
+          )}
+        </ul>
+      </Modal>
     </div>
   )
 }

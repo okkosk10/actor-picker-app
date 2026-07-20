@@ -20,6 +20,7 @@
 import { useState, useEffect } from 'react'
 import { Switch, Tag, Select, message } from 'antd'
 import StarRating from './StarRating.jsx'
+import ActorTierBadge from './actors/ActorTierBadge.jsx'
 import { useVideoMeta } from '../hooks/useVideoMeta.js'
 import { formatFileSize, formatDate, formatDateTime, GRADES, GRADE_COLORS, RATING_BY_GRADE, GRADE_BY_RATING, parseActors } from '../utils/format.js'
 
@@ -207,15 +208,20 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
           <span className="meta-label">배우</span>
           <span className="meta-value">
             {(() => {
-              const actors = parseActors(video.actor_name)
-              if (actors.length === 0) return '-'
+              const actorRows = Array.isArray(video.actorsList) && video.actorsList.length > 0
+                ? video.actorsList
+                : parseActors(video.actor_name).map((name, idx) => ({ id: `name-${idx}`, name, tier: null }))
+              if (actorRows.length === 0) return '-'
               return (
-                <>
-                  <span className="actor-primary">{actors[0]}</span>
-                  {actors.length > 1 && (
-                    <span className="actor-secondary">, {actors.slice(1).join(', ')}</span>
-                  )}
-                </>
+                <span className="detail-actor-list">
+                  {actorRows.map((row, idx) => (
+                    <span key={`${row.id || row.actor_id || row.name}-${idx}`} className="detail-actor-item">
+                      <ActorTierBadge tier={row.tier ?? null} size="sm" compact />
+                      <span className={idx === 0 ? 'actor-primary' : 'actor-secondary'}>{row.name}</span>
+                      {idx < actorRows.length - 1 && <span className="actor-secondary"> · </span>}
+                    </span>
+                  ))}
+                </span>
               )
             })()}
           </span>
