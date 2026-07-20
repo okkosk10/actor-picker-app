@@ -11,6 +11,7 @@
  *   onDismissNew   {Function|null} - 제공 시 "무시" 버튼 표시 (actorId) => void
  */
 import ActorImage from '../common/ActorImage.jsx'
+import ActorBadge from './ActorBadge.jsx'
 import ActorTierBadge from './ActorTierBadge.jsx'
 
 function TagList({ tags, max = 3 }) {
@@ -46,6 +47,23 @@ function MemoSummary({ memo }) {
   if (!firstLine) return null
 
   return <div className="actor-list__memo" title={text}>{firstLine}</div>
+}
+
+function BadgeSummary({ badges = [] }) {
+  const list = Array.isArray(badges) ? badges : []
+  if (list.length === 0) return null
+  const shown = list.slice(0, 2)
+  const rest = list.length - shown.length
+  const tooltip = list.map((badge) => badge.label).filter(Boolean).join(', ')
+
+  return (
+    <div className="actor-list__badges" title={tooltip}>
+      {shown.map((badge) => (
+        <ActorBadge key={badge.id} badge={badge} compact className={badge.is_active === 0 ? 'actor-badge--muted' : ''} />
+      ))}
+      {rest > 0 && <span className="actor-list__badge-more" title={tooltip}>+{rest}</span>}
+    </div>
+  )
 }
 
 export default function ActorList({ actors, selectedId, onSelect, loading, onConfirmNew, onDismissNew }) {
@@ -111,6 +129,8 @@ export default function ActorList({ actors, selectedId, onSelect, loading, onCon
                 <span className="actor-list__rating">{Number(actor.rating).toFixed(1)} / 10</span>
               )}
             </div>
+
+            <BadgeSummary badges={actor.badges} />
 
             {/* 태그 */}
             <TagList tags={actor.tags} max={5} />

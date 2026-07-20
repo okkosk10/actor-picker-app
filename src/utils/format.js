@@ -144,3 +144,29 @@ export const ACTOR_TIER_FILTER_OPTIONS = [
   { value: 'B_OR_HIGHER', label: 'B급 이상' },
   { value: 'UNRANKED_ONLY', label: '무등급 배우 작품' },
 ]
+
+export const ACTOR_BADGE_VARIANTS = [
+  'purple',
+  'hotpink',
+  'softpink',
+  'red',
+  'orange',
+  'gold',
+  'green',
+  'cyan',
+  'blue',
+  'gray',
+]
+
+export const ACTOR_BADGE_VARIANT_OPTIONS = [
+  { value: 'purple', label: '보라' },
+  { value: 'hotpink', label: '핫핑크' },
+  { value: 'softpink', label: '연분홍' },
+  { value: 'red', label: '빨강' },
+  { value: 'orange', label: '주황' },
+  { value: 'gold', label: '골드' },
+  { value: 'green', label: '초록' },
+  { value: 'cyan', label: '청록' },
+  { value: 'blue', label: '파랑' },
+  { value: 'gray', label: '회색' },
+]

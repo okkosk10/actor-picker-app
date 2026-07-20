@@ -7,12 +7,14 @@ import { Modal } from 'antd'
 import ActorToolbar     from '../../components/actors/ActorToolbar.jsx'
 import ActorList        from '../../components/actors/ActorList.jsx'
 import ActorDetailPanel from '../../components/actors/ActorDetailPanel.jsx'
+import { ACTOR_BADGE_VARIANT_OPTIONS } from '../../utils/format.js'
 
 const DEFAULT_FILTERS = {
   minRating:     0,
   tag:           '',
   minVideoCount: 0,
   sortBy:        'name_asc',
+  badgeFilter:   'all',
 }
 
 export default function ActorsPage() {
@@ -28,6 +30,24 @@ export default function ActorsPage() {
   const [tierManageData, setTierManageData] = useState({ S: [], A: [], B: [] })
   const [tierManageQuery, setTierManageQuery] = useState('')
   const [tierManageBusy, setTierManageBusy] = useState(false)
+  const [badgeDefinitions, setBadgeDefinitions] = useState([])
+  const [badgeModalOpen, setBadgeModalOpen] = useState(false)
+  const [badgeManageQuery, setBadgeManageQuery] = useState('')
+  const [badgeManageBusy, setBadgeManageBusy] = useState(false)
+  const [badgeFormOpen, setBadgeFormOpen] = useState(false)
+  const [badgeFormMode, setBadgeFormMode] = useState('create')
+  const [badgeFormId, setBadgeFormId] = useState(null)
+  const [badgeForm, setBadgeForm] = useState({
+    label: '',
+    icon: '',
+    variant: 'gray',
+    description: '',
+    sort_order: 0,
+    is_active: 1,
+  })
+  const [badgeSaving, setBadgeSaving] = useState(false)
+  const [badgeError, setBadgeError] = useState(null)
+  const [badgeSuccess, setBadgeSuccess] = useState(null)
 
   // ── 새 배우 탭 ──────────────────────────────────────────────
   const [actorTabMode,   setActorTabMode]   = useState('all')   // 'all' | 'new'
@@ -61,6 +81,15 @@ export default function ActorsPage() {
     }
   }, [actorTabMode])
 
+  const refreshBadgeDefinitions = useCallback(async () => {
+    try {
+      const rows = await window.api.getActorBadgeDefinitions({ includeInactive: true })
+      setBadgeDefinitions(rows || [])
+    } catch {
+      setBadgeDefinitions([])
+    }
+  }, [])
+
   // ── 배우 목록 조회 ──────────────────────────────────────────
   const fetchActors = useCallback(async (q, flt, arch, tabMode) => {
     setLoading(true)
@@ -74,6 +103,7 @@ export default function ActorsPage() {
         sortBy:        flt.sortBy,
         isNew:         tabMode === 'new' ? true : undefined,
         tierFilter:    tierFilter,
+        badgeFilter:   flt.badgeFilter || 'all',
       })
       setActors(result)
     } catch (e) {
@@ -97,7 +127,8 @@ export default function ActorsPage() {
   useEffect(() => {
     refreshNewActorCount()
     refreshTierCounts()
-  }, [refreshNewActorCount, refreshTierCounts])
+    refreshBadgeDefinitions()
+  }, [refreshNewActorCount, refreshTierCounts, refreshBadgeDefinitions])
 
   // ── 필터 패치 ───────────────────────────────────────────────
   const handleFiltersChange = (patch) => {
@@ -310,11 +341,143 @@ export default function ActorsPage() {
     })
   }, [tierFilter])
 
+  const refreshAfterBadgeChange = useCallback(async (actorId) => {
+    await Promise.all([
+      fetchActors(query, filters, showArchived, actorTabMode),
+      refreshNewActorCount(),
+      refreshTierCounts(),
+      refreshBadgeDefinitions(),
+    ])
+    if (selectedActor?.id === actorId) {
+      const detail = await window.api.getActorDetail(actorId)
+      setActorDetail(detail)
+      setSelectedActor((prev) => (prev ? { ...prev, badges: detail?.actor?.badges || [] } : prev))
+    }
+  }, [actorTabMode, fetchActors, filters, query, refreshBadgeDefinitions, refreshNewActorCount, refreshTierCounts, selectedActor, showArchived])
+
+  const handleBadgesUpdated = useCallback((actorId, badges) => {
+    setActors((prev) => prev.map((item) => (item.id === actorId ? { ...item, badges } : item)))
+    setSelectedActor((prev) => (prev && prev.id === actorId ? { ...prev, badges } : prev))
+    setActorDetail((prev) => {
+      if (!prev?.actor || prev.actor.id !== actorId) return prev
+      return { ...prev, actor: { ...prev.actor, badges } }
+    })
+  }, [])
+
+  const openBadgeManager = useCallback(() => {
+    setBadgeManageQuery('')
+    setBadgeError(null)
+    setBadgeSuccess(null)
+    setBadgeModalOpen(true)
+  }, [])
+
+  const resetBadgeForm = useCallback((badge = null) => {
+    setBadgeFormMode(badge ? 'edit' : 'create')
+    setBadgeFormId(badge?.id ?? null)
+    setBadgeForm({
+      label: badge?.label ?? '',
+      icon: badge?.icon ?? '',
+      variant: badge?.variant ?? 'gray',
+      description: badge?.description ?? '',
+      sort_order: badge?.sort_order ?? 0,
+      is_active: badge?.is_active ?? 1,
+    })
+    setBadgeError(null)
+    setBadgeSuccess(null)
+    setBadgeFormOpen(true)
+  }, [])
+
+  const handleSaveBadge = async () => {
+    setBadgeSaving(true)
+    setBadgeError(null)
+    setBadgeSuccess(null)
+    try {
+      const payload = {
+        label: badgeForm.label,
+        icon: badgeForm.icon,
+        variant: badgeForm.variant,
+        description: badgeForm.description,
+        sort_order: badgeForm.sort_order,
+        is_active: badgeForm.is_active,
+      }
+      if (badgeFormMode === 'edit' && badgeFormId) {
+        await window.api.updateActorBadgeDefinition(badgeFormId, payload)
+      } else {
+        await window.api.createActorBadgeDefinition(payload)
+      }
+      await refreshBadgeDefinitions()
+      await refreshAfterBadgeChange(selectedActor?.id)
+      setBadgeFormOpen(false)
+      setBadgeFormId(null)
+      setBadgeFormMode('create')
+      setBadgeSuccess('뱃지를 저장했습니다.')
+    } catch (e) {
+      setBadgeError(e.message || '뱃지 저장 실패')
+    } finally {
+      setBadgeSaving(false)
+    }
+  }
+
+  const handleToggleBadgeActive = async (badge) => {
+    setBadgeManageBusy(true)
+    try {
+      await window.api.setActorBadgeActive(badge.id, badge.is_active ? 0 : 1)
+      await refreshAfterBadgeChange(selectedActor?.id)
+      setBadgeSuccess(badge.is_active ? '뱃지를 비활성화했습니다.' : '뱃지를 활성화했습니다.')
+    } catch (e) {
+      setBadgeError(e.message || '상태 변경 실패')
+    } finally {
+      setBadgeManageBusy(false)
+    }
+  }
+
+  const handleDeleteBadge = (badge) => {
+    Modal.confirm({
+      title: '뱃지 삭제',
+      content: `${badge.label} 뱃지를 삭제할까요? 사용 중인 배우가 있으면 삭제할 수 없습니다.`,
+      okText: '삭제',
+      cancelText: '취소',
+      onOk: async () => {
+        setBadgeManageBusy(true)
+        try {
+          await window.api.deleteActorBadgeDefinition(badge.id)
+          await refreshAfterBadgeChange(selectedActor?.id)
+          setBadgeSuccess('뱃지를 삭제했습니다.')
+        } catch (e) {
+          setBadgeError(e.message || '뱃지 삭제 실패')
+        } finally {
+          setBadgeManageBusy(false)
+        }
+      },
+    })
+  }
+
+  const handleBadgesForActor = useCallback(async (actorId, nextBadges) => {
+    try {
+      const result = await window.api.setActorBadges(actorId, nextBadges.map((badge) => badge.id))
+      const badges = result?.badges || []
+      handleBadgesUpdated(actorId, badges)
+      await refreshBadgeDefinitions()
+      await refreshTierCounts()
+      setBadgeSuccess('특수 뱃지가 저장됐습니다.')
+    } catch (e) {
+      setBadgeError(e.message || '뱃지 저장 실패')
+    }
+  }, [handleBadgesUpdated, refreshBadgeDefinitions, refreshTierCounts])
+
   const showPanel   = isCreating || selectedActor !== null
   const panelActor  = isCreating ? null : (actorDetail?.actor ?? selectedActor)
   const panelVideos = actorDetail?.videos   ?? []
   const panelStats  = actorDetail?.stats    ?? {}
   const panelTop    = actorDetail?.topVideos ?? []
+  const activeBadgeDefinitions = badgeDefinitions.filter((badge) => badge.is_active === 1)
+  const badgeManageList = badgeDefinitions.filter((badge) => {
+    const q = badgeManageQuery.trim().toLowerCase()
+    if (!q) return true
+    return [badge.label, badge.icon, badge.description, badge.badge_key]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(q))
+  })
 
   return (
     <div className="actors-page">
@@ -359,6 +522,10 @@ export default function ActorsPage() {
         tierFilter={tierFilter}
         onTierFilterChange={setTierFilter}
         onOpenTierManager={handleOpenTierManager}
+        badgeDefinitions={activeBadgeDefinitions}
+        badgeFilter={filters.badgeFilter || 'all'}
+        onBadgeFilterChange={(value) => handleFiltersChange({ badgeFilter: value })}
+        onOpenBadgeManager={openBadgeManager}
       />
 
       {syncStatus && (
@@ -399,8 +566,10 @@ export default function ActorsPage() {
                 stats={panelStats}
                 topVideos={panelTop}
                 tierCounts={tierCounts}
+                    badgeDefinitions={activeBadgeDefinitions}
                 onSaved={handleSaved}
                 onTierUpdated={handleTierUpdated}
+                    onBadgesUpdated={handleBadgesForActor}
                 onArchived={handleArchived}
               />
             )
@@ -464,6 +633,109 @@ export default function ActorsPage() {
             </section>
           )
         })}
+
+        <Modal
+          open={badgeModalOpen}
+          onCancel={() => setBadgeModalOpen(false)}
+          footer={null}
+          width={920}
+          title="특수 뱃지 관리"
+          destroyOnClose={false}
+        >
+          <div className="actor-tier-manage__toolbar">
+            <input
+              type="search"
+              className="actor-toolbar__search"
+              placeholder="이름·아이콘·설명 검색"
+              value={badgeManageQuery}
+              onChange={(e) => setBadgeManageQuery(e.target.value)}
+            />
+            <button className="btn-secondary" type="button" onClick={refreshBadgeDefinitions} disabled={badgeManageBusy}>
+              새로고침
+            </button>
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={() => resetBadgeForm(null)}
+            >
+              ＋ 새 뱃지
+            </button>
+          </div>
+
+          {badgeError && <div className="actor-detail__error">{badgeError}</div>}
+          {badgeSuccess && <div className="actor-detail__success">{badgeSuccess}</div>}
+
+          <ul className="actor-badge-manage__list">
+            {badgeManageList.map((badge) => (
+              <li key={badge.id} className={`actor-badge-manage__item${badge.is_active === 0 ? ' actor-badge-manage__item--inactive' : ''}`}>
+                <div className="actor-badge-manage__preview-row">
+                  <span className="actor-badge-manage__preview">
+                    {badge.icon ? `${badge.icon} ` : ''}{badge.label}
+                  </span>
+                  <span className="actor-badge-manage__meta">{badge.variant} · {badge.actor_count ?? 0}명 사용 · {badge.is_active ? '활성' : '비활성'}</span>
+                </div>
+                <div className="actor-badge-manage__desc">{badge.description || '설명 없음'}</div>
+                <div className="actor-badge-manage__actions">
+                  <button type="button" className="btn-secondary" onClick={() => resetBadgeForm(badge)} disabled={badgeManageBusy}>수정</button>
+                  <button type="button" className="btn-secondary" onClick={() => handleToggleBadgeActive(badge)} disabled={badgeManageBusy}>
+                    {badge.is_active ? '비활성화' : '활성화'}
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={() => handleDeleteBadge(badge)} disabled={badgeManageBusy}>삭제</button>
+                </div>
+              </li>
+            ))}
+            {badgeManageList.length === 0 && <li className="actor-badge-manage__empty">표시할 뱃지가 없습니다.</li>}
+          </ul>
+        </Modal>
+
+        <Modal
+          open={badgeFormOpen}
+          onCancel={() => {
+            if (badgeSaving) return
+            setBadgeFormOpen(false)
+          }}
+          onOk={handleSaveBadge}
+          okText="저장"
+          cancelText="취소"
+          confirmLoading={badgeSaving}
+          title={badgeFormMode === 'edit' ? '뱃지 수정' : '새 뱃지'}
+          destroyOnClose={false}
+        >
+          <div className="actor-badge-form">
+            <label className="edit-label">뱃지 이름</label>
+            <input className="edit-input" value={badgeForm.label} onChange={(e) => setBadgeForm((prev) => ({ ...prev, label: e.target.value }))} maxLength={30} />
+
+            <label className="edit-label">아이콘</label>
+            <input className="edit-input" value={badgeForm.icon} onChange={(e) => setBadgeForm((prev) => ({ ...prev, icon: e.target.value }))} maxLength={8} placeholder="✨" />
+
+            <label className="edit-label">색상</label>
+            <select className="edit-input" value={badgeForm.variant} onChange={(e) => setBadgeForm((prev) => ({ ...prev, variant: e.target.value }))}>
+              {ACTOR_BADGE_VARIANT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+
+            <label className="edit-label">설명</label>
+            <textarea className="edit-textarea" rows={3} value={badgeForm.description} onChange={(e) => setBadgeForm((prev) => ({ ...prev, description: e.target.value }))} maxLength={200} />
+
+            <label className="edit-label">정렬 순서</label>
+            <input className="edit-input" type="number" value={badgeForm.sort_order} onChange={(e) => setBadgeForm((prev) => ({ ...prev, sort_order: Number(e.target.value) || 0 }))} />
+
+            <label className="actor-badge-form__active">
+              <input type="checkbox" checked={badgeForm.is_active === 1} onChange={(e) => setBadgeForm((prev) => ({ ...prev, is_active: e.target.checked ? 1 : 0 }))} />
+              활성 상태
+            </label>
+
+            <div className="actor-badge-form__preview">
+              미리보기
+              <div>
+                {badgeForm.label ? `${badgeForm.icon || ''}${badgeForm.icon ? ' ' : ''}${badgeForm.label}` : '—'}
+              </div>
+            </div>
+
+            {badgeError && <div className="actor-detail__error">{badgeError}</div>}
+          </div>
+        </Modal>
       </Modal>
     </div>
   )

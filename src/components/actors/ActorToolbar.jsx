@@ -26,6 +26,10 @@ export default function ActorToolbar({
   tierFilter,
   onTierFilterChange,
   onOpenTierManager,
+  badgeDefinitions = [],
+  badgeFilter = 'all',
+  onBadgeFilterChange,
+  onOpenBadgeManager,
 }) {
   const SORT_OPTIONS = [
     { value: 'name_asc',         label: '이름 오름차순' },
@@ -38,6 +42,14 @@ export default function ActorToolbar({
   ]
 
   const counts = tierCounts || { S: 0, A: 0, B: 0, unranked: 0, total: 0, limits: { S: 10, A: 20, B: 30 } }
+  const badgeOptions = [
+    { value: 'all', label: '전체 뱃지' },
+    { value: 'none', label: '뱃지 없음' },
+    ...badgeDefinitions.map((badge) => ({
+      value: String(badge.id),
+      label: `${badge.icon ? `${badge.icon} ` : ''}${badge.label}`,
+    })),
+  ]
 
   return (
     <div className="actor-toolbar">
@@ -140,6 +152,17 @@ export default function ActorToolbar({
             </button>
           ))}
         </div>
+        <label className="actor-toolbar__filter-item actor-toolbar__filter-item--badge">
+          <span>특수 뱃지</span>
+          <select
+            value={badgeFilter}
+            onChange={(e) => onBadgeFilterChange?.(e.target.value)}
+          >
+            {badgeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </label>
         <button
           className="btn-secondary"
           type="button"
@@ -147,6 +170,14 @@ export default function ActorToolbar({
           title="티어 관리"
         >
           티어 관리
+        </button>
+        <button
+          className="btn-secondary"
+          type="button"
+          onClick={onOpenBadgeManager}
+          title="특수 뱃지 관리"
+        >
+          뱃지 관리
         </button>
         <button
           className="btn-primary actor-toolbar__new-btn"

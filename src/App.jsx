@@ -64,6 +64,7 @@ export default function App() {
   const [selectedSubtitleDateKey, setSelectedSubtitleDateKey] = useState(null)
   const [showSubtitleDateModal, setShowSubtitleDateModal] = useState(false)
   const [driveAlerts,       setDriveAlerts]       = useState([])
+  const [actorBadgeDefinitions, setActorBadgeDefinitions] = useState([])
 
   // ── NEW 카운트 갱신 ───────────────────────────────────────────
   const refreshNewCount = useCallback(async () => {
@@ -86,6 +87,16 @@ export default function App() {
     refreshNewCount()
     refreshNewActorCount()
   }, [refreshNewCount, refreshNewActorCount])
+
+  useEffect(() => {
+    let mounted = true
+    window.api.getActorBadgeDefinitions({ includeInactive: false })
+      .then((rows) => {
+        if (mounted) setActorBadgeDefinitions(rows || [])
+      })
+      .catch(() => {})
+    return () => { mounted = false }
+  }, [])
 
   // ── 드라이브 연결 상태 모니터링 ───────────────────────────────
   useEffect(() => {
@@ -210,6 +221,7 @@ export default function App() {
         hideMissing: filters.excludeMissing,
         currentFolder,
         actorTierFilter: filters.actorTierFilter,
+        actorBadgeFilter: filters.actorBadgeFilter,
       })
       setRandomResult(result)
     } catch (e) { setError('랜덤 추천 실패: ' + e.message) }
@@ -223,6 +235,7 @@ export default function App() {
         hideMissing: filters.excludeMissing,
         currentFolder,
         actorTierFilter: filters.actorTierFilter,
+        actorBadgeFilter: filters.actorBadgeFilter,
       })
       setActorPickResult(result)
     } catch (e) { setError('배우별 추출 실패: ' + e.message) }
@@ -453,6 +466,7 @@ export default function App() {
             onFiltersChange={changeFilters}
             totalCount={activeVideos.length}
             totalSize={activeVideos.reduce((s, v) => s + (v.size || 0), 0)}
+            badgeDefinitions={actorBadgeDefinitions}
           />
           <div className="subtitle-date-toggle-bar">
             <button

@@ -20,6 +20,7 @@
 import { useState, useEffect } from 'react'
 import { Switch, Tag, Select, message } from 'antd'
 import StarRating from './StarRating.jsx'
+import ActorBadge from './actors/ActorBadge.jsx'
 import ActorTierBadge from './actors/ActorTierBadge.jsx'
 import { useVideoMeta } from '../hooks/useVideoMeta.js'
 import { formatFileSize, formatDate, formatDateTime, GRADES, GRADE_COLORS, RATING_BY_GRADE, GRADE_BY_RATING, parseActors } from '../utils/format.js'
@@ -216,8 +217,22 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
                 <span className="detail-actor-list">
                   {actorRows.map((row, idx) => (
                     <span key={`${row.id || row.actor_id || row.name}-${idx}`} className="detail-actor-item">
-                      <ActorTierBadge tier={row.tier ?? null} size="sm" compact />
-                      <span className={idx === 0 ? 'actor-primary' : 'actor-secondary'}>{row.name}</span>
+                      <span className="detail-actor-item__name-row">
+                        <ActorTierBadge tier={row.tier ?? null} size="sm" compact />
+                        <span className={idx === 0 ? 'actor-primary' : 'actor-secondary'}>{row.name}</span>
+                      </span>
+                      {Array.isArray(row.badges) && row.badges.length > 0 && (
+                        <span className="detail-actor-badges">
+                          {row.badges.map((badge) => (
+                            <ActorBadge
+                              key={badge.id}
+                              badge={badge}
+                              compact={false}
+                              className={badge.is_active === 0 ? 'actor-badge--muted' : ''}
+                            />
+                          ))}
+                        </span>
+                      )}
                       {idx < actorRows.length - 1 && <span className="actor-secondary"> · </span>}
                     </span>
                   ))}

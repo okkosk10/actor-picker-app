@@ -3,9 +3,10 @@
  * 배우 상세 정보 표시 및 편집 폼
  */
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Modal } from 'antd'
+import { Modal, Select } from 'antd'
 import ActorImage from '../common/ActorImage.jsx'
 import TagBadge, { getActorTagBadgeVariant } from '../TagBadge.jsx'
+import ActorBadge from './ActorBadge.jsx'
 import ActorTierBadge from './ActorTierBadge.jsx'
 import { ACTOR_TIER_LIMITS } from '../../utils/format.js'
 
@@ -77,8 +78,10 @@ export default function ActorDetailPanel({
   stats = {},
   topVideos = [],
   tierCounts,
+  badgeDefinitions = [],
   onSaved,
   onTierUpdated,
+  onBadgesUpdated,
   onArchived,
 }) {
   const [form,         setForm]         = useState(formFromActor(actor))
@@ -104,8 +107,20 @@ export default function ActorDetailPanel({
   const [replaceInfo, setReplaceInfo] = useState(null)
   const [replaceMode, setReplaceMode] = useState('save')
   const [tierSaving, setTierSaving] = useState(false)
+  const [badgeModalOpen, setBadgeModalOpen] = useState(false)
+  const [badgeSaving, setBadgeSaving] = useState(false)
+  const [selectedBadges, setSelectedBadges] = useState(actor?.badges || [])
+  const [badgeDraftIds, setBadgeDraftIds] = useState([])
   const avdbsCacheRef = useRef(new Map())
   const tagPreviewList = splitTags(form.tags).slice(0, 8)
+  const activeBadgeDefinitions = badgeDefinitions.filter((badge) => badge.is_active === 1)
+  const inactiveSelectedBadges = selectedBadges.filter((badge) => badge.is_active === 0)
+  const activeSelectedBadges = selectedBadges.filter((badge) => badge.is_active !== 0)
+  const badgeOptions = activeBadgeDefinitions.map((badge) => ({
+    value: String(badge.id),
+    label: `${badge.icon ? `${badge.icon} ` : ''}${badge.label}`,
+    badge,
+  }))
 
   useEffect(() => {
     setForm(formFromActor(actor))
@@ -115,6 +130,9 @@ export default function ActorDetailPanel({
     setFilteredVids(videos)
     setAiData(null)
     setAiError(null)
+    const nextBadges = Array.isArray(actor?.badges) ? actor.badges : []
+    setSelectedBadges(nextBadges)
+    setBadgeDraftIds(nextBadges.filter((badge) => badge.is_active !== 0).map((badge) => String(badge.id)))
     // 배우 전환 시 캐시된 AI 분석 결과를 조회
     if (actor?.id) {
       window.api.getAiAnalysis('actor', actor.id).then((res) => {
@@ -214,6 +232,41 @@ export default function ActorDetailPanel({
     } finally {
       setTierSaving(false)
     }
+  }
+
+  const commitBadges = async (nextBadges) => {
+    if (!actor?.id || badgeSaving) return
+    setBadgeSaving(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const result = await window.api.setActorBadges(actor.id, nextBadges.map((badge) => badge.id))
+      const badges = result?.badges || []
+      setSelectedBadges(badges)
+      setSuccess('특수 뱃지가 저장됐습니다')
+      onBadgesUpdated?.(actor.id, badges)
+      return true
+    } catch (e) {
+      setError(e.message || '특수 뱃지 저장 실패')
+      return false
+    } finally {
+      setBadgeSaving(false)
+    }
+  }
+
+  const handleOpenBadgeModal = () => {
+    setBadgeDraftIds(activeSelectedBadges.map((badge) => String(badge.id)))
+    setBadgeModalOpen(true)
+  }
+
+  const handleBadgeModalApply = async () => {
+    const selectedActiveIds = new Set(badgeDraftIds.map((value) => Number(value)))
+    const nextBadges = [
+      ...inactiveSelectedBadges,
+      ...activeBadgeDefinitions.filter((badge) => selectedActiveIds.has(badge.id)),
+    ]
+    const ok = await commitBadges(nextBadges)
+    if (ok) setBadgeModalOpen(false)
   }
 
   const handleSave = async () => {
@@ -467,6 +520,33 @@ export default function ActorDetailPanel({
               <div className="actor-detail__tier-counts">
                 S {tierCounts?.S ?? 0}/{ACTOR_TIER_LIMITS.S} · A {tierCounts?.A ?? 0}/{ACTOR_TIER_LIMITS.A} · B {tierCounts?.B ?? 0}/{ACTOR_TIER_LIMITS.B}
               </div>
+
+              <label className="edit-label" style={{ marginTop: 10 }}>특수 뱃지</label>
+              {selectedBadges.length > 0 ? (
+                <div className="actor-detail__badge-row">
+                  {selectedBadges.map((badge) => (
+                    <ActorBadge
+                      key={badge.id}
+                      badge={badge}
+                      compact
+                      className={badge.is_active === 0 ? 'actor-badge--muted' : ''}
+                      disabled={badge.is_active === 0 || badgeSaving}
+                      title={badge.is_active === 0 ? `${badge.label} · 비활성 뱃지` : undefined}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="actor-detail__badge-empty">선택된 뱃지 없음</div>
+              )}
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleOpenBadgeModal}
+                disabled={badgeSaving || activeBadgeDefinitions.length === 0}
+                style={{ marginTop: 8 }}
+              >
+                뱃지 선택
+              </button>
             </>
           ) : (
             <div className="actor-detail__tier-create-note">
@@ -637,6 +717,120 @@ export default function ActorDetailPanel({
             <li className="actor-detail__replace-empty">교체 가능한 배우가 없습니다.</li>
           )}
         </ul>
+      </Modal>
+
+      <Modal
+        open={badgeModalOpen}
+        wrapClassName="actor-detail__badge-modal"
+        rootClassName="actor-detail__badge-modal"
+        onCancel={() => {
+          if (badgeSaving) return
+          setBadgeModalOpen(false)
+        }}
+        onOk={handleBadgeModalApply}
+        okText="적용"
+        cancelText="취소"
+        confirmLoading={badgeSaving}
+        title="특수 뱃지 선택"
+        destroyOnClose={false}
+        styles={{
+          container: {
+            background: '#ffffff',
+            color: '#111827',
+            border: '1px solid #e5e7eb',
+          },
+          header: {
+            background: '#ffffff',
+            color: '#111827',
+            borderBottom: '1px solid #e5e7eb',
+          },
+          body: {
+            background: '#ffffff',
+            color: '#111827',
+          },
+          footer: {
+            background: '#ffffff',
+            borderTop: '1px solid #f3f4f6',
+          },
+          title: {
+            color: '#111827',
+          },
+        }}
+      >
+        <div className="actor-detail__badge-modal-body">
+          <div className="actor-detail__badge-modal-note">
+            활성 뱃지만 선택할 수 있습니다. 기존에 연결된 비활성 뱃지는 표시만 유지됩니다.
+          </div>
+
+          <Select
+            mode="multiple"
+            showSearch
+            value={badgeDraftIds}
+            onChange={setBadgeDraftIds}
+            options={badgeOptions}
+            optionFilterProp="label"
+            maxTagCount="responsive"
+            placeholder="뱃지 검색 후 선택"
+            style={{ width: '100%' }}
+            popupMatchSelectWidth={false}
+            className="actor-detail__badge-modal-select"
+            classNames={{
+              root: 'actor-detail__badge-modal-select-root',
+              popup: {
+                root: 'actor-detail__badge-modal-select-dropdown',
+                list: 'actor-detail__badge-modal-select-dropdown-list',
+                listItem: 'actor-detail__badge-modal-select-dropdown-item',
+              },
+            }}
+            styles={{
+              root: {
+                color: '#111827',
+              },
+              popup: {
+                root: {
+                  background: '#ffffff',
+                  color: '#111827',
+                },
+                list: {
+                  background: '#ffffff',
+                },
+                listItem: {
+                  color: '#111827',
+                },
+              },
+            }}
+          />
+
+          {inactiveSelectedBadges.length > 0 && (
+            <div className="actor-detail__badge-modal-current">
+              <div className="actor-detail__badge-modal-current-label">기존 비활성 뱃지</div>
+              <div className="actor-detail__badge-row">
+                {inactiveSelectedBadges.map((badge) => (
+                  <ActorBadge
+                    key={badge.id}
+                    badge={badge}
+                    compact
+                    className="actor-badge--muted"
+                    disabled
+                    title={`${badge.label} · 비활성 뱃지`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="actor-detail__badge-modal-current">
+            <div className="actor-detail__badge-modal-current-label">현재 선택</div>
+            <div className="actor-detail__badge-row">
+              {activeBadgeDefinitions
+                .filter((badge) => badgeDraftIds.includes(String(badge.id)))
+                .map((badge) => (
+                  <ActorBadge key={badge.id} badge={badge} compact selected />
+                ))}
+              {badgeDraftIds.length === 0 && <span className="actor-detail__badge-empty">선택된 활성 뱃지 없음</span>}
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   )

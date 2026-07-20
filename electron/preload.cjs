@@ -194,6 +194,35 @@ contextBridge.exposeInMainWorld('api', {
   getNewActorCount: () =>
     ipcRenderer.invoke('get-new-actor-count'),
 
+  // ── 배우 특수 뱃지 정의 조회 ────────────────────────────────
+  // @param options {{ includeInactive?: boolean }}
+  getActorBadgeDefinitions: (options) =>
+    ipcRenderer.invoke('get-actor-badge-definitions', options),
+
+  // ── 배우 특수 뱃지 정의 생성 ────────────────────────────────
+  createActorBadgeDefinition: (data) =>
+    ipcRenderer.invoke('create-actor-badge-definition', data),
+
+  // ── 배우 특수 뱃지 정의 수정 ────────────────────────────────
+  updateActorBadgeDefinition: (id, data) =>
+    ipcRenderer.invoke('update-actor-badge-definition', id, data),
+
+  // ── 배우 특수 뱃지 활성화/비활성화 ──────────────────────────
+  setActorBadgeActive: (id, isActive) =>
+    ipcRenderer.invoke('set-actor-badge-active', id, isActive),
+
+  // ── 배우 특수 뱃지 삭제 ────────────────────────────────────
+  deleteActorBadgeDefinition: (id) =>
+    ipcRenderer.invoke('delete-actor-badge-definition', id),
+
+  // ── 배우의 현재 특수 뱃지 조회 ──────────────────────────────
+  getActorBadges: (actorId) =>
+    ipcRenderer.invoke('get-actor-badges', actorId),
+
+  // ── 배우 특수 뱃지 일괄 설정 ────────────────────────────────
+  setActorBadges: (actorId, badgeIds) =>
+    ipcRenderer.invoke('set-actor-badges', actorId, badgeIds),
+
   // ── 새 배우 New 상태 해제 ─────────────────────────────────────
   // @param actorId {number}
   // 반환: { success: true }

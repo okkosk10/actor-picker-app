@@ -41,7 +41,16 @@ const SUBTITLE_ADDED_OPTIONS = [
   { label: '1년 이내', value: 365 },
 ]
 
-export default function FilterBar({ filters, onFiltersChange, totalCount, totalSize }) {
+export default function FilterBar({ filters, onFiltersChange, totalCount, totalSize, badgeDefinitions = [] }) {
+  const badgeOptions = [
+    { value: 'all', label: '전체 뱃지' },
+    { value: 'none', label: '뱃지 없음 배우 작품' },
+    ...badgeDefinitions.map((badge) => ({
+      value: String(badge.id),
+      label: `${badge.icon ? `${badge.icon} ` : ''}${badge.label}`,
+    })),
+  ]
+
   return (
     <div className="filter-bar">
 
@@ -85,96 +94,114 @@ export default function FilterBar({ filters, onFiltersChange, totalCount, totalS
 
       </div>
 
-      {/* ── 등급 체크박스 그룹 ─────────────────────────────── */}
-      <div className="filter-section filter-section--grades">
-        <span className="filter-label">등급</span>
-        <Checkbox.Group
-          options={GRADE_OPTIONS}
-          value={filters.grades}
-          onChange={(checkedValues) => onFiltersChange({ grades: checkedValues })}
-        />
-        {filters.grades.length > 0 && (
-          <button
-            className="filter-clear-btn"
-            type="button"
-            onClick={() => onFiltersChange({ grades: [] })}
-            title="등급 필터 초기화"
-          >
-            초기화
-          </button>
-        )}
-      </div>
-
-      {/* ── 최소 별점 + 결과 수 ────────────────────────────── */}
-      <div className="filter-section filter-section--rating">
-        <span className="filter-label">최소 별점</span>
-        <Select
-          value={filters.minRating}
-          onChange={(val) => onFiltersChange({ minRating: val })}
-          size="small"
-          style={{ minWidth: 110 }}
-          popupMatchSelectWidth={false}
-        >
-          {RATING_OPTIONS.map((opt) => (
-            <Option key={opt.value} value={opt.value}>
-              {opt.label}
-            </Option>
-          ))}
-        </Select>
-
-        {/* 현재 결과 수 / 총 용량 */}
-        <span className="filter-result-info">
-          <strong>{totalCount}</strong>개
-          {totalSize > 0 && (
-            <span className="filter-result-size">
-              {' / '}{formatFileSize(totalSize)}
-            </span>
+      <div className="filter-bar__control-row">
+        {/* ── 등급 체크박스 그룹 ─────────────────────────────── */}
+        <div className="filter-section filter-section--grades">
+          <span className="filter-label">등급</span>
+          <Checkbox.Group
+            options={GRADE_OPTIONS}
+            value={filters.grades}
+            onChange={(checkedValues) => onFiltersChange({ grades: checkedValues })}
+          />
+          {filters.grades.length > 0 && (
+            <button
+              className="filter-clear-btn"
+              type="button"
+              onClick={() => onFiltersChange({ grades: [] })}
+              title="등급 필터 초기화"
+            >
+              초기화
+            </button>
           )}
-        </span>
-      </div>
+        </div>
 
-      <div className="filter-section filter-section--subtitle-date">
-        <span className="filter-label">자막 수정일</span>
-        <Select
-          value={filters.subtitleAddedDays}
-          onChange={(val) => onFiltersChange({ subtitleAddedDays: val })}
-          size="small"
-          style={{ minWidth: 110 }}
-          popupMatchSelectWidth={false}
-        >
-          {SUBTITLE_ADDED_OPTIONS.map((opt) => (
-            <Option key={opt.value} value={opt.value}>
-              {opt.label}
-            </Option>
-          ))}
-        </Select>
-        {filters.subtitleAddedDays > 0 && (
-          <button
-            className="filter-clear-btn"
-            type="button"
-            onClick={() => onFiltersChange({ subtitleAddedDays: 0 })}
-            title="자막 수정일 필터 초기화"
+        {/* ── 최소 별점 + 결과 수 ────────────────────────────── */}
+        <div className="filter-section filter-section--rating">
+          <span className="filter-label">최소 별점</span>
+          <Select
+            value={filters.minRating}
+            onChange={(val) => onFiltersChange({ minRating: val })}
+            size="small"
+            style={{ minWidth: 110 }}
+            popupMatchSelectWidth={false}
           >
-            초기화
-          </button>
-        )}
-      </div>
+            {RATING_OPTIONS.map((opt) => (
+              <Option key={opt.value} value={opt.value}>
+                {opt.label}
+              </Option>
+            ))}
+          </Select>
 
-      <div className="filter-section filter-section--actor-tier">
-        <span className="filter-label">배우 티어</span>
-        <Select
-          value={filters.actorTierFilter || 'all'}
-          onChange={(val) => onFiltersChange({ actorTierFilter: val })}
-          size="small"
-          style={{ minWidth: 150 }}
-          popupMatchSelectWidth={false}
-        >
-          {ACTOR_TIER_FILTER_OPTIONS.map((opt) => (
-            <Option key={opt.value} value={opt.value}>
-              {opt.label}
-            </Option>
-          ))}
-        </Select>
+          <span className="filter-result-info">
+            <strong>{totalCount}</strong>개
+            {totalSize > 0 && (
+              <span className="filter-result-size">
+                {' / '}{formatFileSize(totalSize)}
+              </span>
+            )}
+          </span>
+        </div>
+
+        <div className="filter-section filter-section--subtitle-date">
+          <span className="filter-label">자막 수정일</span>
+          <Select
+            value={filters.subtitleAddedDays}
+            onChange={(val) => onFiltersChange({ subtitleAddedDays: val })}
+            size="small"
+            style={{ minWidth: 110 }}
+            popupMatchSelectWidth={false}
+          >
+            {SUBTITLE_ADDED_OPTIONS.map((opt) => (
+              <Option key={opt.value} value={opt.value}>
+                {opt.label}
+              </Option>
+            ))}
+          </Select>
+          {filters.subtitleAddedDays > 0 && (
+            <button
+              className="filter-clear-btn"
+              type="button"
+              onClick={() => onFiltersChange({ subtitleAddedDays: 0 })}
+              title="자막 수정일 필터 초기화"
+            >
+              초기화
+            </button>
+          )}
+        </div>
+
+        <div className="filter-section filter-section--actor-tier">
+          <span className="filter-label">배우 티어</span>
+          <Select
+            value={filters.actorTierFilter || 'all'}
+            onChange={(val) => onFiltersChange({ actorTierFilter: val })}
+            size="small"
+            style={{ minWidth: 150 }}
+            popupMatchSelectWidth={false}
+          >
+            {ACTOR_TIER_FILTER_OPTIONS.map((opt) => (
+              <Option key={opt.value} value={opt.value}>
+                {opt.label}
+              </Option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="filter-section filter-section--actor-badge">
+          <span className="filter-label">특수 뱃지</span>
+          <Select
+            value={filters.actorBadgeFilter || 'all'}
+            onChange={(val) => onFiltersChange({ actorBadgeFilter: val })}
+            size="small"
+            style={{ minWidth: 180 }}
+            popupMatchSelectWidth={false}
+          >
+            {badgeOptions.map((opt) => (
+              <Option key={opt.value} value={opt.value}>
+                {opt.label}
+              </Option>
+            ))}
+          </Select>
+        </div>
       </div>
 
     </div>

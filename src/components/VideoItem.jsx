@@ -19,10 +19,34 @@
 import { memo, useMemo } from 'react'
 import { Tag }      from 'antd'
 import StarRating   from './StarRating.jsx'
+import ActorBadge   from './actors/ActorBadge.jsx'
 import ActorTierBadge from './actors/ActorTierBadge.jsx'
 import { GRADE_COLORS, formatDate, parseActors } from '../utils/format.js'
 
 const STATUS_MISSING_COLOR = 'red'
+
+function ActorBadgeSnippet({ badges = [], compact = true }) {
+  const list = Array.isArray(badges) ? badges : []
+  if (list.length === 0) return null
+  const shown = list.slice(0, 2)
+  const rest = list.length - shown.length
+  const title = list.map((badge) => `${badge.label}${badge.description ? ` · ${badge.description}` : ''}`).join(' | ')
+
+  return (
+    <span className="vi-actor-badges" title={title}>
+      {shown.map((badge) => (
+        <ActorBadge
+          key={badge.id}
+          badge={badge}
+          compact={compact}
+          iconOnly={Boolean(badge.icon)}
+          className={badge.is_active === 0 ? 'actor-badge--muted' : ''}
+        />
+      ))}
+      {rest > 0 && <span className="vi-actor-badges__more" title={title}>+{rest}</span>}
+    </span>
+  )
+}
 
 const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, onToggle }) {
   const borderClass = video.status === 'missing' ? ' video-item--missing' : ''
@@ -85,6 +109,9 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
                     <span key={token.key} className="actor-name__token">
                       <ActorTierBadge tier={token.tier} size="sm" compact className="actor-name__tier" />
                       <span className={idx === 0 ? 'actor-primary' : 'actor-secondary'}>{token.name}</span>
+                      {Array.isArray(video.actorsList) && video.actorsList[idx]?.badges?.length > 0 && (
+                        <ActorBadgeSnippet badges={video.actorsList[idx].badges} compact />
+                      )}
                       {idx < Math.min(actorTokens.length, 3) - 1 && <span className="actor-secondary">, </span>}
                     </span>
                   ))}

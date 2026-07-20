@@ -24,6 +24,7 @@
 
 const path = require('path')
 const fs   = require('fs')
+const crypto = require('crypto')
 const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
 const { getDb, recordVideoActivity, getDashboardStats, toggleFolderActive, getScannedRoots } = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
@@ -263,6 +264,19 @@ const ACTOR_TIER_LIMITS = {
   B: 30,
 }
 
+const ACTOR_BADGE_VARIANTS = new Set([
+  'purple',
+  'hotpink',
+  'softpink',
+  'red',
+  'orange',
+  'gold',
+  'green',
+  'cyan',
+  'blue',
+  'gray',
+])
+
 const ACTOR_TIER_CASE = `CASE a.tier
   WHEN 'S' THEN 1
   WHEN 'A' THEN 2
@@ -321,6 +335,262 @@ function getActorTierCount(db, tier, { archived = false } = {}) {
       AND a.is_archived = ?
   `).get(tier, archived ? 1 : 0)
   return Number(row?.count || 0)
+}
+
+function normalizeBadgeVariant(value) {
+  const variant = String(value || '').trim().toLowerCase()
+  return ACTOR_BADGE_VARIANTS.has(variant) ? variant : null
+}
+
+function normalizeBadgeLabel(value) {
+  return String(value || '').trim()
+}
+
+function normalizeBadgeIcon(value) {
+  return String(value || '').trim().slice(0, 8)
+}
+
+function normalizeBadgeDescription(value) {
+  return String(value || '').trim().slice(0, 200)
+}
+
+function normalizeBadgeSortOrder(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0
+}
+
+function normalizeBadgeActive(value) {
+  return value === true || value === 1 || value === '1' ? 1 : 0
+}
+
+function buildBadgeKey() {
+  const random = crypto.randomBytes(4).toString('hex')
+  return `custom_${Date.now()}_${random}`
+}
+
+function normalizeBadgeIds(badgeIds) {
+  if (!Array.isArray(badgeIds)) return []
+  const seen = new Set()
+  const result = []
+  for (const value of badgeIds) {
+    const id = Number(value)
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue
+    seen.add(id)
+    result.push(id)
+  }
+  return result
+}
+
+function validateBadgeDefinitionInput(db, data = {}, { isUpdate = false, currentId = null } = {}) {
+  const label = normalizeBadgeLabel(data.label)
+  if (!label) throw new Error('뱃지 이름은 필수입니다.')
+  if (label.length > 30) throw new Error('뱃지 이름은 최대 30자까지 입력할 수 있습니다.')
+
+  const rawIcon = String(data.icon || '').trim()
+  if (rawIcon.length > 8) throw new Error('아이콘은 최대 8자까지 입력할 수 있습니다.')
+  const icon = normalizeBadgeIcon(rawIcon)
+
+  const rawDescription = String(data.description || '').trim()
+  if (rawDescription.length > 200) throw new Error('설명은 최대 200자까지 입력할 수 있습니다.')
+  const description = normalizeBadgeDescription(rawDescription)
+  const variant = normalizeBadgeVariant(data.variant)
+  if (!variant) throw new Error('허용되지 않은 뱃지 색상입니다.')
+
+  const sortOrder = normalizeBadgeSortOrder(data.sort_order)
+  const isActive = normalizeBadgeActive(data.is_active)
+
+  const duplicate = db.prepare(`
+    SELECT id
+    FROM actor_badge_definitions
+    WHERE label = ?
+      ${isUpdate ? 'AND id != ?' : ''}
+    LIMIT 1
+  `).get(...(isUpdate ? [label, currentId] : [label]))
+  if (duplicate) throw new Error(`이미 존재하는 뱃지 이름입니다: ${label}`)
+
+  return { label, icon, description, variant, sortOrder, isActive }
+}
+
+function getBadgeDefinitionsByIds(db, badgeIds) {
+  const ids = normalizeBadgeIds(badgeIds)
+  if (ids.length === 0) return []
+  const placeholders = ids.map(() => '?').join(',')
+  return db.prepare(`
+    SELECT
+      id, badge_key, label, icon, variant, description, sort_order, is_active, created_at, updated_at
+    FROM actor_badge_definitions
+    WHERE id IN (${placeholders})
+  `).all(...ids)
+}
+
+function getActorBadgeDefinitionRows(db, { includeInactive = false } = {}) {
+  return db.prepare(`
+    SELECT
+      d.id,
+      d.badge_key,
+      d.label,
+      d.icon,
+      d.variant,
+      d.description,
+      d.sort_order,
+      d.is_active,
+      d.created_at,
+      d.updated_at,
+      COUNT(ab.actor_id) AS actor_count
+    FROM actor_badge_definitions d
+    LEFT JOIN actor_badges ab ON ab.badge_id = d.id
+    ${includeInactive ? '' : 'WHERE d.is_active = 1'}
+    GROUP BY d.id
+    ORDER BY d.is_active DESC, d.sort_order ASC, d.label ASC
+  `).all().map((row) => ({
+    ...row,
+    actor_count: Number(row.actor_count || 0),
+  }))
+}
+
+function getActorBadgesByActorIds(db, actorIds) {
+  const ids = normalizeBadgeIds(actorIds)
+  const result = new Map()
+  if (ids.length === 0) return result
+
+  const MAX_PARAMS = 990
+  for (let i = 0; i < ids.length; i += MAX_PARAMS) {
+    const chunk = ids.slice(i, i + MAX_PARAMS)
+    const rows = db.prepare(`
+      SELECT
+        ab.actor_id,
+        d.id,
+        d.badge_key,
+        d.label,
+        d.icon,
+        d.variant,
+        d.description,
+        d.sort_order,
+        d.is_active,
+        d.created_at,
+        d.updated_at
+      FROM actor_badges ab
+      JOIN actor_badge_definitions d ON d.id = ab.badge_id
+      WHERE ab.actor_id IN (${chunk.map(() => '?').join(',')})
+      ORDER BY ab.actor_id, d.sort_order ASC, d.label ASC
+    `).all(...chunk)
+
+    for (const row of rows) {
+      if (!result.has(row.actor_id)) result.set(row.actor_id, [])
+      result.get(row.actor_id).push({
+        id: row.id,
+        badge_key: row.badge_key,
+        label: row.label,
+        icon: row.icon,
+        variant: row.variant,
+        description: row.description,
+        sort_order: row.sort_order,
+        is_active: row.is_active,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      })
+    }
+  }
+
+  return result
+}
+
+function attachBadgesToActors(db, actors) {
+  if (!Array.isArray(actors) || actors.length === 0) return actors
+  const badgeMap = getActorBadgesByActorIds(db, actors.map((actor) => actor.id))
+  return actors.map((actor) => ({
+    ...actor,
+    badges: badgeMap.get(actor.id) || [],
+  }))
+}
+
+function attachBadgesToVideos(db, videos, actorsByVideoId) {
+  if (!Array.isArray(videos) || videos.length === 0) return videos
+  const actorIds = []
+  for (const list of Object.values(actorsByVideoId || {})) {
+    for (const actor of list) {
+      if (actor?.actor_id) actorIds.push(actor.actor_id)
+    }
+  }
+  const badgeMap = getActorBadgesByActorIds(db, actorIds)
+  for (const list of Object.values(actorsByVideoId || {})) {
+    for (const actor of list) {
+      actor.badges = badgeMap.get(actor.actor_id) || []
+    }
+  }
+  return videos
+}
+
+function buildActorBadgeFilterSql(filterValue, alias = 'v') {
+  if (filterValue === undefined || filterValue === null || filterValue === '' || filterValue === 'all') {
+    return { clause: '', params: [] }
+  }
+
+  if (filterValue === 'none') {
+    return {
+      clause: `AND EXISTS (
+        SELECT 1
+        FROM video_actors va
+        WHERE va.video_id = ${alias}.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM video_actors va
+        JOIN actor_badges ab ON ab.actor_id = va.actor_id
+        WHERE va.video_id = ${alias}.id
+      )`,
+      params: [],
+    }
+  }
+
+  const badgeId = Number(filterValue)
+  if (!Number.isInteger(badgeId) || badgeId <= 0) {
+    return { clause: '', params: [] }
+  }
+
+  return {
+    clause: `AND EXISTS (
+      SELECT 1
+      FROM video_actors va
+      JOIN actor_badges ab ON ab.actor_id = va.actor_id
+      WHERE va.video_id = ${alias}.id
+        AND ab.badge_id = ?
+    )`,
+    params: [badgeId],
+  }
+}
+
+function buildActorBadgeFilterSqlForActor(alias = 'a') {
+  return (filterValue) => {
+    if (filterValue === undefined || filterValue === null || filterValue === '' || filterValue === 'all') {
+      return { clause: '', params: [] }
+    }
+    if (filterValue === 'none') {
+      return {
+        clause: `AND NOT EXISTS (
+          SELECT 1
+          FROM actor_badges ab
+          WHERE ab.actor_id = ${alias}.id
+        )`,
+        params: [],
+      }
+    }
+
+    const badgeId = Number(filterValue)
+    if (!Number.isInteger(badgeId) || badgeId <= 0) {
+      return { clause: '', params: [] }
+    }
+
+    return {
+      clause: `AND EXISTS (
+        SELECT 1
+        FROM actor_badges ab
+        WHERE ab.actor_id = ${alias}.id
+          AND ab.badge_id = ?
+      )`,
+      params: [badgeId],
+    }
+  }
 }
 
 function assertTierCapacityOrThrow(db, actorId, currentTier, nextTier) {
@@ -1132,7 +1402,7 @@ function registerIpcHandlers() {
         SELECT 1
         FROM video_actors va
         JOIN actors a ON a.id = va.actor_id
-        WHERE va.video_id = id
+        WHERE va.video_id = v.id
           AND a.tier = 'S'
       )`)
     } else if (actorTierFilter === 'A_OR_HIGHER') {
@@ -1140,7 +1410,7 @@ function registerIpcHandlers() {
         SELECT 1
         FROM video_actors va
         JOIN actors a ON a.id = va.actor_id
-        WHERE va.video_id = id
+        WHERE va.video_id = v.id
           AND a.tier IN ('S', 'A')
       )`)
     } else if (actorTierFilter === 'B_OR_HIGHER') {
@@ -1148,22 +1418,31 @@ function registerIpcHandlers() {
         SELECT 1
         FROM video_actors va
         JOIN actors a ON a.id = va.actor_id
-        WHERE va.video_id = id
+        WHERE va.video_id = v.id
           AND a.tier IN ('S', 'A', 'B')
       )`)
     } else if (actorTierFilter === 'UNRANKED_ONLY') {
       filterConditions.push(`EXISTS (
         SELECT 1
         FROM video_actors va
-        WHERE va.video_id = id
+        WHERE va.video_id = v.id
       )`)
       filterConditions.push(`NOT EXISTS (
         SELECT 1
         FROM video_actors va
         JOIN actors a ON a.id = va.actor_id
-        WHERE va.video_id = id
+        WHERE va.video_id = v.id
           AND a.tier IN ('S', 'A', 'B')
       )`)
+    }
+
+    const actorBadgeFilter = typeof filters.actorBadgeFilter === 'string'
+      ? filters.actorBadgeFilter
+      : 'all'
+    const badgeFilter = buildActorBadgeFilterSql(actorBadgeFilter, 'v')
+    if (badgeFilter.clause) {
+      filterConditions.push(badgeFilter.clause.replace(/^AND\s+/, ''))
+      filterParams.push(...badgeFilter.params)
     }
 
     // ── 비활성화 폴더 제외 ────────────────────────────────────
@@ -1189,7 +1468,7 @@ function registerIpcHandlers() {
     if (!query || query.trim() === '') {
       // 빈 검색: 조건 + 정렬을 한 번에 (두 번 스캔 제거)
       videos = db.prepare(`
-        SELECT * FROM videos
+        SELECT * FROM videos v
         WHERE 1=1 ${tabClause} ${filterClause} ${folderClause}
         ORDER BY ${orderClause}
         ${limitClause}
@@ -1241,6 +1520,8 @@ function registerIpcHandlers() {
         ;(actorsByVideoId[row.video_id] ??= []).push(row)
       }
     }
+
+    attachBadgesToVideos(db, videos, actorsByVideoId)
 
     return videos.map((v) => ({ ...v, actorsList: actorsByVideoId[v.id] || [] }))
   })
@@ -1382,6 +1663,242 @@ function registerIpcHandlers() {
   })
 
   // ══════════════════════════════════════════════════════════════
+  // 배우 특수 뱃지 정의 목록 조회 (get-actor-badge-definitions)
+  // 반환: [{ id, badge_key, label, icon, variant, description, sort_order, is_active, actor_count }]
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-actor-badge-definitions', async (_event, options = {}) => {
+    const db = getDb()
+    return getActorBadgeDefinitionRows(db, {
+      includeInactive: options.includeInactive === true,
+    })
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 특수 뱃지 정의 생성 (create-actor-badge-definition)
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('create-actor-badge-definition', async (_event, data = {}) => {
+    const db = getDb()
+    const normalized = validateBadgeDefinitionInput(db, data)
+    const badgeKey = buildBadgeKey()
+
+    const info = db.prepare(`
+      INSERT INTO actor_badge_definitions
+        (badge_key, label, icon, variant, description, sort_order, is_active, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      badgeKey,
+      normalized.label,
+      normalized.icon,
+      normalized.variant,
+      normalized.description,
+      normalized.sortOrder,
+      normalized.isActive,
+    )
+
+    return db.prepare(`
+      SELECT
+        d.id,
+        d.badge_key,
+        d.label,
+        d.icon,
+        d.variant,
+        d.description,
+        d.sort_order,
+        d.is_active,
+        d.created_at,
+        d.updated_at,
+        0 AS actor_count
+      FROM actor_badge_definitions d
+      WHERE d.id = ?
+    `).get(info.lastInsertRowid)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 특수 뱃지 정의 수정 (update-actor-badge-definition)
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('update-actor-badge-definition', async (_event, id, data = {}) => {
+    const db = getDb()
+    const badgeId = Number(id)
+    if (!Number.isInteger(badgeId) || badgeId <= 0) {
+      throw new Error(`유효하지 않은 badge id: ${id}`)
+    }
+
+    const current = db.prepare('SELECT * FROM actor_badge_definitions WHERE id = ?').get(badgeId)
+    if (!current) throw new Error(`존재하지 않는 뱃지 id: ${id}`)
+
+    const merged = {
+      label: data.label !== undefined ? data.label : current.label,
+      icon: data.icon !== undefined ? data.icon : current.icon,
+      variant: data.variant !== undefined ? data.variant : current.variant,
+      description: data.description !== undefined ? data.description : current.description,
+      sort_order: data.sort_order !== undefined ? data.sort_order : current.sort_order,
+      is_active: data.is_active !== undefined ? data.is_active : current.is_active,
+    }
+    const normalized = validateBadgeDefinitionInput(db, merged, { isUpdate: true, currentId: badgeId })
+
+    db.prepare(`
+      UPDATE actor_badge_definitions
+      SET label = ?,
+          icon = ?,
+          variant = ?,
+          description = ?,
+          sort_order = ?,
+          is_active = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      normalized.label,
+      normalized.icon,
+      normalized.variant,
+      normalized.description,
+      normalized.sortOrder,
+      normalized.isActive,
+      badgeId,
+    )
+
+    return db.prepare(`
+      SELECT
+        d.id,
+        d.badge_key,
+        d.label,
+        d.icon,
+        d.variant,
+        d.description,
+        d.sort_order,
+        d.is_active,
+        d.created_at,
+        d.updated_at,
+        COUNT(ab.actor_id) AS actor_count
+      FROM actor_badge_definitions d
+      LEFT JOIN actor_badges ab ON ab.badge_id = d.id
+      WHERE d.id = ?
+      GROUP BY d.id
+    `).get(badgeId)
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 특수 뱃지 활성화 상태 변경 (set-actor-badge-active)
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('set-actor-badge-active', async (_event, id, isActive) => {
+    const db = getDb()
+    const badgeId = Number(id)
+    if (!Number.isInteger(badgeId) || badgeId <= 0) {
+      throw new Error(`유효하지 않은 badge id: ${id}`)
+    }
+    const current = db.prepare('SELECT id FROM actor_badge_definitions WHERE id = ?').get(badgeId)
+    if (!current) throw new Error(`존재하지 않는 뱃지 id: ${id}`)
+
+    db.prepare(`
+      UPDATE actor_badge_definitions
+      SET is_active = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(normalizeBadgeActive(isActive), badgeId)
+
+    return { success: true, badge: db.prepare('SELECT * FROM actor_badge_definitions WHERE id = ?').get(badgeId) }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 특수 뱃지 삭제 (delete-actor-badge-definition)
+  // 연결 배우가 0명일 때만 허용
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('delete-actor-badge-definition', async (_event, id) => {
+    const db = getDb()
+    const badgeId = Number(id)
+    if (!Number.isInteger(badgeId) || badgeId <= 0) {
+      throw new Error(`유효하지 않은 badge id: ${id}`)
+    }
+
+    const badge = db.prepare('SELECT id, label FROM actor_badge_definitions WHERE id = ?').get(badgeId)
+    if (!badge) throw new Error(`존재하지 않는 뱃지 id: ${id}`)
+
+    const row = db.prepare(`
+      SELECT COUNT(DISTINCT actor_id) AS actor_count
+      FROM actor_badges
+      WHERE badge_id = ?
+    `).get(badgeId)
+    const actorCount = Number(row?.actor_count || 0)
+    if (actorCount > 0) {
+      throw new Error(`현재 ${actorCount}명의 배우가 사용 중인 뱃지는 삭제할 수 없습니다. 비활성화를 사용하세요.`)
+    }
+
+    db.prepare('DELETE FROM actor_badge_definitions WHERE id = ?').run(badgeId)
+    return { success: true }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우의 현재 뱃지 조회 (get-actor-badges)
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('get-actor-badges', async (_event, actorId) => {
+    const db = getDb()
+    const parsedActorId = Number(actorId)
+    if (!Number.isInteger(parsedActorId) || parsedActorId <= 0) {
+      throw new Error(`유효하지 않은 actorId: ${actorId}`)
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        d.id,
+        d.badge_key,
+        d.label,
+        d.icon,
+        d.variant,
+        d.description,
+        d.sort_order,
+        d.is_active,
+        d.created_at,
+        d.updated_at
+      FROM actor_badges ab
+      JOIN actor_badge_definitions d ON d.id = ab.badge_id
+      WHERE ab.actor_id = ?
+      ORDER BY d.sort_order ASC, d.label ASC
+    `).all(parsedActorId)
+
+    return rows
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 배우 뱃지 일괄 설정 (set-actor-badges)
+  // 전달된 badgeIds만 남기고 나머지는 교체
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('set-actor-badges', async (_event, actorId, badgeIds) => {
+    const db = getDb()
+    const parsedActorId = Number(actorId)
+    if (!Number.isInteger(parsedActorId) || parsedActorId <= 0) {
+      throw new Error(`유효하지 않은 actorId: ${actorId}`)
+    }
+
+    const actor = db.prepare('SELECT id FROM actors WHERE id = ?').get(parsedActorId)
+    if (!actor) throw new Error(`존재하지 않는 배우 id: ${actorId}`)
+
+    const normalizedIds = normalizeBadgeIds(badgeIds)
+    const activeRows = normalizedIds.length > 0
+      ? getBadgeDefinitionsByIds(db, normalizedIds)
+      : []
+    if (activeRows.length !== normalizedIds.length) {
+      throw new Error('존재하지 않는 뱃지가 포함되어 있습니다.')
+    }
+    const inactiveBadge = activeRows.find((row) => row.is_active !== 1)
+    if (inactiveBadge) {
+      throw new Error(`비활성 뱃지는 선택할 수 없습니다: ${inactiveBadge.label}`)
+    }
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM actor_badges WHERE actor_id = ?').run(parsedActorId)
+      if (normalizedIds.length > 0) {
+        const insert = db.prepare(`
+          INSERT INTO actor_badges (actor_id, badge_id)
+          VALUES (?, ?)
+        `)
+        for (const badgeId of normalizedIds) {
+          insert.run(parsedActorId, badgeId)
+        }
+      }
+    })()
+
+    return { success: true, badges: getActorBadgesByActorIds(db, [parsedActorId]).get(parsedActorId) || [] }
+  })
+
+  // ══════════════════════════════════════════════════════════════
   // 파일 열기 (OS 기본 플레이어)
   // ══════════════════════════════════════════════════════════════
   ipcMain.handle('open-video', async (_event, filePath) => {
@@ -1424,21 +1941,25 @@ function registerIpcHandlers() {
   ipcMain.handle('random-pick', async (_event, query, options = {}) => {
     const db          = getDb()
     const hideMissing = options.hideMissing !== false
-    const missingFilter = hideMissing ? `AND status != 'missing'` : ''
+    const missingFilter = hideMissing ? `AND v.status != 'missing'` : ''
     const { clause: folderClause, params: folderParams } = buildFolderFilter(options.currentFolder || null)
+    const actorBadgeFilter = typeof options.actorBadgeFilter === 'string' ? options.actorBadgeFilter : 'all'
+    const badgeFilter = buildActorBadgeFilterSql(actorBadgeFilter, 'v')
 
     let videos
     if (!query || query.trim() === '') {
       videos = db.prepare(`
-        SELECT * FROM videos WHERE 1=1 ${missingFilter} ${folderClause}
-      `).all(...folderParams)
+        SELECT * FROM videos v WHERE 1=1 ${missingFilter} ${folderClause}
+          ${badgeFilter.clause ? ` ${badgeFilter.clause}` : ''}
+      `).all(...folderParams, ...badgeFilter.params)
     } else {
       const q = `%${query.trim()}%`
       videos = db.prepare(`
-        SELECT * FROM videos
-        WHERE (file_name LIKE ? OR code LIKE ? OR actor_name LIKE ? OR memo LIKE ? OR tags LIKE ?)
+        SELECT * FROM videos v
+        WHERE (v.file_name LIKE ? OR v.code LIKE ? OR v.actor_name LIKE ? OR v.memo LIKE ? OR v.tags LIKE ?)
           ${missingFilter} ${folderClause}
-      `).all(q, q, q, q, q, ...folderParams)
+          ${badgeFilter.clause ? ` ${badgeFilter.clause}` : ''}
+      `).all(q, q, q, q, q, ...folderParams, ...badgeFilter.params)
     }
 
     const actorTierFilter = typeof options.actorTierFilter === 'string' ? options.actorTierFilter : 'all'
@@ -1538,31 +2059,35 @@ function registerIpcHandlers() {
   ipcMain.handle('pick-one-per-actor', async (_event, query, options = {}) => {
     const db = getDb()
     const { clause: folderClause, params: folderParams } = buildFolderFilter(options.currentFolder || null)
+    const actorBadgeFilter = typeof options.actorBadgeFilter === 'string' ? options.actorBadgeFilter : 'all'
+    const badgeFilter = buildActorBadgeFilterSql(actorBadgeFilter, 'v')
 
     // 기본 제외 조건: code/actor_name 필수, 삭제요망·missing·deleted 제외
     const baseFilter = `
-      code IS NOT NULL AND code != ''
-      AND actor_name IS NOT NULL AND actor_name != ''
-      AND grade != '삭제요망'
-      AND status != 'missing'
-      AND status != 'deleted'
+      v.code IS NOT NULL AND v.code != ''
+      AND v.actor_name IS NOT NULL AND v.actor_name != ''
+      AND v.grade != '삭제요망'
+      AND v.status != 'missing'
+      AND v.status != 'deleted'
     `
 
     let videos
     if (!query || query.trim() === '') {
       // 쿼리 없으면 전체 대상 (폴더 필터 적용)
       videos = db.prepare(`
-        SELECT * FROM videos WHERE ${baseFilter} ${folderClause}
-      `).all(...folderParams)
+        SELECT * FROM videos v WHERE ${baseFilter} ${folderClause}
+          ${badgeFilter.clause ? ` ${badgeFilter.clause}` : ''}
+      `).all(...folderParams, ...badgeFilter.params)
     } else {
       // 쿼리 있으면 file_name / code / actor_name / memo / tags LIKE 검색
       const q = `%${query.trim()}%`
       videos = db.prepare(`
-        SELECT * FROM videos
+        SELECT * FROM videos v
         WHERE ${baseFilter}
-          AND (file_name LIKE ? OR code LIKE ? OR actor_name LIKE ? OR memo LIKE ? OR tags LIKE ?)
+          AND (v.file_name LIKE ? OR v.code LIKE ? OR v.actor_name LIKE ? OR v.memo LIKE ? OR v.tags LIKE ?)
           ${folderClause}
-      `).all(q, q, q, q, q, ...folderParams)
+          ${badgeFilter.clause ? ` ${badgeFilter.clause}` : ''}
+      `).all(q, q, q, q, q, ...folderParams, ...badgeFilter.params)
     }
 
     const actorTierFilter = typeof options.actorTierFilter === 'string' ? options.actorTierFilter : 'all'
@@ -2166,6 +2691,12 @@ function registerIpcHandlers() {
       params.push('%' + escapeLike(options.tag.trim()) + '%')
     }
 
+    const badgeFilter = buildActorBadgeFilterSqlForActor('a')(options.badgeFilter)
+    if (badgeFilter.clause) {
+      conditions.push(badgeFilter.clause.replace(/^AND\s+/, ''))
+      params.push(...badgeFilter.params)
+    }
+
     // 최소 별점
     if (typeof options.minRating === 'number' && options.minRating > 0) {
       conditions.push('a.rating >= ?')
@@ -2200,7 +2731,7 @@ function registerIpcHandlers() {
     }
     const sortClause = SORT_ACTORS[options.sortBy] || 'a.name ASC'
 
-    return db.prepare(`
+    const rows = db.prepare(`
       SELECT
         a.*,
         COUNT(DISTINCT va.video_id) AS video_count,
@@ -2215,6 +2746,8 @@ function registerIpcHandlers() {
       GROUP BY a.id
       ORDER BY ${sortClause}
     `).all(...params)
+
+    return attachBadgesToActors(db, rows)
   })
 
   ipcMain.handle('get-actor-tier-counts', async (_event, options = {}) => {
@@ -2257,7 +2790,7 @@ function registerIpcHandlers() {
     }
     const archived = options.archived === true ? 1 : 0
 
-    return db.prepare(`
+    const rows = db.prepare(`
       SELECT
         a.*,
         COUNT(DISTINCT va.video_id) AS video_count
@@ -2268,6 +2801,8 @@ function registerIpcHandlers() {
       GROUP BY a.id
       ORDER BY a.rating ASC, a.name ASC
     `).all(tier, archived)
+
+    return attachBadgesToActors(db, rows)
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -2311,7 +2846,8 @@ function registerIpcHandlers() {
       LIMIT 3
     `).all(id)
 
-    return { actor, videos, stats, topVideos }
+    const [actorWithBadges] = attachBadgesToActors(db, [actor])
+    return { actor: actorWithBadges, videos, stats, topVideos }
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -2696,6 +3232,8 @@ function registerIpcHandlers() {
     const idOrder = new Map(videoIds.map((id, idx) => [id, idx]))
     videos.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0))
 
+    attachBadgesToVideos(db, videos, actorsByVideoId)
+
     return videos.map((v) => ({
       ...v,
       actorsList: actorsByVideoId[v.id] || [],
@@ -2730,7 +3268,7 @@ function registerIpcHandlers() {
       null,
     )
 
-    return db.prepare('SELECT * FROM actors WHERE id = ?').get(info.lastInsertRowid)
+    return attachBadgesToActors(db, [db.prepare('SELECT * FROM actors WHERE id = ?').get(info.lastInsertRowid)])[0]
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -2794,7 +3332,7 @@ function registerIpcHandlers() {
       id,
     )
 
-    return db.prepare('SELECT * FROM actors WHERE id = ?').get(id)
+    return attachBadgesToActors(db, [db.prepare('SELECT * FROM actors WHERE id = ?').get(id)])[0]
   })
 
   ipcMain.handle('replace-actor-tier', async (_event, payload = {}) => {
@@ -2856,7 +3394,7 @@ function registerIpcHandlers() {
     tx()
     return {
       success: true,
-      actor: db.prepare('SELECT * FROM actors WHERE id = ?').get(targetActorId),
+      actor: attachBadgesToActors(db, [db.prepare('SELECT * FROM actors WHERE id = ?').get(targetActorId)])[0],
     }
   })
 

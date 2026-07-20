@@ -458,6 +458,62 @@ const MIGRATIONS = [
       `)
     },
   },
+
+  {
+    version: '022_create_actor_badges',
+    description: '배우 특수 뱃지 정의 및 연결 테이블 생성',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS actor_badge_definitions (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          badge_key   TEXT NOT NULL UNIQUE,
+          label       TEXT NOT NULL UNIQUE,
+          icon        TEXT NOT NULL DEFAULT '',
+          variant     TEXT NOT NULL DEFAULT 'gray',
+          description TEXT NOT NULL DEFAULT '',
+          sort_order  INTEGER NOT NULL DEFAULT 0,
+          is_active   INTEGER NOT NULL DEFAULT 1,
+          created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS actor_badges (
+          actor_id   INTEGER NOT NULL,
+          badge_id   INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+          PRIMARY KEY (actor_id, badge_id),
+
+          FOREIGN KEY (actor_id)
+            REFERENCES actors(id)
+            ON DELETE CASCADE,
+
+          FOREIGN KEY (badge_id)
+            REFERENCES actor_badge_definitions(id)
+            ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_actor_badges_actor_id
+        ON actor_badges (actor_id);
+
+        CREATE INDEX IF NOT EXISTS idx_actor_badges_badge_id
+        ON actor_badges (badge_id);
+
+        CREATE INDEX IF NOT EXISTS idx_actor_badge_definitions_active_sort
+        ON actor_badge_definitions (is_active, sort_order, label);
+      `)
+
+      const insertBadge = db.prepare(`
+        INSERT OR IGNORE INTO actor_badge_definitions
+          (badge_key, label, icon, variant, description, sort_order, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+      `)
+
+      insertBadge.run('tuned_beauty', '튜닝미인', '✨', 'purple', '세련되고 인공적인 완성미가 강하게 느껴지는 배우', 10)
+      insertBadge.run('promiscuous_look', '걸레상', '💦', 'hotpink', '도발적이고 성적인 분위기가 강하게 느껴지는 배우', 20)
+      insertBadge.run('pure_look', '청순상', '🌸', 'softpink', '맑고 청순한 인상이 강하게 느껴지는 배우', 30)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────
