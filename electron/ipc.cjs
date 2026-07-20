@@ -277,6 +277,19 @@ const ACTOR_BADGE_VARIANTS = new Set([
   'gray',
 ])
 
+const ACTOR_BADGE_CATEGORIES = new Set([
+  'appearance',
+  'body',
+  'performance',
+])
+
+const ACTOR_BADGE_CATEGORY_ORDER_CASE = `CASE d.category
+  WHEN 'appearance' THEN 1
+  WHEN 'body' THEN 2
+  WHEN 'performance' THEN 3
+  ELSE 4
+END`
+
 const ACTOR_TIER_CASE = `CASE a.tier
   WHEN 'S' THEN 1
   WHEN 'A' THEN 2
@@ -354,6 +367,11 @@ function normalizeBadgeDescription(value) {
   return String(value || '').trim().slice(0, 200)
 }
 
+function normalizeBadgeCategory(value) {
+  const category = String(value || '').trim().toLowerCase()
+  return ACTOR_BADGE_CATEGORIES.has(category) ? category : null
+}
+
 function normalizeBadgeSortOrder(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.trunc(parsed) : 0
@@ -393,6 +411,8 @@ function validateBadgeDefinitionInput(db, data = {}, { isUpdate = false, current
   const rawDescription = String(data.description || '').trim()
   if (rawDescription.length > 200) throw new Error('설명은 최대 200자까지 입력할 수 있습니다.')
   const description = normalizeBadgeDescription(rawDescription)
+  const category = normalizeBadgeCategory(data.category)
+  if (!category) throw new Error('허용되지 않은 뱃지 카테고리입니다.')
   const variant = normalizeBadgeVariant(data.variant)
   if (!variant) throw new Error('허용되지 않은 뱃지 색상입니다.')
 
@@ -408,7 +428,7 @@ function validateBadgeDefinitionInput(db, data = {}, { isUpdate = false, current
   `).get(...(isUpdate ? [label, currentId] : [label]))
   if (duplicate) throw new Error(`이미 존재하는 뱃지 이름입니다: ${label}`)
 
-  return { label, icon, description, variant, sortOrder, isActive }
+  return { label, icon, description, category, variant, sortOrder, isActive }
 }
 
 function getBadgeDefinitionsByIds(db, badgeIds) {
@@ -417,7 +437,7 @@ function getBadgeDefinitionsByIds(db, badgeIds) {
   const placeholders = ids.map(() => '?').join(',')
   return db.prepare(`
     SELECT
-      id, badge_key, label, icon, variant, description, sort_order, is_active, created_at, updated_at
+      id, badge_key, label, icon, variant, category, description, sort_order, is_active, created_at, updated_at
     FROM actor_badge_definitions
     WHERE id IN (${placeholders})
   `).all(...ids)
@@ -431,6 +451,7 @@ function getActorBadgeDefinitionRows(db, { includeInactive = false } = {}) {
       d.label,
       d.icon,
       d.variant,
+      d.category,
       d.description,
       d.sort_order,
       d.is_active,
@@ -441,7 +462,7 @@ function getActorBadgeDefinitionRows(db, { includeInactive = false } = {}) {
     LEFT JOIN actor_badges ab ON ab.badge_id = d.id
     ${includeInactive ? '' : 'WHERE d.is_active = 1'}
     GROUP BY d.id
-    ORDER BY d.is_active DESC, d.sort_order ASC, d.label ASC
+    ORDER BY d.is_active DESC, ${ACTOR_BADGE_CATEGORY_ORDER_CASE} ASC, d.sort_order ASC, d.label ASC
   `).all().map((row) => ({
     ...row,
     actor_count: Number(row.actor_count || 0),
@@ -464,6 +485,7 @@ function getActorBadgesByActorIds(db, actorIds) {
         d.label,
         d.icon,
         d.variant,
+        d.category,
         d.description,
         d.sort_order,
         d.is_active,
@@ -472,7 +494,7 @@ function getActorBadgesByActorIds(db, actorIds) {
       FROM actor_badges ab
       JOIN actor_badge_definitions d ON d.id = ab.badge_id
       WHERE ab.actor_id IN (${chunk.map(() => '?').join(',')})
-      ORDER BY ab.actor_id, d.sort_order ASC, d.label ASC
+      ORDER BY ab.actor_id, ${ACTOR_BADGE_CATEGORY_ORDER_CASE} ASC, d.sort_order ASC, d.label ASC
     `).all(...chunk)
 
     for (const row of rows) {
@@ -483,6 +505,7 @@ function getActorBadgesByActorIds(db, actorIds) {
         label: row.label,
         icon: row.icon,
         variant: row.variant,
+        category: row.category,
         description: row.description,
         sort_order: row.sort_order,
         is_active: row.is_active,
@@ -1664,7 +1687,7 @@ function registerIpcHandlers() {
 
   // ══════════════════════════════════════════════════════════════
   // 배우 특수 뱃지 정의 목록 조회 (get-actor-badge-definitions)
-  // 반환: [{ id, badge_key, label, icon, variant, description, sort_order, is_active, actor_count }]
+  // 반환: [{ id, badge_key, label, icon, variant, category, description, sort_order, is_active, actor_count }]
   // ══════════════════════════════════════════════════════════════
   ipcMain.handle('get-actor-badge-definitions', async (_event, options = {}) => {
     const db = getDb()
@@ -1683,13 +1706,14 @@ function registerIpcHandlers() {
 
     const info = db.prepare(`
       INSERT INTO actor_badge_definitions
-        (badge_key, label, icon, variant, description, sort_order, is_active, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        (badge_key, label, icon, variant, category, description, sort_order, is_active, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `).run(
       badgeKey,
       normalized.label,
       normalized.icon,
       normalized.variant,
+      normalized.category,
       normalized.description,
       normalized.sortOrder,
       normalized.isActive,
@@ -1702,6 +1726,7 @@ function registerIpcHandlers() {
         d.label,
         d.icon,
         d.variant,
+        d.category,
         d.description,
         d.sort_order,
         d.is_active,
@@ -1730,6 +1755,7 @@ function registerIpcHandlers() {
       label: data.label !== undefined ? data.label : current.label,
       icon: data.icon !== undefined ? data.icon : current.icon,
       variant: data.variant !== undefined ? data.variant : current.variant,
+      category: data.category !== undefined ? data.category : current.category,
       description: data.description !== undefined ? data.description : current.description,
       sort_order: data.sort_order !== undefined ? data.sort_order : current.sort_order,
       is_active: data.is_active !== undefined ? data.is_active : current.is_active,
@@ -1741,6 +1767,7 @@ function registerIpcHandlers() {
       SET label = ?,
           icon = ?,
           variant = ?,
+          category = ?,
           description = ?,
           sort_order = ?,
           is_active = ?,
@@ -1750,6 +1777,7 @@ function registerIpcHandlers() {
       normalized.label,
       normalized.icon,
       normalized.variant,
+      normalized.category,
       normalized.description,
       normalized.sortOrder,
       normalized.isActive,
@@ -1763,6 +1791,7 @@ function registerIpcHandlers() {
         d.label,
         d.icon,
         d.variant,
+        d.category,
         d.description,
         d.sort_order,
         d.is_active,
@@ -1842,6 +1871,7 @@ function registerIpcHandlers() {
         d.label,
         d.icon,
         d.variant,
+        d.category,
         d.description,
         d.sort_order,
         d.is_active,
@@ -1850,7 +1880,7 @@ function registerIpcHandlers() {
       FROM actor_badges ab
       JOIN actor_badge_definitions d ON d.id = ab.badge_id
       WHERE ab.actor_id = ?
-      ORDER BY d.sort_order ASC, d.label ASC
+      ORDER BY ${ACTOR_BADGE_CATEGORY_ORDER_CASE} ASC, d.sort_order ASC, d.label ASC
     `).all(parsedActorId)
 
     return rows

@@ -195,6 +195,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('get-new-actor-count'),
 
   // ── 배우 특수 뱃지 정의 조회 ────────────────────────────────
+  // 반환 row: { id, badge_key, label, icon, variant, category, description, sort_order, is_active, ... }
   // @param options {{ includeInactive?: boolean }}
   getActorBadgeDefinitions: (options) =>
     ipcRenderer.invoke('get-actor-badge-definitions', options),

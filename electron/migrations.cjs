@@ -514,6 +514,484 @@ const MIGRATIONS = [
       insertBadge.run('pure_look', '청순상', '🌸', 'softpink', '맑고 청순한 인상이 강하게 느껴지는 배우', 30)
     },
   },
+  {
+    version: '023_expand_actor_badges_catalog',
+    description: '배우 특수 뱃지 카탈로그 확장 및 카테고리 정규화',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(actor_badge_definitions)').all().map((c) => c.name)
+
+      if (!cols.includes('category')) {
+        db.exec(`ALTER TABLE actor_badge_definitions ADD COLUMN category TEXT NOT NULL DEFAULT 'appearance'`)
+      }
+      if (!cols.includes('description')) {
+        db.exec(`ALTER TABLE actor_badge_definitions ADD COLUMN description TEXT NOT NULL DEFAULT ''`)
+      }
+      if (!cols.includes('sort_order')) {
+        db.exec(`ALTER TABLE actor_badge_definitions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`)
+      }
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_actor_badge_definitions_active_category_sort
+        ON actor_badge_definitions (is_active, category, sort_order, label)
+      `)
+
+      const getByLabel = db.prepare(`
+        SELECT id, badge_key, label
+        FROM actor_badge_definitions
+        WHERE label = ?
+        LIMIT 1
+      `)
+
+      const legacyPure = getByLabel.get('청순상')
+      const currentPure = getByLabel.get('청순')
+      if (legacyPure && currentPure && legacyPure.id !== currentPure.id) {
+        db.exec(`
+          INSERT OR IGNORE INTO actor_badges (actor_id, badge_id)
+          SELECT actor_id, ${currentPure.id}
+          FROM actor_badges
+          WHERE badge_id = ${legacyPure.id}
+        `)
+        db.prepare('DELETE FROM actor_badges WHERE badge_id = ?').run(legacyPure.id)
+        db.prepare('DELETE FROM actor_badge_definitions WHERE id = ?').run(legacyPure.id)
+      }
+
+      const badgeCatalog = [
+        {
+          key: 'pure_look',
+          legacyKeys: ['appearance_pure'],
+          label: '청순',
+          legacyLabels: ['청순상'],
+          icon: '🌸',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '깨끗하고 단정하며 순수한 분위기가 돋보이는 배우',
+          sortOrder: 10,
+        },
+        {
+          key: 'promiscuous_look',
+          legacyKeys: ['appearance_promiscuous_look'],
+          label: '걸레상',
+          legacyLabels: [],
+          icon: '💦',
+          variant: 'hotpink',
+          category: 'appearance',
+          description: '얼굴과 분위기에서 노골적이고 음란한 인상이 강하게 느껴지는 배우',
+          sortOrder: 20,
+        },
+        {
+          key: 'appearance_cutie',
+          legacyKeys: [],
+          label: '귀요미',
+          legacyLabels: [],
+          icon: '🍬',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '귀엽고 사랑스러운 인상이 특히 돋보이는 배우',
+          sortOrder: 30,
+        },
+        {
+          key: 'tuned_beauty',
+          legacyKeys: ['appearance_tuned_beauty'],
+          label: '튜닝미인',
+          legacyLabels: [],
+          icon: '✨',
+          variant: 'purple',
+          category: 'appearance',
+          description: '성형 또는 시술을 포함해 화려하고 완성도 높은 외모가 돋보이는 배우',
+          sortOrder: 40,
+        },
+        {
+          key: 'appearance_sexy',
+          legacyKeys: [],
+          label: '섹녀',
+          legacyLabels: [],
+          icon: '🔥',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '성숙하고 노골적인 섹시함이 강하게 느껴지는 배우',
+          sortOrder: 50,
+        },
+        {
+          key: 'appearance_mature_wife',
+          legacyKeys: [],
+          label: '미시',
+          legacyLabels: [],
+          icon: '💗',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '성숙하고 기혼 여성 같은 분위기와 매력이 돋보이는 배우',
+          sortOrder: 60,
+        },
+        {
+          key: 'appearance_goddess',
+          legacyKeys: [],
+          label: '여신',
+          legacyLabels: [],
+          icon: '👑',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '외모가 압도적으로 아름답고 완성형 미인에 가까운 배우',
+          sortOrder: 70,
+        },
+        {
+          key: 'appearance_baby_face',
+          legacyKeys: [],
+          label: '동안',
+          legacyLabels: [],
+          icon: '🧸',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '실제 성인 배우이면서 나이보다 어려 보이는 인상이 강한 배우',
+          sortOrder: 80,
+        },
+
+        {
+          key: 'body_cute_big_bust',
+          legacyKeys: [],
+          label: '귀염폭유',
+          legacyLabels: [],
+          icon: '🍈',
+          variant: 'orange',
+          category: 'body',
+          description: '귀엽고 아담한 인상과 대비되는 큰 가슴이 특징인 배우',
+          sortOrder: 10,
+        },
+        {
+          key: 'body_breast_goat',
+          legacyKeys: [],
+          label: '가슴 GOAT',
+          legacyLabels: [],
+          icon: '🍈',
+          variant: 'orange',
+          category: 'body',
+          description: '가슴의 크기, 모양, 비율이 최상급이라고 평가할 만한 배우',
+          sortOrder: 20,
+        },
+        {
+          key: 'body_legs',
+          legacyKeys: [],
+          label: '각선미',
+          legacyLabels: [],
+          icon: '🦵',
+          variant: 'orange',
+          category: 'body',
+          description: '다리의 길이, 라인, 비율이 특히 아름다운 배우',
+          sortOrder: 30,
+        },
+        {
+          key: 'body_curvy',
+          legacyKeys: [],
+          label: '육덕',
+          legacyLabels: [],
+          icon: '🔥',
+          variant: 'orange',
+          category: 'body',
+          description: '살집과 볼륨감이 풍부한 성숙한 체형이 돋보이는 배우',
+          sortOrder: 40,
+        },
+        {
+          key: 'body_slender',
+          legacyKeys: [],
+          label: '슬렌더',
+          legacyLabels: [],
+          icon: '🖤',
+          variant: 'orange',
+          category: 'body',
+          description: '가늘고 마른 체형과 선이 돋보이는 배우',
+          sortOrder: 50,
+        },
+        {
+          key: 'body_abs',
+          legacyKeys: [],
+          label: '복근미녀',
+          legacyLabels: [],
+          icon: '💪',
+          variant: 'orange',
+          category: 'body',
+          description: '탄탄한 복부와 운동으로 다져진 몸매가 돋보이는 배우',
+          sortOrder: 60,
+        },
+
+        {
+          key: 'performance_fellatio_goat',
+          legacyKeys: [],
+          label: '펠라 GOAT',
+          legacyLabels: [],
+          icon: '👅',
+          variant: 'red',
+          category: 'performance',
+          description: '구강 성행위 장면의 기술, 표현력, 적극성이 최상급인 배우',
+          sortOrder: 10,
+        },
+        {
+          key: 'performance_cowgirl_goat',
+          legacyKeys: [],
+          label: '기승위 GOAT',
+          legacyLabels: [],
+          icon: '🐎',
+          variant: 'red',
+          category: 'performance',
+          description: '기승위 장면의 움직임, 리듬, 주도력이 최상급인 배우',
+          sortOrder: 20,
+        },
+        {
+          key: 'performance_toilet_role',
+          legacyKeys: [],
+          label: '타고난 육변기',
+          legacyLabels: [],
+          icon: '🚽',
+          variant: 'red',
+          category: 'performance',
+          description: '단체 장면에서 집중적으로 상대를 받아내는 역할과 리액션을 뛰어나게 살리는 배우',
+          sortOrder: 30,
+        },
+        {
+          key: 'performance_ahegao_goat',
+          legacyKeys: [],
+          label: '아헤가오 GOAT',
+          legacyLabels: [],
+          icon: '😵‍💫',
+          variant: 'red',
+          category: 'performance',
+          description: '쾌감에 무너지는 표정과 얼굴 연기가 특히 뛰어난 배우',
+          sortOrder: 40,
+        },
+        {
+          key: 'performance_queen_fall',
+          legacyKeys: [],
+          label: '여왕함락',
+          legacyLabels: [],
+          icon: '👑',
+          variant: 'red',
+          category: 'performance',
+          description: '도도하고 고고하며 자존심 강한 캐릭터가 굴욕과 쾌락으로 무너지는 과정을 잘 살리는 배우',
+          sortOrder: 50,
+        },
+        {
+          key: 'performance_female_fall',
+          legacyKeys: [],
+          label: '암컷타락',
+          legacyLabels: [],
+          icon: '🐾',
+          variant: 'red',
+          category: 'performance',
+          description: '거부, 수치, 저항에서 시작해 쾌락에 무너지고 본능적으로 변해가는 과정을 뛰어나게 연기하는 배우',
+          sortOrder: 60,
+        },
+        {
+          key: 'performance_pure_fall',
+          legacyKeys: [],
+          label: '청순타락',
+          legacyLabels: [],
+          icon: '🌸',
+          variant: 'red',
+          category: 'performance',
+          description: '순수하고 얌전한 이미지가 성을 알아가며 점차 적극적으로 변하는 과정을 잘 살리는 배우',
+          sortOrder: 70,
+        },
+        {
+          key: 'performance_wood',
+          legacyKeys: [],
+          label: '목석',
+          legacyLabels: [],
+          icon: '🪵',
+          variant: 'red',
+          category: 'performance',
+          description: '성인 장면에서 표정, 신음, 움직임, 적극성이 굳어 있어 장면을 잘 살리지 못하는 배우',
+          sortOrder: 80,
+        },
+        {
+          key: 'performance_natural_slut',
+          legacyKeys: [],
+          label: '타고난 암캐',
+          legacyLabels: [],
+          icon: '🐕',
+          variant: 'red',
+          category: 'performance',
+          description: '성행위를 본능적으로 좋아하는 듯한 적극성, 자연스러운 색기, 걸레 같은 음란함과 탐욕스러운 반응을 뛰어나게 보여주는 배우',
+          sortOrder: 90,
+        },
+      ]
+
+      const selectByKey = db.prepare(`
+        SELECT id
+        FROM actor_badge_definitions
+        WHERE badge_key = ?
+        LIMIT 1
+      `)
+      const selectByLabel = db.prepare(`
+        SELECT id
+        FROM actor_badge_definitions
+        WHERE label = ?
+        LIMIT 1
+      `)
+      const updateById = db.prepare(`
+        UPDATE actor_badge_definitions
+        SET badge_key = ?,
+            label = ?,
+            icon = ?,
+            variant = ?,
+            category = ?,
+            description = ?,
+            sort_order = ?,
+            is_active = 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `)
+      const insertBadge = db.prepare(`
+        INSERT INTO actor_badge_definitions
+          (badge_key, label, icon, variant, category, description, sort_order, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      `)
+
+      const usedIds = new Set()
+      for (const badge of badgeCatalog) {
+        let existing = null
+
+        for (const key of [badge.key, ...(badge.legacyKeys || [])]) {
+          if (!key) continue
+          const row = selectByKey.get(key)
+          if (row && !usedIds.has(row.id)) {
+            existing = row
+            break
+          }
+        }
+
+        if (!existing) {
+          for (const label of [badge.label, ...(badge.legacyLabels || [])]) {
+            if (!label) continue
+            const row = selectByLabel.get(label)
+            if (row && !usedIds.has(row.id)) {
+              existing = row
+              break
+            }
+          }
+        }
+
+        if (existing) {
+          updateById.run(
+            badge.key,
+            badge.label,
+            badge.icon,
+            badge.variant,
+            badge.category,
+            badge.description,
+            badge.sortOrder,
+            existing.id,
+          )
+          usedIds.add(existing.id)
+        } else {
+          const info = insertBadge.run(
+            badge.key,
+            badge.label,
+            badge.icon,
+            badge.variant,
+            badge.category,
+            badge.description,
+            badge.sortOrder,
+          )
+          usedIds.add(Number(info.lastInsertRowid))
+        }
+      }
+    },
+  },
+  {
+    version: '024_add_more_appearance_badges',
+    description: '외모 카테고리 뱃지 3종 추가(러블리, 일반인 미인, 빻요미)',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(actor_badge_definitions)').all().map((c) => c.name)
+      if (!cols.includes('category')) {
+        db.exec(`ALTER TABLE actor_badge_definitions ADD COLUMN category TEXT NOT NULL DEFAULT 'appearance'`)
+      }
+
+      const badgeCatalog = [
+        {
+          key: 'appearance_lovely',
+          label: '러블리',
+          icon: '💕',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '외모뿐 아니라 미소, 표정, 말투와 행동 전반에서 사랑스럽고 밝은 매력이 강하게 느껴지는 배우',
+          sortOrder: 35,
+        },
+        {
+          key: 'appearance_girl_next_door_beauty',
+          label: '일반인 미인',
+          icon: '🏠',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '화려하고 전형적인 배우상보다는 현실에서 마주칠 법한 자연스럽고 친근한 인상을 지녔지만 외모가 뛰어난 배우',
+          sortOrder: 75,
+        },
+        {
+          key: 'appearance_quirky_cute',
+          label: '빻요미',
+          icon: '🐹',
+          variant: 'softpink',
+          category: 'appearance',
+          description: '정석적인 미인형은 아니거나 개성적인 얼굴이지만, 볼수록 귀엽고 묘하게 끌리는 매력이 있는 배우',
+          sortOrder: 85,
+        },
+      ]
+
+      const selectByKey = db.prepare(`
+        SELECT id
+        FROM actor_badge_definitions
+        WHERE badge_key = ?
+        LIMIT 1
+      `)
+      const selectByLabel = db.prepare(`
+        SELECT id
+        FROM actor_badge_definitions
+        WHERE label = ?
+        LIMIT 1
+      `)
+      const updateById = db.prepare(`
+        UPDATE actor_badge_definitions
+        SET badge_key = ?,
+            label = ?,
+            icon = ?,
+            variant = ?,
+            category = ?,
+            description = ?,
+            sort_order = ?,
+            is_active = 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `)
+      const insertBadge = db.prepare(`
+        INSERT INTO actor_badge_definitions
+          (badge_key, label, icon, variant, category, description, sort_order, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      `)
+
+      for (const badge of badgeCatalog) {
+        const existing = selectByKey.get(badge.key) || selectByLabel.get(badge.label)
+        if (existing) {
+          updateById.run(
+            badge.key,
+            badge.label,
+            badge.icon,
+            badge.variant,
+            badge.category,
+            badge.description,
+            badge.sortOrder,
+            existing.id,
+          )
+        } else {
+          insertBadge.run(
+            badge.key,
+            badge.label,
+            badge.icon,
+            badge.variant,
+            badge.category,
+            badge.description,
+            badge.sortOrder,
+          )
+        }
+      }
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

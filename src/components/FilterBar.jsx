@@ -18,7 +18,7 @@
 import { Checkbox, Select } from 'antd'
 import { ACTOR_TIER_FILTER_OPTIONS, GRADES, formatFileSize } from '../utils/format.js'
 
-const { Option } = Select
+const { Option, OptGroup } = Select
 
 // 등급 Checkbox.Group 옵션 (순서 고정)
 const GRADE_OPTIONS = GRADES.map((g) => ({ label: g, value: g }))
@@ -42,14 +42,18 @@ const SUBTITLE_ADDED_OPTIONS = [
 ]
 
 export default function FilterBar({ filters, onFiltersChange, totalCount, totalSize, badgeDefinitions = [] }) {
-  const badgeOptions = [
-    { value: 'all', label: '전체 뱃지' },
-    { value: 'none', label: '뱃지 없음 배우 작품' },
-    ...badgeDefinitions.map((badge) => ({
-      value: String(badge.id),
-      label: `${badge.icon ? `${badge.icon} ` : ''}${badge.label}`,
-    })),
-  ]
+  const BADGE_CATEGORY_LABELS = {
+    appearance: '외모',
+    body: '몸매',
+    performance: '행위·연기·캐릭터',
+  }
+
+  const groupedBadgeOptions = ['appearance', 'body', 'performance'].map((categoryKey) => ({
+    key: categoryKey,
+    label: BADGE_CATEGORY_LABELS[categoryKey],
+    options: badgeDefinitions.filter((badge) => badge.category === categoryKey),
+  })).filter((group) => group.options.length > 0)
+  const uncategorizedBadgeOptions = badgeDefinitions.filter((badge) => !BADGE_CATEGORY_LABELS[badge.category])
 
   return (
     <div className="filter-bar">
@@ -195,11 +199,26 @@ export default function FilterBar({ filters, onFiltersChange, totalCount, totalS
             style={{ minWidth: 180 }}
             popupMatchSelectWidth={false}
           >
-            {badgeOptions.map((opt) => (
-              <Option key={opt.value} value={opt.value}>
-                {opt.label}
-              </Option>
+            <Option value="all">전체 뱃지</Option>
+            <Option value="none">뱃지 없음 배우 작품</Option>
+            {groupedBadgeOptions.map((group) => (
+              <OptGroup key={group.key} label={group.label}>
+                {group.options.map((badge) => (
+                  <Option key={badge.id} value={String(badge.id)}>
+                    {badge.icon ? `${badge.icon} ` : ''}{badge.label}
+                  </Option>
+                ))}
+              </OptGroup>
             ))}
+            {uncategorizedBadgeOptions.length > 0 && (
+              <OptGroup label="기타">
+                {uncategorizedBadgeOptions.map((badge) => (
+                  <Option key={badge.id} value={String(badge.id)}>
+                    {badge.icon ? `${badge.icon} ` : ''}{badge.label}
+                  </Option>
+                ))}
+              </OptGroup>
+            )}
           </Select>
         </div>
       </div>

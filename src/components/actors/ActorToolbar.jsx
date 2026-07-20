@@ -31,6 +31,12 @@ export default function ActorToolbar({
   onBadgeFilterChange,
   onOpenBadgeManager,
 }) {
+  const BADGE_CATEGORY_LABELS = {
+    appearance: '외모',
+    body: '몸매',
+    performance: '행위·연기·캐릭터',
+  }
+
   const SORT_OPTIONS = [
     { value: 'name_asc',         label: '이름 오름차순' },
     { value: 'rating_desc',      label: '별점 높은 순' },
@@ -42,14 +48,12 @@ export default function ActorToolbar({
   ]
 
   const counts = tierCounts || { S: 0, A: 0, B: 0, unranked: 0, total: 0, limits: { S: 10, A: 20, B: 30 } }
-  const badgeOptions = [
-    { value: 'all', label: '전체 뱃지' },
-    { value: 'none', label: '뱃지 없음' },
-    ...badgeDefinitions.map((badge) => ({
-      value: String(badge.id),
-      label: `${badge.icon ? `${badge.icon} ` : ''}${badge.label}`,
-    })),
-  ]
+  const badgeOptionsByCategory = ['appearance', 'body', 'performance'].map((categoryKey) => ({
+    key: categoryKey,
+    label: BADGE_CATEGORY_LABELS[categoryKey],
+    options: badgeDefinitions.filter((badge) => badge.category === categoryKey),
+  })).filter((group) => group.options.length > 0)
+  const uncategorizedBadgeOptions = badgeDefinitions.filter((badge) => !BADGE_CATEGORY_LABELS[badge.category])
 
   return (
     <div className="actor-toolbar">
@@ -158,9 +162,26 @@ export default function ActorToolbar({
             value={badgeFilter}
             onChange={(e) => onBadgeFilterChange?.(e.target.value)}
           >
-            {badgeOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            <option value="all">전체 뱃지</option>
+            <option value="none">뱃지 없음</option>
+            {badgeOptionsByCategory.map((group) => (
+              <optgroup key={group.key} label={group.label}>
+                {group.options.map((badge) => (
+                  <option key={badge.id} value={String(badge.id)}>
+                    {badge.icon ? `${badge.icon} ` : ''}{badge.label}
+                  </option>
+                ))}
+              </optgroup>
             ))}
+            {uncategorizedBadgeOptions.length > 0 && (
+              <optgroup label="기타">
+                {uncategorizedBadgeOptions.map((badge) => (
+                  <option key={badge.id} value={String(badge.id)}>
+                    {badge.icon ? `${badge.icon} ` : ''}{badge.label}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
         <button

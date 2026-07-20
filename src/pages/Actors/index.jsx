@@ -9,6 +9,12 @@ import ActorList        from '../../components/actors/ActorList.jsx'
 import ActorDetailPanel from '../../components/actors/ActorDetailPanel.jsx'
 import { ACTOR_BADGE_VARIANT_OPTIONS } from '../../utils/format.js'
 
+const BADGE_CATEGORY_LABELS = {
+  appearance: '외모',
+  body: '몸매',
+  performance: '행위·연기·캐릭터',
+}
+
 const DEFAULT_FILTERS = {
   minRating:     0,
   tag:           '',
@@ -41,6 +47,7 @@ export default function ActorsPage() {
     label: '',
     icon: '',
     variant: 'gray',
+    category: 'appearance',
     description: '',
     sort_order: 0,
     is_active: 1,
@@ -378,6 +385,7 @@ export default function ActorsPage() {
       label: badge?.label ?? '',
       icon: badge?.icon ?? '',
       variant: badge?.variant ?? 'gray',
+      category: badge?.category ?? 'appearance',
       description: badge?.description ?? '',
       sort_order: badge?.sort_order ?? 0,
       is_active: badge?.is_active ?? 1,
@@ -396,6 +404,7 @@ export default function ActorsPage() {
         label: badgeForm.label,
         icon: badgeForm.icon,
         variant: badgeForm.variant,
+        category: badgeForm.category,
         description: badgeForm.description,
         sort_order: badgeForm.sort_order,
         is_active: badgeForm.is_active,
@@ -474,10 +483,16 @@ export default function ActorsPage() {
   const badgeManageList = badgeDefinitions.filter((badge) => {
     const q = badgeManageQuery.trim().toLowerCase()
     if (!q) return true
-    return [badge.label, badge.icon, badge.description, badge.badge_key]
+    return [badge.label, badge.icon, badge.description, badge.badge_key, badge.category, BADGE_CATEGORY_LABELS[badge.category]]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(q))
   })
+  const badgeManageGroups = ['appearance', 'body', 'performance'].map((categoryKey) => ({
+    key: categoryKey,
+    label: BADGE_CATEGORY_LABELS[categoryKey] || categoryKey,
+    items: badgeManageList.filter((badge) => badge.category === categoryKey),
+  })).filter((group) => group.items.length > 0)
+  const uncategorizedBadges = badgeManageList.filter((badge) => !BADGE_CATEGORY_LABELS[badge.category])
 
   return (
     <div className="actors-page">
@@ -665,27 +680,59 @@ export default function ActorsPage() {
           {badgeError && <div className="actor-detail__error">{badgeError}</div>}
           {badgeSuccess && <div className="actor-detail__success">{badgeSuccess}</div>}
 
-          <ul className="actor-badge-manage__list">
-            {badgeManageList.map((badge) => (
-              <li key={badge.id} className={`actor-badge-manage__item${badge.is_active === 0 ? ' actor-badge-manage__item--inactive' : ''}`}>
-                <div className="actor-badge-manage__preview-row">
-                  <span className="actor-badge-manage__preview">
-                    {badge.icon ? `${badge.icon} ` : ''}{badge.label}
-                  </span>
-                  <span className="actor-badge-manage__meta">{badge.variant} · {badge.actor_count ?? 0}명 사용 · {badge.is_active ? '활성' : '비활성'}</span>
-                </div>
-                <div className="actor-badge-manage__desc">{badge.description || '설명 없음'}</div>
-                <div className="actor-badge-manage__actions">
-                  <button type="button" className="btn-secondary" onClick={() => resetBadgeForm(badge)} disabled={badgeManageBusy}>수정</button>
-                  <button type="button" className="btn-secondary" onClick={() => handleToggleBadgeActive(badge)} disabled={badgeManageBusy}>
-                    {badge.is_active ? '비활성화' : '활성화'}
-                  </button>
-                  <button type="button" className="btn-secondary" onClick={() => handleDeleteBadge(badge)} disabled={badgeManageBusy}>삭제</button>
-                </div>
-              </li>
-            ))}
-            {badgeManageList.length === 0 && <li className="actor-badge-manage__empty">표시할 뱃지가 없습니다.</li>}
-          </ul>
+          {badgeManageGroups.map((group) => (
+            <section key={group.key} className="actor-badge-manage__group">
+              <h3 className="actor-badge-manage__group-title">{group.label}</h3>
+              <ul className="actor-badge-manage__list">
+                {group.items.map((badge) => (
+                  <li key={badge.id} className={`actor-badge-manage__item${badge.is_active === 0 ? ' actor-badge-manage__item--inactive' : ''}`}>
+                    <div className="actor-badge-manage__preview-row">
+                      <span className="actor-badge-manage__preview">
+                        {badge.icon ? `${badge.icon} ` : ''}{badge.label}
+                      </span>
+                      <span className="actor-badge-manage__meta">{BADGE_CATEGORY_LABELS[badge.category] || badge.category || '기타'} · {badge.variant} · {badge.actor_count ?? 0}명 사용 · {badge.is_active ? '활성' : '비활성'}</span>
+                    </div>
+                    <div className="actor-badge-manage__desc">{badge.description || '설명 없음'}</div>
+                    <div className="actor-badge-manage__actions">
+                      <button type="button" className="btn-secondary" onClick={() => resetBadgeForm(badge)} disabled={badgeManageBusy}>수정</button>
+                      <button type="button" className="btn-secondary" onClick={() => handleToggleBadgeActive(badge)} disabled={badgeManageBusy}>
+                        {badge.is_active ? '비활성화' : '활성화'}
+                      </button>
+                      <button type="button" className="btn-secondary" onClick={() => handleDeleteBadge(badge)} disabled={badgeManageBusy}>삭제</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+
+          {uncategorizedBadges.length > 0 && (
+            <section className="actor-badge-manage__group">
+              <h3 className="actor-badge-manage__group-title">기타</h3>
+              <ul className="actor-badge-manage__list">
+                {uncategorizedBadges.map((badge) => (
+                  <li key={badge.id} className={`actor-badge-manage__item${badge.is_active === 0 ? ' actor-badge-manage__item--inactive' : ''}`}>
+                    <div className="actor-badge-manage__preview-row">
+                      <span className="actor-badge-manage__preview">
+                        {badge.icon ? `${badge.icon} ` : ''}{badge.label}
+                      </span>
+                      <span className="actor-badge-manage__meta">{badge.variant} · {badge.actor_count ?? 0}명 사용 · {badge.is_active ? '활성' : '비활성'}</span>
+                    </div>
+                    <div className="actor-badge-manage__desc">{badge.description || '설명 없음'}</div>
+                    <div className="actor-badge-manage__actions">
+                      <button type="button" className="btn-secondary" onClick={() => resetBadgeForm(badge)} disabled={badgeManageBusy}>수정</button>
+                      <button type="button" className="btn-secondary" onClick={() => handleToggleBadgeActive(badge)} disabled={badgeManageBusy}>
+                        {badge.is_active ? '비활성화' : '활성화'}
+                      </button>
+                      <button type="button" className="btn-secondary" onClick={() => handleDeleteBadge(badge)} disabled={badgeManageBusy}>삭제</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {badgeManageList.length === 0 && <div className="actor-badge-manage__empty">표시할 뱃지가 없습니다.</div>}
         </Modal>
 
         <Modal
@@ -713,6 +760,13 @@ export default function ActorsPage() {
               {ACTOR_BADGE_VARIANT_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
+            </select>
+
+            <label className="edit-label">카테고리</label>
+            <select className="edit-input" value={badgeForm.category} onChange={(e) => setBadgeForm((prev) => ({ ...prev, category: e.target.value }))}>
+              <option value="appearance">외모</option>
+              <option value="body">몸매</option>
+              <option value="performance">행위·연기·캐릭터</option>
             </select>
 
             <label className="edit-label">설명</label>
