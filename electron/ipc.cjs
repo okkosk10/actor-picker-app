@@ -35,6 +35,7 @@ const { generateAiThemeFolders } = require('./services/aiThemeFolderService.cjs'
 const { parseTargetSizeGB }      = require('./services/themeSizeHelper.cjs')
 const { createThemeFolders }     = require('./services/themeCopyService.cjs')
 const { askAiChatRecommend }     = require('./services/aiChatRecommendService.cjs')
+const { handleChatRequest }      = require('./services/chat/chatOrchestrator.cjs')
 const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
 const { searchAvdbsActors, fetchAvdbsActorDetail, downloadImageToUserData, buildSuggestedTags } = require('./services/avdbsScraper.cjs')
 const { parseSubtitlePaths } = require('./subtitles.cjs')
@@ -238,7 +239,19 @@ function normalizeAiChatPayload(payload) {
 
   const requestId = typeof payload.requestId === 'string' && payload.requestId.trim() ? payload.requestId.trim() : null
   const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim() ? payload.sessionId.trim() : null
-  const message = typeof payload.message === 'string' ? payload.message.trim() : ''
+  const action = payload.action && typeof payload.action === 'object'
+    ? {
+        id: typeof payload.action.id === 'string' ? payload.action.id : null,
+        type: typeof payload.action.type === 'string' ? payload.action.type : null,
+        label: typeof payload.action.label === 'string' ? payload.action.label : null,
+        payload: payload.action.payload && typeof payload.action.payload === 'object' ? payload.action.payload : {},
+        requiresConfirmation: Boolean(payload.action.requiresConfirmation),
+      }
+    : null
+
+  const message = typeof payload.message === 'string'
+    ? payload.message.trim()
+    : action?.label || action?.type || ''
   const context = payload.context && typeof payload.context === 'object' ? payload.context : {}
   const state = payload.state && typeof payload.state === 'object' ? payload.state : {}
 
@@ -246,7 +259,7 @@ function normalizeAiChatPayload(payload) {
     return { success: false, errorCode: 'VALIDATION_ERROR', error: '세션 정보가 올바르지 않습니다.' }
   }
 
-  if (!message) {
+  if (!message && !action) {
     return { success: false, errorCode: 'VALIDATION_ERROR', error: '메시지를 입력해 주세요.' }
   }
 
@@ -275,6 +288,7 @@ function normalizeAiChatPayload(payload) {
       requestId,
       sessionId,
       message,
+      action,
       context: {
         currentPage: typeof context.currentPage === 'string' ? context.currentPage : 'library',
         currentFolder: typeof context.currentFolder === 'string' ? context.currentFolder : null,
@@ -294,7 +308,6 @@ function normalizeAiChatPayload(payload) {
 
 function detectAiChatTool(message, context) {
   const text = String(message || '')
-  const page = String(context?.currentPage || '')
   const hasSelected = Array.isArray(context?.selectedVideoIds) && context.selectedVideoIds.length > 0
   const currentFolder = typeof context?.currentFolder === 'string' ? context.currentFolder.trim() : ''
   const driveMatch = text.match(/([A-Za-z]:)/)
@@ -309,7 +322,7 @@ function detectAiChatTool(message, context) {
     }
   }
 
-  if (/(자막\s*없|자막이\s*없|자막\s*없는|자막\s*없는\s*것|자막\s*미보유|자막\s*매핑\s*안[됨된]|자막\s*미매핑|연결\s*안[됨된]|매칭\s*안[됨된]|subtitle\s*missing|subtitle\s*없)/i.test(text) || page === 'subtitles') {
+  if (/(자막\s*없|자막이\s*없|자막\s*없는|자막\s*없는\s*것|자막\s*미보유|자막\s*매핑\s*안[됨된]|자막\s*미매핑|연결\s*안[됨된]|매칭\s*안[됨된]|subtitle\s*missing|subtitle\s*없)/i.test(text)) {
     return {
       name: 'search_videos_without_subtitles',
       arguments: {
@@ -318,11 +331,11 @@ function detectAiChatTool(message, context) {
     }
   }
 
-  if (/(드라이브|저장소|용량|공간|통계)/.test(text) || page === 'storage') {
+  if (/(드라이브|저장소|용량|공간|통계)/.test(text)) {
     return { name: 'get_drive_stats', arguments: { drive: requestedDrive || context?.activeFilters?.drive || extractDriveFromPath(currentFolder) || null } }
   }
 
-  if (/(배우|메타데이터|태그가 비어|배우 검색|배우 찾아|배우 목록|부족한 배우)/.test(text) || page === 'actors') {
+  if (/(배우|메타데이터|태그가 비어|배우 검색|배우 찾아|배우 목록|부족한 배우)/.test(text)) {
     return { name: 'search_actors', arguments: {} }
   }
 
@@ -5195,7 +5208,9 @@ function registerIpcHandlers() {
   ipcMain.handle('ai-chat:send', async (_event, payload = {}) => {
     try {
       const db = getDb()
-      return await handleAiChatRequest(db, payload)
+      return await handleChatRequest(db, payload, {
+        fallbackRouter: detectAiChatTool,
+      })
     } catch (err) {
       console.error('[ai-chat:send]', err)
       return { success: false, errorCode: 'UNKNOWN_TOOL', error: 'AI 요청 처리 중 오류가 발생했습니다.' }

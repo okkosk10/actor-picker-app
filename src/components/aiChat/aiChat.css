@@ -215,6 +215,100 @@
   color: #cbd5e1;
 }
 
+.ai-chat-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ai-chat-metric-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(96, 165, 250, 0.16);
+}
+
+.ai-chat-metric-card__label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ai-chat-metric-card__value {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.ai-chat-insight-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ai-chat-insight-list__item {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.ai-chat-action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.ai-chat-action-btn {
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  background: rgba(30, 64, 175, 0.28);
+  color: #e0f2fe;
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-chat-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ai-chat-highlight-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ai-chat-highlight-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.ai-chat-highlight-card__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.ai-chat-highlight-card__body {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.ai-chat-highlight-card__meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
 .ai-chat-result-card__footnote {
   margin-top: 10px;
   font-size: 11px;

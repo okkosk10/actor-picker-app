@@ -51,9 +51,14 @@ function getPageLabel(page) {
   return map[page] || 'Actor Picker'
 }
 
-function ToolResultCard({ message }) {
+function ToolResultCard({ message, onAction }) {
   const resultType = message?.resultType
   const data = message?.data || {}
+  const summaryCard = data.summary || null
+  const highlights = Array.isArray(data.highlights) ? data.highlights : []
+  const insights = Array.isArray(data.insights) ? data.insights : []
+  const suggestedActions = Array.isArray(data.suggestedActions) ? data.suggestedActions : []
+  const clarification = data.clarification || null
 
   const openFolder = async (folderPath) => {
     if (!folderPath || !window?.api?.openFolder) return
@@ -69,11 +74,93 @@ function ToolResultCard({ message }) {
     }
   }
 
+  const runAction = async (action) => {
+    if (!action || typeof onAction !== 'function') return
+    await onAction(action)
+  }
+
+  const renderSummaryHeader = () => (
+    <>
+      {summaryCard && (
+        <>
+          <div className="ai-chat-result-card__title">{summaryCard.title}</div>
+          <div className="ai-chat-result-card__summary">{summaryCard.description}</div>
+          {Array.isArray(summaryCard.metrics) && summaryCard.metrics.length > 0 && (
+            <div className="ai-chat-metric-grid">
+              {summaryCard.metrics.map((metric) => (
+                <div key={metric.key || metric.label} className="ai-chat-metric-card">
+                  <div className="ai-chat-metric-card__label">{metric.label}</div>
+                  <div className="ai-chat-metric-card__value">{metric.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {!summaryCard && (
+        <>
+          <div className="ai-chat-result-card__title">결과 요약</div>
+          <div className="ai-chat-result-card__summary">{message.content}</div>
+        </>
+      )}
+      {insights.length > 0 && (
+        <div className="ai-chat-insight-list">
+          {insights.map((insight) => (
+            <div key={insight} className="ai-chat-insight-list__item">{insight}</div>
+          ))}
+        </div>
+      )}
+      {suggestedActions.length > 0 && (
+        <div className="ai-chat-action-row">
+          {suggestedActions.map((action) => (
+            <button
+              key={action.id || action.label}
+              type="button"
+              className="ai-chat-action-btn"
+              onClick={() => runAction(action)}
+              disabled={typeof onAction !== 'function'}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  )
+
+  if (resultType === 'clarification' || clarification) {
+    const options = Array.isArray(clarification?.options) ? clarification.options : []
+    return (
+      <div className="ai-chat-result-card">
+        <div className="ai-chat-result-card__title">추가 기준 필요</div>
+        <div className="ai-chat-result-card__summary">{clarification?.question || message.content}</div>
+        <div className="ai-chat-action-row">
+          {options.map((option) => (
+            <button
+              key={option.id || option.label}
+              type="button"
+              className="ai-chat-action-btn"
+              onClick={() => runAction({
+                id: option.id,
+                type: option.type || 'refine_query',
+                label: option.label,
+                payload: option.payload || {},
+                requiresConfirmation: Boolean(option.requiresConfirmation),
+              })}
+              disabled={typeof onAction !== 'function'}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   if (resultType === 'drive-stats') {
     return (
       <div className="ai-chat-result-card">
-        <div className="ai-chat-result-card__title">드라이브 통계</div>
-        <div className="ai-chat-result-card__summary">{message.content}</div>
+        {renderSummaryHeader()}
         <div className="ai-chat-drive-list">
           {(data.previewStats || []).map((drive) => (
             <div key={drive.drive} className="ai-chat-mini-card">
@@ -94,8 +181,7 @@ function ToolResultCard({ message }) {
   if (resultType === 'subtitle-summary') {
     return (
       <div className="ai-chat-result-card">
-        <div className="ai-chat-result-card__title">자막 미매핑 통계</div>
-        <div className="ai-chat-result-card__summary">{message.content}</div>
+        {renderSummaryHeader()}
         {Array.isArray(data.folderCounts) && data.folderCounts.length > 0 && (
           <div className="ai-chat-folder-count-list">
             {data.folderCounts.map((folder) => (
@@ -129,8 +215,7 @@ function ToolResultCard({ message }) {
   if (resultType === 'actor-list') {
     return (
       <div className="ai-chat-result-card">
-        <div className="ai-chat-result-card__title">배우 검색 결과</div>
-        <div className="ai-chat-result-card__summary">{message.content}</div>
+        {renderSummaryHeader()}
         <div className="ai-chat-mini-list">
           {(data.previewActors || []).map((actor) => (
             <div key={actor.id} className="ai-chat-mini-card">
@@ -151,19 +236,33 @@ function ToolResultCard({ message }) {
   if (resultType === 'delete-candidate-list') {
     return (
       <div className="ai-chat-result-card ai-chat-result-card--danger">
-        <div className="ai-chat-result-card__title">삭제 후보</div>
-        <div className="ai-chat-result-card__summary">{message.content}</div>
+        {renderSummaryHeader()}
         {data.driveInfo && (
           <div className="ai-chat-result-card__footnote">
             {data.driveInfo.drive || '전체'} · 사용 용량 {formatBytes(data.driveInfo.usedByLibrary || 0)} ·
             남은 공간 {formatBytes(data.driveInfo.freeSpace || 0)}
           </div>
         )}
+        {highlights.length > 0 && (
+          <div className="ai-chat-highlight-list">
+            {highlights.slice(0, 5).map((item, index) => (
+              <div key={item.id || index} className="ai-chat-highlight-card">
+                <div className="ai-chat-highlight-card__title">{index + 1}. {item.title}</div>
+                <div className="ai-chat-highlight-card__body">{item.subtitle}</div>
+                {Array.isArray(item.reasons) && item.reasons.length > 0 && (
+                  <div className="ai-chat-highlight-card__meta">{item.reasons.join(' · ')}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="ai-chat-mini-list">
           {(data.previewItems || []).map((item) => (
             <div key={item.id} className="ai-chat-mini-card">
               <div className="ai-chat-mini-card__title">{item.code || item.id}</div>
-              <div className="ai-chat-mini-card__body">{item.file_name}</div>
+                <div className="ai-chat-mini-card__body">
+                  {item.file_name}{item.file_size ? ` · ${formatBytes(item.file_size)}` : ''}
+                </div>
               <div className="ai-chat-mini-card__meta">{item.reason || '후보 이유 없음'}</div>
             </div>
           ))}
@@ -175,15 +274,29 @@ function ToolResultCard({ message }) {
   if (resultType === 'video-list') {
     return (
       <div className="ai-chat-result-card">
-        <div className="ai-chat-result-card__title">영상 검색 결과</div>
-        <div className="ai-chat-result-card__summary">{message.content}</div>
+        {renderSummaryHeader()}
+        {highlights.length > 0 && (
+          <div className="ai-chat-highlight-list">
+            {highlights.slice(0, 5).map((item, index) => (
+              <div key={item.id || index} className="ai-chat-highlight-card">
+                <div className="ai-chat-highlight-card__title">{index + 1}. {item.title}</div>
+                <div className="ai-chat-highlight-card__body">{item.subtitle}</div>
+                {Array.isArray(item.reasons) && item.reasons.length > 0 && (
+                  <div className="ai-chat-highlight-card__meta">{item.reasons.join(' · ')}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="ai-chat-mini-list">
           {(data.previewItems || []).map((item) => (
             <div key={item.id} className="ai-chat-mini-card">
               <div className="ai-chat-mini-card__title">
                 {item.code || item.id} · {item.rating > 0 ? `★${item.rating}` : '무별점'}
               </div>
-              <div className="ai-chat-mini-card__body">{item.file_name}</div>
+                <div className="ai-chat-mini-card__body">
+                  {item.file_name}{item.file_size ? ` · ${formatBytes(item.file_size)}` : ''}
+                </div>
               <div className="ai-chat-mini-card__meta">{item.reason || item.scoreComment || '추천 결과'}</div>
             </div>
           ))}
@@ -200,7 +313,7 @@ function ToolResultCard({ message }) {
   return null
 }
 
-function MessageBubble({ message }) {
+function MessageBubble({ message, onAction }) {
   const isUser = message.role === 'user'
   const isLoading = message.status === 'loading'
   const isError = message.status === 'error'
@@ -215,7 +328,7 @@ function MessageBubble({ message }) {
           </div>
         )}
         {!isLoading && !isError && message.data && (
-          <ToolResultCard message={message} />
+          <ToolResultCard message={message} onAction={onAction} />
         )}
         <div className="ai-chat-message__time">
           {formatDateTime(message.createdAt)}
@@ -225,7 +338,7 @@ function MessageBubble({ message }) {
   )
 }
 
-function MessageList({ messages }) {
+function MessageList({ messages, onAction }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -243,7 +356,7 @@ function MessageList({ messages }) {
           </div>
         </div>
       ) : messages.map((message) => (
-        <MessageBubble key={message.id} message={message} />
+        <MessageBubble key={message.id} message={message} onAction={onAction} />
       ))}
       <div ref={endRef} />
     </div>
@@ -368,7 +481,7 @@ function SessionList({ sessions, activeSessionId, onSelectSession, onDeleteSessi
   )
 }
 
-function ChatBody({ session, isSending, currentPage, onSend }) {
+function ChatBody({ session, isSending, currentPage, onSend, onAction }) {
   return (
     <div className="ai-chat-body">
       <div className="ai-chat-body__context">
@@ -378,7 +491,7 @@ function ChatBody({ session, isSending, currentPage, onSend }) {
           <Tag color="cyan">최근 결과 {session.lastResultIds.length}개</Tag>
         )}
       </div>
-      <MessageList messages={session?.messages || []} />
+      <MessageList messages={session?.messages || []} onAction={onAction} />
       <Composer onSend={onSend} isSending={isSending} currentPage={currentPage} />
     </div>
   )
@@ -469,6 +582,7 @@ export function AiChatDrawer() {
         isSending={isSending}
         currentPage={currentContext.currentPage}
         onSend={async (message) => sendMessage({ message, context: currentContext })}
+        onAction={async (action) => sendMessage({ action, context: currentContext })}
       />
     </Drawer>
   )
@@ -526,6 +640,7 @@ export function AiChatFullscreen() {
             isSending={isSending}
             currentPage={currentContext.currentPage}
             onSend={async (message) => sendMessage({ message, context: currentContext })}
+            onAction={async (action) => sendMessage({ action, context: currentContext })}
           />
         </div>
       </div>

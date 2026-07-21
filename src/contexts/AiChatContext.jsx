@@ -61,6 +61,7 @@ function compactVideoResultItem(item) {
   return {
     id: Number(video.id) || 0,
     file_name: String(video.file_name || ''),
+    file_size: Number(video.file_size) || Number(video.size) || 0,
     code: String(video.code || ''),
     actor_name: String(video.actor_name || ''),
     rating: Number(video.rating) || 0,
@@ -112,6 +113,7 @@ function inferErrorCode(errorMessage) {
 
 function buildAssistantMessage(response) {
   const success = response?.success === true
+  const summaryCard = response?.summary && typeof response.summary === 'object' ? response.summary : null
   const base = {
     id: createId(),
     role: 'assistant',
@@ -132,13 +134,22 @@ function buildAssistantMessage(response) {
   const resultType = response?.resultType
     || (response?.deleteMode ? 'delete-candidate-list' : 'video-list')
 
+  const summaryText = String(
+    response?.message
+      || summaryCard?.description
+      || response?.summary
+      || response?.reason
+      || '처리가 완료되었습니다.',
+  )
+
   const message = {
     ...base,
-    content: String(response?.summary || response?.reason || '처리가 완료되었습니다.'),
+    content: summaryText,
     resultType,
     toolCall: response?.toolCall || null,
     data: {
-      summary: String(response?.summary || ''),
+      summary: summaryCard,
+      summaryText,
       reason: String(response?.reason || ''),
       intent: response?.intent || null,
       driveInfo: response?.driveInfo || null,
@@ -148,6 +159,10 @@ function buildAssistantMessage(response) {
       previewItems: [],
       previewActors: [],
       previewStats: [],
+      highlights: Array.isArray(response?.highlights) ? response.highlights.slice(0, 5) : [],
+      insights: Array.isArray(response?.insights) ? response.insights.slice(0, 5) : [],
+      suggestedActions: Array.isArray(response?.suggestedActions) ? response.suggestedActions.slice(0, 6) : [],
+      clarification: response?.clarification || null,
       currentQuery: String(response?.currentQuery || ''),
     },
     lastResultIds: Array.isArray(response?.lastResultIds) ? response.lastResultIds : [],
@@ -155,14 +170,14 @@ function buildAssistantMessage(response) {
 
   if (resultType === 'video-list' || resultType === 'delete-candidate-list') {
     const items = Array.isArray(response?.items) ? response.items : []
-    message.data.previewItems = items.slice(0, 8).map(compactVideoResultItem)
+    message.data.previewItems = items.slice(0, 5).map(compactVideoResultItem)
     message.data.totalCount = items.length
   } else if (resultType === 'actor-list') {
     const items = Array.isArray(response?.items) ? response.items : []
-    message.data.previewActors = items.slice(0, 8).map(compactActorResultItem)
+    message.data.previewActors = items.slice(0, 5).map(compactActorResultItem)
     message.data.totalCount = items.length
   } else if (resultType === 'drive-stats') {
-    message.data.previewStats = Array.isArray(response?.drives) ? response.drives.slice(0, 8) : []
+    message.data.previewStats = Array.isArray(response?.drives) ? response.drives.slice(0, 5) : []
     message.data.totalCount = message.data.previewStats.length
   } else if (resultType === 'subtitle-summary') {
     message.data.folderCounts = Array.isArray(response?.folderCounts) ? response.folderCounts.slice(0, 20) : []
@@ -297,9 +312,12 @@ export function AiChatProvider({ children, currentContext }) {
     clearAiChatState()
   }, [])
 
-  const sendMessage = useCallback(async ({ message, context: contextOverride } = {}) => {
-    const text = String(message || '').trim()
-    if (!text) {
+  const sendMessage = useCallback(async (input = {}) => {
+    const payload = typeof input === 'string' ? { message: input } : (input || {})
+    const text = String(payload.message || '').trim()
+    const action = payload.action && typeof payload.action === 'object' ? payload.action : null
+
+    if (!text && !action) {
       return { success: false, errorCode: 'VALIDATION_ERROR', error: '메시지를 입력해 주세요.' }
     }
 
@@ -307,18 +325,20 @@ export function AiChatProvider({ children, currentContext }) {
       return { success: false, errorCode: 'REQUEST_CANCELLED', error: '이전 요청을 처리하는 중입니다.' }
     }
 
-    const requestContext = sanitizeContext(contextOverride || currentContext)
-    const session = ensureActiveSession(buildSessionTitle(text), requestContext.activeFilters)
+    const requestContext = sanitizeContext(payload.context || currentContext)
+    const sessionTitleSeed = text || action?.label || action?.type || '새 채팅'
+    const session = ensureActiveSession(buildSessionTitle(sessionTitleSeed), requestContext.activeFilters)
     const sessionId = session.id
     const now = nowIso()
     const requestId = createId()
+    const userContent = text || action?.label || action?.type || '작업 실행'
     const userMessage = {
       id: createId(),
       role: 'user',
-      content: text,
+      content: userContent,
       createdAt: now,
     }
-    const pendingMessage = buildPendingMessage(text, 'AI 도구 실행 중...')
+    const pendingMessage = buildPendingMessage(userContent, action ? 'AI 작업 실행 중...' : 'AI 도구 실행 중...')
 
     setIsDrawerOpen(true)
     setIsSending(true)
@@ -330,18 +350,21 @@ export function AiChatProvider({ children, currentContext }) {
       updatedAt: now,
       activeFilters: requestContext.activeFilters,
       messages: [...prev.messages, userMessage, pendingMessage],
+      pendingAction: action || null,
     }))
 
     try {
       const response = await window.api.sendAiChatMessage({
         requestId,
         sessionId,
-        message: text,
+        message: text || action?.label || action?.type || '',
+        action,
         context: requestContext,
         state: {
           lastToolCall: session.lastToolCall || null,
           lastResultIds: session.lastResultIds || [],
           activeFilters: session.activeFilters || {},
+          pendingAction: session.pendingAction || null,
         },
       })
 
@@ -358,11 +381,14 @@ export function AiChatProvider({ children, currentContext }) {
       updateSession(sessionId, (prev) => ({
         ...replaceMessage(prev, pendingMessage.id, () => assistantMessage),
         updatedAt: nowIso(),
-        lastToolCall: response.toolCall || prev.lastToolCall || null,
-        lastResultIds: Array.isArray(response.lastResultIds)
-          ? response.lastResultIds
-          : prev.lastResultIds,
-        activeFilters: response.intent || prev.activeFilters,
+        lastToolCall: response.state?.lastToolCall || response.toolCall || prev.lastToolCall || null,
+        lastResultIds: Array.isArray(response.state?.lastResultIds)
+          ? response.state.lastResultIds
+          : Array.isArray(response.lastResultIds)
+            ? response.lastResultIds
+            : prev.lastResultIds,
+        activeFilters: response.state?.activeFilters || response.intent?.arguments || prev.activeFilters,
+        pendingAction: response.state?.pendingAction || null,
       }))
 
       return response
