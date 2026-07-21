@@ -15,6 +15,41 @@ function metric(key, label, value) {
   return { key, label, value }
 }
 
+function describeAppliedScope(appliedFilters = {}) {
+  const scope = String(appliedFilters.scope || 'all')
+  if (scope === 'current_folder') {
+    return {
+      type: scope,
+      label: '현재 폴더',
+      value: appliedFilters.folder || null,
+      line: appliedFilters.folder ? `${appliedFilters.folder} 폴더에서` : '현재 폴더에서',
+    }
+  }
+  if (scope === 'current_drive') {
+    return {
+      type: scope,
+      label: '현재 드라이브',
+      value: appliedFilters.drive || null,
+      line: appliedFilters.drive ? `${appliedFilters.drive} 드라이브에서` : '현재 드라이브에서',
+    }
+  }
+  if (scope === 'selected_videos') {
+    const count = Array.isArray(appliedFilters.baseResultIds) ? appliedFilters.baseResultIds.length : 0
+    return {
+      type: scope,
+      label: '선택한 영상',
+      value: `${count}개`,
+      line: `선택한 영상 ${count}개 중`,
+    }
+  }
+  return {
+    type: 'all',
+    label: '전체 라이브러리',
+    value: null,
+    line: '전체 라이브러리에서',
+  }
+}
+
 function compactVideoItem(item) {
   const video = item?.video || {}
   return {
@@ -153,12 +188,33 @@ function buildResultSummary(type, plan, raw) {
 
   if (type === 'subtitle-summary') {
     const folders = Array.isArray(raw.folderCounts) ? raw.folderCounts : []
+    const scopeInfo = describeAppliedScope(raw.appliedFilters || plan?.arguments || {})
     return {
       title: `${Number(raw.totalCount) || 0}개 자막 미매핑`,
       description: folders.length > 0 ? `${folders.length}개 폴더에서 미매핑이 확인되었습니다.` : '미매핑 폴더를 찾지 못했습니다.',
       metrics: [
         metric('count', '미매핑', Number(raw.totalCount) || 0),
         metric('folders', '폴더', folders.length),
+        metric('scope', '범위', scopeInfo.label),
+        ...(scopeInfo.value ? [metric('scopeValue', scopeInfo.label === '선택한 영상' ? '대상' : '값', scopeInfo.value)] : []),
+      ],
+    }
+  }
+
+  if (type === 'subtitle-video-list') {
+    const folders = Array.isArray(raw.folderCounts) ? raw.folderCounts : []
+    const actors = Array.isArray(raw.actorCounts) ? raw.actorCounts : []
+    const totalCount = Number(raw.totalCount) || (Array.isArray(raw.items) ? raw.items.length : 0)
+    const scopeInfo = describeAppliedScope(raw.appliedFilters || plan?.arguments || {})
+    return {
+      title: `${totalCount}개 자막 미매핑 목록`,
+      description: `폴더 ${folders.length}곳, 배우 ${actors.length}명 기준으로 정리했습니다.`,
+      metrics: [
+        metric('count', '미매핑', totalCount),
+        metric('folders', '폴더', folders.length),
+        metric('actors', '배우', actors.length),
+        metric('scope', '범위', scopeInfo.label),
+        ...(scopeInfo.value ? [metric('scopeValue', scopeInfo.label === '선택한 영상' ? '대상' : '값', scopeInfo.value)] : []),
       ],
     }
   }
@@ -166,6 +222,7 @@ function buildResultSummary(type, plan, raw) {
   const videos = Array.isArray(raw.items) ? raw.items : []
   const stats = buildSummaryStatsFromVideos(videos)
   const actorCount = Array.isArray(raw.actorSummaries) ? raw.actorSummaries.length : 0
+  const scopeInfo = describeAppliedScope(raw.appliedFilters || plan?.arguments || {})
   return {
     title: `${stats.totalCount}개 영상 검색 결과`,
     description: `${formatBytes(stats.totalSize)} 정도의 라이브러리를 대상으로 정리했습니다.`,
@@ -175,6 +232,8 @@ function buildResultSummary(type, plan, raw) {
       metric('avgRating', '평균 별점', stats.averageRating),
       metric('notCopied', '미복사', stats.notCopied),
       metric('unplayed', '미재생', stats.unplayed),
+      metric('scope', '범위', scopeInfo.label),
+      ...(scopeInfo.value ? [metric('scopeValue', scopeInfo.label === '선택한 영상' ? '대상' : '값', scopeInfo.value)] : []),
       ...(actorCount > 0 ? [metric('actors', '배우 요약', actorCount)] : []),
     ],
   }
@@ -196,6 +255,10 @@ function buildHighlights(type, raw) {
       subtitle: `자막 미매핑 ${folder.count}개`,
       reasons: Array.isArray(folder.sampleFiles) ? folder.sampleFiles : [],
     }))
+  }
+
+  if (type === 'subtitle-video-list') {
+    return (Array.isArray(raw.items) ? raw.items.slice(0, 5) : []).map((item) => compactVideoItem(item))
   }
 
   return (Array.isArray(raw.items) ? raw.items.slice(0, 5) : []).map((item) => compactVideoItem(item))
@@ -245,6 +308,18 @@ function buildInsights(type, raw, plan) {
     return [
       topFolder ? `가장 많은 미매핑은 ${topFolder.folderPath}에 ${topFolder.count}개 있습니다.` : null,
       folders.length > 1 ? `상위 ${Math.min(3, folders.length)}개 폴더를 우선 보면 전체 흐름을 빠르게 볼 수 있습니다.` : null,
+    ].filter(Boolean)
+  }
+
+  if (type === 'subtitle-video-list') {
+    const folders = Array.isArray(raw.folderCounts) ? raw.folderCounts : []
+    const actors = Array.isArray(raw.actorCounts) ? raw.actorCounts : []
+    const topFolder = folders[0]
+    const topActor = actors[0]
+    return [
+      topFolder ? `${topFolder.folderPath} 폴더에 ${topFolder.count}개가 집중되어 있습니다.` : null,
+      topActor ? `${topActor.actorName} 배우 작품이 ${topActor.count}개로 가장 많습니다.` : null,
+      folders.length > 1 ? `상위 ${Math.min(5, folders.length)}개 폴더부터 확인하면 빠르게 정리할 수 있습니다.` : null,
     ].filter(Boolean)
   }
 
@@ -367,6 +442,24 @@ function buildSuggestedActions(type, plan, raw) {
     ]
   }
 
+  if (type === 'subtitle-video-list') {
+    const resultIds = Array.isArray(raw.lastResultIds) ? raw.lastResultIds : []
+    return [
+      {
+        id: 'filter_in_library',
+        type: 'client_filter_video_ids',
+        label: '영상 관리에서 이 결과만 보기',
+        payload: { videoIds: resultIds },
+      },
+      {
+        id: 'clear_library_filter',
+        type: 'client_filter_video_ids',
+        label: '영상 관리 필터 해제',
+        payload: { videoIds: [] },
+      },
+    ]
+  }
+
   return []
 }
 
@@ -377,9 +470,23 @@ function buildState(raw, plan) {
       arguments: plan?.arguments || {},
     },
     lastResultIds: Array.isArray(raw.lastResultIds) ? raw.lastResultIds : [],
-    activeFilters: plan?.arguments || {},
+    activeFilters: raw?.appliedFilters || plan?.arguments || {},
     pendingAction: null,
   }
+}
+
+function buildUserFacingMessage(resultType, raw, fallbackMessage) {
+  const subtitleScopeApplied = Boolean(raw?.appliedFilters?.subtitleMissing)
+  if (!subtitleScopeApplied && resultType !== 'subtitle-summary' && resultType !== 'subtitle-video-list') {
+    return fallbackMessage
+  }
+
+  const scopeInfo = describeAppliedScope(raw?.appliedFilters || {})
+  const totalCount = Number(raw?.totalCount) || (Array.isArray(raw?.items) ? raw.items.length : 0)
+  if (resultType === 'subtitle-summary' || resultType === 'subtitle-video-list') {
+    return `${scopeInfo.line} 자막이 없는 영상 ${totalCount}개를 찾았습니다.`
+  }
+  return `${scopeInfo.line} 자막이 없는 영상 ${totalCount}개를 찾았습니다.`
 }
 
 function presentChatResponse(plan, raw, context = {}) {
@@ -396,7 +503,9 @@ function presentChatResponse(plan, raw, context = {}) {
   const highlights = buildHighlights(resultType, raw)
   const insights = buildInsights(resultType, raw, plan)
   const suggestedActions = buildSuggestedActions(resultType, plan, raw)
-  const message = raw?.summary || summary.description || '처리가 완료되었습니다.'
+  const fallbackMessage = raw?.summary || summary.description || '처리가 완료되었습니다.'
+  const message = buildUserFacingMessage(resultType, raw, fallbackMessage)
+  const appliedScope = describeAppliedScope(raw?.appliedFilters || plan?.arguments || {})
 
   return {
     success: true,
@@ -416,7 +525,9 @@ function presentChatResponse(plan, raw, context = {}) {
     actorSummaries: Array.isArray(raw.actorSummaries) ? raw.actorSummaries : [],
     driveInfo: raw.driveInfo || null,
     folderCounts: Array.isArray(raw.folderCounts) ? raw.folderCounts : [],
+    actorCounts: Array.isArray(raw.actorCounts) ? raw.actorCounts : [],
     totalCount: Number(raw.totalCount) || (Array.isArray(raw.items) ? raw.items.length : 0),
+    appliedScope,
     lastResultIds: Array.isArray(raw.lastResultIds) ? raw.lastResultIds : [],
     state: buildState(raw, plan),
     currentQuery: String(plan?.arguments?.query || ''),

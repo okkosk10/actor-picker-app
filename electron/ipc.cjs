@@ -267,13 +267,36 @@ function normalizeAiChatPayload(payload) {
     return { success: false, errorCode: 'VALIDATION_ERROR', error: '메시지는 2000자 이하로 입력해 주세요.' }
   }
 
+  const normalizeFolderPath = (value) => {
+    if (typeof value !== 'string') return null
+    const normalized = value
+      .trim()
+      .replace(/\//g, '\\')
+      .replace(/\\+/g, '\\')
+      .replace(/\\+$/, '')
+    if (!normalized || normalized.length > 500) return null
+    return normalized
+  }
+
+  const normalizeDrive = (value) => {
+    if (typeof value !== 'string') return null
+    const match = value.trim().match(/^([A-Za-z]):$/)
+    return match ? `${match[1].toUpperCase()}:` : null
+  }
+
   const normalizedSelectedIds = Array.isArray(context.selectedVideoIds)
-    ? context.selectedVideoIds.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+    ? context.selectedVideoIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
     : []
+
+  const normalizedFolder = normalizeFolderPath(context.currentFolder)
+  const normalizedDrive = normalizeDrive(context.currentDrive)
+    || normalizeDrive(context?.activeFilters?.drive)
+    || extractDriveFromPath(normalizedFolder)
 
   const allowedFilters = context.activeFilters && typeof context.activeFilters === 'object'
     ? {
         drive: typeof context.activeFilters.drive === 'string' ? context.activeFilters.drive : null,
+        folder: typeof context.activeFilters.folder === 'string' ? context.activeFilters.folder : null,
         tabMode: typeof context.activeFilters.tabMode === 'string' ? context.activeFilters.tabMode : null,
         excludeMissing: Boolean(context.activeFilters.excludeMissing),
         excludeDeleteGrade: Boolean(context.activeFilters.excludeDeleteGrade),
@@ -291,9 +314,14 @@ function normalizeAiChatPayload(payload) {
       action,
       context: {
         currentPage: typeof context.currentPage === 'string' ? context.currentPage : 'library',
-        currentFolder: typeof context.currentFolder === 'string' ? context.currentFolder : null,
-        selectedVideoIds: normalizedSelectedIds.slice(0, 100),
-        activeFilters: allowedFilters,
+        currentFolder: normalizedFolder,
+        currentDrive: normalizedDrive,
+        selectedVideoIds: normalizedSelectedIds.slice(0, 500),
+        activeFilters: {
+          ...allowedFilters,
+          drive: normalizedDrive,
+          folder: normalizedFolder,
+        },
       },
       state: {
         lastToolCall: state.lastToolCall || null,
@@ -1837,6 +1865,17 @@ function registerIpcHandlers() {
     //   - minRating은 숫자 검증 후 ? 바인딩
     const filterConditions = []
     const filterParams     = []
+
+    const baseResultIds = Array.isArray(filters.baseResultIds)
+      ? Array.from(new Set(filters.baseResultIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+      )).slice(0, 1000)
+      : []
+    if (baseResultIds.length > 0) {
+      filterConditions.push(`v.id IN (${baseResultIds.map(() => '?').join(',')})`)
+      filterParams.push(...baseResultIds)
+    }
 
     // 추천작만 (tabMode가 recommended가 아닐 때만 적용)
     if (filters.recommendedOnly && tabMode !== 'recommended') {

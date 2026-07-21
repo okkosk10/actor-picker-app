@@ -68,7 +68,13 @@ const TOOL_SCHEMAS = {
     schema: {
       type: 'object',
       properties: {
+        scope: {
+          type: 'string',
+          enum: ['all', 'current_drive', 'current_folder', 'selected_videos'],
+        },
         drive: { type: ['string', 'null'] },
+        folder: { type: ['string', 'null'], maxLength: 500 },
+        baseResultIds: { type: 'array', items: { type: 'integer' }, maxItems: 500 },
       },
       additionalProperties: false,
     },
@@ -78,9 +84,14 @@ const TOOL_SCHEMAS = {
     schema: {
       type: 'object',
       properties: {
-        drive: { type: ['string', 'null'] },
-        limit: { type: 'integer', minimum: 1, maximum: 100 },
-        baseResultIds: { type: 'array', items: { type: 'integer' }, maxItems: 200 },
+        scope: {
+          type: 'string',
+          enum: ['all', 'current_drive', 'current_folder', 'selected_videos'],
+        },
+        drive: { type: ['string', 'null'], pattern: '^[A-Za-z]:$' },
+        folder: { type: ['string', 'null'], maxLength: 500 },
+        limit: { type: 'integer', minimum: 1, maximum: 500 },
+        baseResultIds: { type: 'array', items: { type: 'integer' }, maxItems: 500 },
       },
       additionalProperties: false,
     },

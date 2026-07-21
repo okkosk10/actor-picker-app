@@ -33,6 +33,11 @@ import SubtitlesPage            from './pages/Subtitles/index.jsx'
 import ActorTagBatchPage        from './pages/ActorTagBatch/index.jsx'
 import { getLocalDateKey }      from './utils/format.js'
 
+function extractDrive(value) {
+  const match = String(value || '').trim().match(/^([A-Za-z]):/)
+  return match ? `${match[1].toUpperCase()}:` : null
+}
+
 export default function App() {
   // ── 앱 탭 ('library' | 'actors' | 'actor-tags' | 'recommendations' | 'dashboard' | 'storage' | 'subtitles')
   const [appTab, setAppTab] = useState('library')
@@ -68,6 +73,7 @@ export default function App() {
   const [showSubtitleDateModal, setShowSubtitleDateModal] = useState(false)
   const [driveAlerts,       setDriveAlerts]       = useState([])
   const [actorBadgeDefinitions, setActorBadgeDefinitions] = useState([])
+  const [aiResultFilterMeta, setAiResultFilterMeta] = useState(null)
 
   // ── NEW 카운트 갱신 ───────────────────────────────────────────
   const refreshNewCount = useCallback(async () => {
@@ -100,6 +106,60 @@ export default function App() {
       .catch(() => {})
     return () => { mounted = false }
   }, [])
+
+  useEffect(() => {
+    const handleAiChatSelection = (event) => {
+      const rawIds = Array.isArray(event?.detail?.videoIds) ? event.detail.videoIds : []
+      const selectedIds = rawIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+
+      setAppTab('library')
+      setSelectedSubtitleDateKey(null)
+      changeFolder(null)
+      setCheckedIds(new Set(selectedIds))
+
+      if (selectedIds.length > 0) {
+        const first = videos.find((video) => selectedIds.includes(Number(video.id)))
+        if (first) setSelectedVideo(first)
+      }
+    }
+
+    window.addEventListener('ai-chat:select-videos', handleAiChatSelection)
+    return () => window.removeEventListener('ai-chat:select-videos', handleAiChatSelection)
+  }, [changeFolder, videos])
+
+  useEffect(() => {
+    const handleAiChatFilterVideos = (event) => {
+      const rawIds = Array.isArray(event?.detail?.videoIds) ? event.detail.videoIds : []
+      const ids = Array.from(new Set(rawIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+      ))
+      const label = String(event?.detail?.label || 'AI 결과')
+
+      setAppTab('library')
+      setSelectedSubtitleDateKey(null)
+      changeTab('all')
+      changeFolder(null)
+      changeFilters({ baseResultIds: ids })
+      setCheckedIds(new Set())
+
+      if (ids.length > 0) {
+        setAiResultFilterMeta({ count: ids.length, label })
+      } else {
+        setAiResultFilterMeta(null)
+      }
+    }
+
+    window.addEventListener('ai-chat:filter-videos', handleAiChatFilterVideos)
+    return () => window.removeEventListener('ai-chat:filter-videos', handleAiChatFilterVideos)
+  }, [changeFilters, changeFolder, changeTab])
+
+  const handleClearAiResultFilter = useCallback(() => {
+    changeFilters({ baseResultIds: [] })
+    setAiResultFilterMeta(null)
+  }, [changeFilters])
 
   // ── 드라이브 연결 상태 모니터링 ───────────────────────────────
   useEffect(() => {
@@ -358,20 +418,30 @@ export default function App() {
     ? `${Number(selectedSubtitleDateKey.slice(5, 7))}.${Number(selectedSubtitleDateKey.slice(8, 10))}`
     : null
 
-  const aiChatContext = useMemo(() => ({
-    currentPage: appTab,
-    currentFolder: currentFolder || null,
-    selectedVideoIds: Array.from(checkedIds),
-    activeFilters: {
-      tabMode,
-      excludeMissing: Boolean(filters.excludeMissing),
-      excludeDeleteGrade: Boolean(filters.excludeDeleteGrade),
-      recommendedOnly: Boolean(filters.recommendedOnly),
-      minRating: Number(filters.minRating) || 0,
-      subtitleAddedDays: Number(filters.subtitleAddedDays) || 0,
-      drive: folderPath ? String(folderPath).match(/^([A-Za-z]:)/)?.[1] || null : null,
-    },
-  }), [appTab, checkedIds, currentFolder, filters.excludeDeleteGrade, filters.excludeMissing, filters.minRating, filters.recommendedOnly, filters.subtitleAddedDays, folderPath, tabMode])
+  const aiChatContext = useMemo(() => {
+    const pageHasFolderContext = appTab === 'library'
+    const normalizedFolder = pageHasFolderContext && typeof currentFolder === 'string' && currentFolder.trim()
+      ? currentFolder.trim()
+      : null
+    const currentDrive = extractDrive(normalizedFolder) || extractDrive(folderPath)
+
+    return {
+      currentPage: appTab,
+      currentFolder: normalizedFolder,
+      currentDrive,
+      selectedVideoIds: Array.from(checkedIds),
+      activeFilters: {
+        tabMode,
+        folder: normalizedFolder,
+        drive: currentDrive,
+        excludeMissing: Boolean(filters.excludeMissing),
+        excludeDeleteGrade: Boolean(filters.excludeDeleteGrade),
+        recommendedOnly: Boolean(filters.recommendedOnly),
+        minRating: Number(filters.minRating) || 0,
+        subtitleAddedDays: Number(filters.subtitleAddedDays) || 0,
+      },
+    }
+  }, [appTab, checkedIds, currentFolder, filters.excludeDeleteGrade, filters.excludeMissing, filters.minRating, filters.recommendedOnly, filters.subtitleAddedDays, folderPath, tabMode])
 
   return (
     <AiChatProvider currentContext={aiChatContext}>
@@ -586,6 +656,27 @@ export default function App() {
               style={{ borderRadius: 0, flexShrink: 0 }}
             />
           ))}
+
+          {Array.isArray(filters.baseResultIds) && filters.baseResultIds.length > 0 && (
+            <Alert
+              type="info"
+              showIcon
+              closable
+              onClose={handleClearAiResultFilter}
+              message={`AI 결과 필터 적용 중 · ${filters.baseResultIds.length}개`}
+              description={aiResultFilterMeta?.label ? `${aiResultFilterMeta.label} 기준으로 영상 목록을 필터링했습니다.` : 'AI 결과 기준으로 영상 목록을 필터링했습니다.'}
+              action={(
+                <button
+                  type="button"
+                  className="app-tab-btn"
+                  onClick={handleClearAiResultFilter}
+                >
+                  필터 해제
+                </button>
+              )}
+              style={{ borderRadius: 0, flexShrink: 0 }}
+            />
+          )}
 
           <div className="app-content">
             <FolderPanel

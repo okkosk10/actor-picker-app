@@ -51,12 +51,62 @@ function normalizeDrive(value) {
   return match ? match[1] : null
 }
 
+function normalizeFolderPath(value) {
+  if (typeof value !== 'string') return null
+  let normalized = value.trim()
+  if (!normalized) return null
+  normalized = normalized.replace(/\//g, '\\').replace(/\\+/g, '\\').replace(/\\+$/, '')
+  if (/^[a-z]:/i.test(normalized)) {
+    normalized = `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`
+  }
+  if (!normalized || normalized.length > 500) return null
+  return normalized
+}
+
+function normalizeScope(value, fallback = 'all') {
+  const allowed = new Set(['all', 'current_drive', 'current_folder', 'selected_videos'])
+  return allowed.has(value) ? value : fallback
+}
+
+function inferSubtitleScope(raw = {}) {
+  if (raw && typeof raw === 'object' && typeof raw.scope === 'string') {
+    return normalizeScope(raw.scope, 'all')
+  }
+  if (normalizeFolderPath(raw?.folder)) return 'current_folder'
+  if (normalizeDrive(raw?.drive)) return 'current_drive'
+  if (Array.isArray(raw?.baseResultIds) && raw.baseResultIds.length > 0) return 'selected_videos'
+  return 'all'
+}
+
+function validateSubtitleSearchScope(toolName, args = {}) {
+  if (toolName !== 'search_videos_without_subtitles' && toolName !== 'get_unmapped_subtitle_summary') {
+    return { success: true }
+  }
+
+  if (args.scope === 'current_drive' && !args.drive) {
+    return buildStructuredError('TOOL_ARGUMENT_ERROR', '현재 드라이브 범위를 사용하려면 drive 값이 필요합니다.')
+  }
+
+  if (args.scope === 'current_folder' && !args.folder) {
+    return buildStructuredError('TOOL_ARGUMENT_ERROR', '현재 폴더 범위를 사용하려면 folder 값이 필요합니다.')
+  }
+
+  if (args.scope === 'selected_videos' && (!Array.isArray(args.baseResultIds) || args.baseResultIds.length === 0)) {
+    return buildStructuredError('TOOL_ARGUMENT_ERROR', '선택한 영상 범위를 사용하려면 baseResultIds가 1개 이상 필요합니다.')
+  }
+
+  return { success: true }
+}
+
 function sanitizeToolArguments(toolName, input = {}, context = {}, state = {}) {
   const raw = input && typeof input === 'object' ? input : {}
-  const currentDrive = normalizeDrive(context?.activeFilters?.drive) || normalizeDrive(context?.currentFolder?.slice?.(0, 2))
+  const currentDrive = normalizeDrive(context?.currentDrive)
+    || normalizeDrive(context?.activeFilters?.drive)
+    || normalizeDrive(context?.currentFolder?.slice?.(0, 2))
+  const currentFolder = normalizeFolderPath(context?.currentFolder) || normalizeFolderPath(context?.activeFilters?.folder)
   const lastResultIds = normalizeIntegerArray(state?.lastResultIds || [], 200)
-  const selectedVideoIds = normalizeIntegerArray(context?.selectedVideoIds || [], 100)
-  const baseResultIds = normalizeIntegerArray(raw.baseResultIds || [], 200)
+  const selectedVideoIds = normalizeIntegerArray(context?.selectedVideoIds || [], 500)
+  const baseResultIds = normalizeIntegerArray(raw.baseResultIds || [], 500)
   const inheritedBaseIds = baseResultIds.length > 0 ? baseResultIds : (lastResultIds.length > 0 ? lastResultIds : selectedVideoIds)
 
   switch (toolName) {
@@ -99,14 +149,25 @@ function sanitizeToolArguments(toolName, input = {}, context = {}, state = {}) {
         baseResultIds: normalizeIntegerArray(raw.baseResultIds || inheritedBaseIds, 200),
       }
     case 'get_unmapped_subtitle_summary':
+      {
+        const scope = inferSubtitleScope(raw)
       return {
-        drive: normalizeDrive(raw.drive) || currentDrive,
+        scope,
+        drive: normalizeDrive(raw.drive) || (scope === 'current_drive' ? currentDrive : null),
+        folder: normalizeFolderPath(raw.folder) || (scope === 'current_folder' ? currentFolder : null),
+        baseResultIds: normalizeIntegerArray(raw.baseResultIds || (scope === 'selected_videos' ? inheritedBaseIds : []), 500),
+      }
       }
     case 'search_videos_without_subtitles':
+      {
+        const scope = inferSubtitleScope(raw)
       return {
-        drive: normalizeDrive(raw.drive) || currentDrive,
-        limit: clampNumber(raw.limit, 1, 100, 20),
-        baseResultIds: normalizeIntegerArray(raw.baseResultIds || inheritedBaseIds, 200),
+        scope,
+        drive: normalizeDrive(raw.drive) || (scope === 'current_drive' ? currentDrive : null),
+        folder: normalizeFolderPath(raw.folder) || (scope === 'current_folder' ? currentFolder : null),
+        limit: clampNumber(raw.limit, 1, 500, 100),
+        baseResultIds: normalizeIntegerArray(raw.baseResultIds || (scope === 'selected_videos' ? inheritedBaseIds : []), 500),
+      }
       }
     default:
       return {}
@@ -151,6 +212,7 @@ module.exports = {
   isRegisteredTool,
   sanitizeToolArguments,
   validatePlannerResponse,
+  validateSubtitleSearchScope,
   buildToolManifestBlock,
   buildToolRegistryObject,
   buildStructuredError,

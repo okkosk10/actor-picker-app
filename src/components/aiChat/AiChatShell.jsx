@@ -60,23 +60,23 @@ function ToolResultCard({ message, onAction }) {
   const suggestedActions = Array.isArray(data.suggestedActions) ? data.suggestedActions : []
   const clarification = data.clarification || null
 
-  const openFolder = async (folderPath) => {
-    if (!folderPath || !window?.api?.openFolder) return
-    await window.api.openFolder(folderPath)
-  }
-
-  const copyPath = async (folderPath) => {
-    if (!folderPath) return
-    try {
-      await navigator.clipboard.writeText(folderPath)
-    } catch {
-      // clipboard 접근 실패는 무시
-    }
-  }
-
   const runAction = async (action) => {
     if (!action || typeof onAction !== 'function') return
     await onAction(action)
+  }
+
+  const buildScopedSubtitleQueryAction = (label, videoIds) => {
+    const ids = Array.isArray(videoIds)
+      ? videoIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+      : []
+    return {
+      id: `query-${label}`,
+      type: 'client_filter_video_ids',
+      label,
+      payload: { videoIds: ids },
+      disabled: ids.length === 0,
+      disabledReason: ids.length === 0 ? '조회 가능한 영상이 없습니다.' : '',
+    }
   }
 
   const renderSummaryHeader = () => (
@@ -113,14 +113,19 @@ function ToolResultCard({ message, onAction }) {
       {suggestedActions.length > 0 && (
         <div className="ai-chat-action-row">
           {suggestedActions.map((action) => (
+            // disabledReason/description이 있으면 버튼 내 보조 텍스트로 함께 노출한다.
             <button
               key={action.id || action.label}
               type="button"
               className="ai-chat-action-btn"
               onClick={() => runAction(action)}
-              disabled={typeof onAction !== 'function'}
+              disabled={typeof onAction !== 'function' || Boolean(action.disabled)}
+              title={action.description || action.disabledReason || ''}
             >
               {action.label}
+              {(action.description || action.disabledReason) && (
+                <span className="ai-chat-action-btn__desc">{action.description || action.disabledReason}</span>
+              )}
             </button>
           ))}
         </div>
@@ -136,6 +141,7 @@ function ToolResultCard({ message, onAction }) {
         <div className="ai-chat-result-card__summary">{clarification?.question || message.content}</div>
         <div className="ai-chat-action-row">
           {options.map((option) => (
+            // 비활성 옵션도 이유를 표시해 거짓 선택지를 방지한다.
             <button
               key={option.id || option.label}
               type="button"
@@ -147,9 +153,13 @@ function ToolResultCard({ message, onAction }) {
                 payload: option.payload || {},
                 requiresConfirmation: Boolean(option.requiresConfirmation),
               })}
-              disabled={typeof onAction !== 'function'}
+              disabled={typeof onAction !== 'function' || Boolean(option.disabled)}
+              title={option.description || option.disabledReason || ''}
             >
               {option.label}
+              {(option.description || option.disabledReason) && (
+                <span className="ai-chat-action-btn__desc">{option.description || option.disabledReason}</span>
+              )}
             </button>
           ))}
         </div>
@@ -194,11 +204,13 @@ function ToolResultCard({ message, onAction }) {
                   </div>
                 )}
                 <div className="ai-chat-mini-card__actions">
-                  <button type="button" className="ai-chat-mini-card__button" onClick={() => openFolder(folder.folderPath)}>
-                    폴더 열기
-                  </button>
-                  <button type="button" className="ai-chat-mini-card__button ai-chat-mini-card__button--ghost" onClick={() => copyPath(folder.folderPath)}>
-                    경로 복사
+                  <button
+                    type="button"
+                    className="ai-chat-mini-card__button"
+                    onClick={() => runAction(buildScopedSubtitleQueryAction(`${folder.folderPath}만 조회`, folder.videoIds))}
+                    disabled={!Array.isArray(folder.videoIds) || folder.videoIds.length === 0}
+                  >
+                    이 폴더만 조회
                   </button>
                 </div>
               </div>
@@ -304,6 +316,83 @@ function ToolResultCard({ message, onAction }) {
         {Array.isArray(data.actorSummaries) && data.actorSummaries.length > 0 && (
           <div className="ai-chat-result-card__footnote">
             배우 요약 {data.actorSummaries.length}개 포함
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (resultType === 'subtitle-video-list') {
+    const folderCounts = Array.isArray(data.folderCounts) ? data.folderCounts : []
+    const actorCounts = Array.isArray(data.actorCounts) ? data.actorCounts : []
+    const previewItems = Array.isArray(data.previewItems) ? data.previewItems : []
+
+    return (
+      <div className="ai-chat-result-card">
+        {renderSummaryHeader()}
+
+        {folderCounts.length > 0 && (
+          <div className="ai-chat-mini-list">
+            <div className="ai-chat-result-card__title">폴더별 미매핑 현황</div>
+            {folderCounts.slice(0, 8).map((folder) => (
+              <div key={folder.folderPath} className="ai-chat-mini-card">
+                <div className="ai-chat-mini-card__title">{folder.folderPath}</div>
+                <div className="ai-chat-mini-card__body">자막 미매핑 {folder.count}개</div>
+                {Array.isArray(folder.sampleFiles) && folder.sampleFiles.length > 0 && (
+                  <div className="ai-chat-mini-card__meta">예시: {folder.sampleFiles.join(' · ')}</div>
+                )}
+                <div className="ai-chat-mini-card__actions">
+                  <button
+                    type="button"
+                    className="ai-chat-mini-card__button"
+                    onClick={() => runAction(buildScopedSubtitleQueryAction(`${folder.folderPath}만 조회`, folder.videoIds))}
+                    disabled={!Array.isArray(folder.videoIds) || folder.videoIds.length === 0}
+                  >
+                    이 폴더만 조회
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {actorCounts.length > 0 && (
+          <div className="ai-chat-mini-list">
+            <div className="ai-chat-result-card__title">배우별 미매핑 현황</div>
+            {actorCounts.slice(0, 8).map((actor) => (
+              <div key={actor.actorName} className="ai-chat-mini-card">
+                <div className="ai-chat-mini-card__title">{actor.actorName}</div>
+                <div className="ai-chat-mini-card__body">자막 미매핑 {actor.count}개</div>
+                {Array.isArray(actor.sampleCodes) && actor.sampleCodes.length > 0 && (
+                  <div className="ai-chat-mini-card__meta">예시: {actor.sampleCodes.join(' · ')}</div>
+                )}
+                <div className="ai-chat-mini-card__actions">
+                  <button
+                    type="button"
+                    className="ai-chat-mini-card__button"
+                    onClick={() => runAction(buildScopedSubtitleQueryAction(`${actor.actorName}만 조회`, actor.videoIds))}
+                    disabled={!Array.isArray(actor.videoIds) || actor.videoIds.length === 0}
+                  >
+                    이 배우만 조회
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {previewItems.length > 0 && (
+          <div className="ai-chat-mini-list">
+            <div className="ai-chat-result-card__title">대표 파일</div>
+            {previewItems.map((item) => (
+              <div key={item.id} className="ai-chat-mini-card">
+                <div className="ai-chat-mini-card__title">{item.code || item.file_name || item.id}</div>
+                <div className="ai-chat-mini-card__body">
+                  {item.file_name}{item.file_size ? ` · ${formatBytes(item.file_size)}` : ''}
+                </div>
+                <div className="ai-chat-mini-card__meta">{item.actor_name || '배우 미상'} · 재생 {item.play_count || 0}회 · 복사 {item.copy_count || 0}회</div>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -438,6 +527,8 @@ function Header({
   entryMode,
   compact = false,
 }) {
+  const showModeSwitchButtons = Boolean(entryMode)
+
   return (
     <div className={`ai-chat-header ${compact ? 'ai-chat-header--compact' : ''}`}>
       <div className="ai-chat-header__main">
@@ -445,20 +536,24 @@ function Header({
         <div className="ai-chat-header__subtitle">현재 화면: {getPageLabel(currentPage)}</div>
       </div>
       <div className="ai-chat-header__actions">
-        <button
-          type="button"
-          className={`ai-chat-header__button ${entryMode === 'quick' ? '' : 'ai-chat-header__button--ghost'}`}
-          onClick={onSwitchQuick}
-        >
-          빠른 작업으로 전환
-        </button>
-        <button
-          type="button"
-          className={`ai-chat-header__button ${entryMode === 'consult' ? '' : 'ai-chat-header__button--ghost'}`}
-          onClick={onSwitchConsult}
-        >
-          AI 상담으로 전환
-        </button>
+        {showModeSwitchButtons && (
+          <>
+            <button
+              type="button"
+              className={`ai-chat-header__button ${entryMode === 'quick' ? '' : 'ai-chat-header__button--ghost'}`}
+              onClick={onSwitchQuick}
+            >
+              빠른 작업으로 전환
+            </button>
+            <button
+              type="button"
+              className={`ai-chat-header__button ${entryMode === 'consult' ? '' : 'ai-chat-header__button--ghost'}`}
+              onClick={onSwitchConsult}
+            >
+              AI 상담으로 전환
+            </button>
+          </>
+        )}
         <button type="button" className="ai-chat-header__button" onClick={onNewChat}>새 채팅</button>
         {!compact && <button type="button" className="ai-chat-header__button" onClick={onClearSessions}>초기화</button>}
         <button type="button" className="ai-chat-header__button" onClick={onOpenFullScreen}>전체 화면</button>
@@ -538,6 +633,8 @@ function ChatBody({ session, isSending, currentPage, onSend, onAction }) {
   const entryMode = session?.entryMode || null
   const phase = session?.phase || 'mode_selection'
   const composerDisabled = !entryMode || entryMode === 'quick'
+  const messages = session?.messages || []
+  const shouldShowEntryPanel = !entryMode && messages.length === 0
 
   return (
     <div className="ai-chat-body">
@@ -550,12 +647,12 @@ function ChatBody({ session, isSending, currentPage, onSend, onAction }) {
           <Tag color="cyan">최근 결과 {session.lastResultIds.length}개</Tag>
         )}
       </div>
-      {!entryMode && (
+      {shouldShowEntryPanel && (
         <ModeSelectionPanel
           onSelectMode={(mode) => onAction({ type: 'select_entry_mode', label: mode === 'quick' ? '빠른 작업' : 'AI 상담', payload: { type: 'select_entry_mode', mode } })}
         />
       )}
-      <MessageList messages={session?.messages || []} onAction={onAction} />
+      <MessageList messages={messages} onAction={onAction} />
       <Composer
         onSend={onSend}
         isSending={isSending}

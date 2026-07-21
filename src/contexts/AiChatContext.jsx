@@ -38,21 +38,42 @@ function buildSessionTitle(message) {
 
 function sanitizeContext(rawContext) {
   const context = rawContext && typeof rawContext === 'object' ? rawContext : {}
+  const normalizeFolderPath = (value) => {
+    if (typeof value !== 'string') return null
+    const normalized = value.trim().replace(/\//g, '\\').replace(/\\+/g, '\\').replace(/\\+$/, '')
+    if (!normalized || normalized.length > 500) return null
+    return normalized
+  }
+  const normalizeDrive = (value) => {
+    const match = String(value || '').trim().match(/^([A-Za-z]):$/)
+    return match ? `${match[1].toUpperCase()}:` : null
+  }
   const selectedVideoIds = Array.isArray(context.selectedVideoIds)
-    ? context.selectedVideoIds.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+    ? context.selectedVideoIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
     : []
 
   const activeFilters = context.activeFilters && typeof context.activeFilters === 'object'
     ? JSON.parse(JSON.stringify(context.activeFilters))
     : {}
 
+  const currentFolder = normalizeFolderPath(context.currentFolder)
+  const currentDrive = normalizeDrive(context.currentDrive)
+    || normalizeDrive(activeFilters.drive)
+    || (() => {
+      const match = String(currentFolder || '').match(/^([A-Za-z]:)/)
+      return match ? match[1].toUpperCase() : null
+    })()
+
   return {
     currentPage: typeof context.currentPage === 'string' ? context.currentPage : 'library',
-    currentFolder: typeof context.currentFolder === 'string' && context.currentFolder.trim()
-      ? context.currentFolder.trim()
-      : null,
-    selectedVideoIds: selectedVideoIds.slice(0, 100),
-    activeFilters,
+    currentFolder,
+    currentDrive,
+    selectedVideoIds: selectedVideoIds.slice(0, 500),
+    activeFilters: {
+      ...activeFilters,
+      drive: currentDrive,
+      folder: currentFolder,
+    },
   }
 }
 
@@ -155,6 +176,7 @@ function buildAssistantMessage(response) {
       driveInfo: response?.driveInfo || null,
       totalCount: Number(response?.totalCount) || 0,
       folderCounts: Array.isArray(response?.folderCounts) ? response.folderCounts.slice(0, 20) : [],
+      actorCounts: Array.isArray(response?.actorCounts) ? response.actorCounts.slice(0, 20) : [],
       actorSummaries: Array.isArray(response?.actorSummaries) ? response.actorSummaries.slice(0, 8) : [],
       previewItems: [],
       previewActors: [],
@@ -164,11 +186,12 @@ function buildAssistantMessage(response) {
       suggestedActions: Array.isArray(response?.suggestedActions) ? response.suggestedActions.slice(0, 6) : [],
       clarification: response?.clarification || null,
       currentQuery: String(response?.currentQuery || ''),
+      appliedScope: response?.appliedScope || null,
     },
     lastResultIds: Array.isArray(response?.lastResultIds) ? response.lastResultIds : [],
   }
 
-  if (resultType === 'video-list' || resultType === 'delete-candidate-list') {
+  if (resultType === 'video-list' || resultType === 'subtitle-video-list' || resultType === 'delete-candidate-list') {
     const items = Array.isArray(response?.items) ? response.items : []
     message.data.previewItems = items.slice(0, 5).map(compactVideoResultItem)
     message.data.totalCount = items.length
@@ -181,6 +204,7 @@ function buildAssistantMessage(response) {
     message.data.totalCount = message.data.previewStats.length
   } else if (resultType === 'subtitle-summary') {
     message.data.folderCounts = Array.isArray(response?.folderCounts) ? response.folderCounts.slice(0, 20) : []
+    message.data.actorCounts = Array.isArray(response?.actorCounts) ? response.actorCounts.slice(0, 20) : []
     message.data.totalCount = Number(response?.totalCount) || 0
   }
 
@@ -336,6 +360,150 @@ export function AiChatProvider({ children, currentContext }) {
 
     if (!text && !action) {
       return { success: false, errorCode: 'VALIDATION_ERROR', error: '메시지를 입력해 주세요.' }
+    }
+
+    if (action?.type === 'client_select_video_ids') {
+      const requestContext = sanitizeContext(payload.context || currentContext)
+      const sessionTitleSeed = action?.label || action?.type || '새 채팅'
+      const session = ensureActiveSession(buildSessionTitle(sessionTitleSeed), requestContext.activeFilters)
+      const sessionId = session.id
+      const now = nowIso()
+      const userContent = action?.label || '작업 실행'
+      const ids = Array.isArray(action?.payload?.videoIds)
+        ? action.payload.videoIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+        : []
+
+      const userMessage = {
+        id: createId(),
+        role: 'user',
+        content: userContent,
+        createdAt: now,
+      }
+
+      const assistantMessage = {
+        id: createId(),
+        role: 'assistant',
+        createdAt: nowIso(),
+        status: 'done',
+        content: ids.length > 0
+          ? `작품관리에서 ${ids.length}개 영상을 선택했습니다.`
+          : '선택할 영상이 없어 적용하지 않았습니다.',
+        resultType: 'clarification',
+        data: {
+          clarification: {
+            question: '작품관리 목록에서 선택 상태를 적용했습니다.',
+            options: [],
+          },
+          summary: {
+            title: '선택 반영 완료',
+            description: ids.length > 0
+              ? `${ids.length}개 영상을 작품관리에서 바로 확인할 수 있습니다.`
+              : '현재 선택 가능한 영상이 없습니다.',
+            metrics: [
+              { key: 'count', label: '선택 수', value: ids.length },
+            ],
+          },
+          highlights: [],
+          insights: [],
+          suggestedActions: [],
+          previewItems: [],
+          previewActors: [],
+          previewStats: [],
+          folderCounts: [],
+          actorCounts: [],
+          totalCount: ids.length,
+          currentQuery: '',
+          appliedScope: null,
+        },
+        lastResultIds: ids,
+      }
+
+      setIsDrawerOpen(true)
+      updateSession(sessionId, (prev) => ({
+        ...prev,
+        title: isDefaultTitle(prev.title) ? buildSessionTitle(userContent) : prev.title,
+        updatedAt: nowIso(),
+        messages: [...prev.messages, userMessage, assistantMessage],
+      }))
+
+      window.dispatchEvent(new CustomEvent('ai-chat:select-videos', { detail: { videoIds: ids } }))
+      return { success: true }
+    }
+
+    if (action?.type === 'client_filter_video_ids') {
+      const requestContext = sanitizeContext(payload.context || currentContext)
+      const sessionTitleSeed = action?.label || action?.type || '새 채팅'
+      const session = ensureActiveSession(buildSessionTitle(sessionTitleSeed), requestContext.activeFilters)
+      const sessionId = session.id
+      const now = nowIso()
+      const userContent = action?.label || '작업 실행'
+      const ids = Array.isArray(action?.payload?.videoIds)
+        ? action.payload.videoIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+        : []
+
+      const userMessage = {
+        id: createId(),
+        role: 'user',
+        content: userContent,
+        createdAt: now,
+      }
+
+      const assistantMessage = {
+        id: createId(),
+        role: 'assistant',
+        createdAt: nowIso(),
+        status: 'done',
+        content: ids.length > 0
+          ? `영상 관리 목록에 ${ids.length}개 필터를 적용했습니다.`
+          : '필터링할 영상이 없어 필터를 해제했습니다.',
+        resultType: 'clarification',
+        data: {
+          clarification: {
+            question: ids.length > 0
+              ? '영상 관리 목록에 필터를 적용했습니다. 하단 목록에서 바로 작업할 수 있습니다.'
+              : '영상 관리 목록의 AI 결과 필터를 해제했습니다.',
+            options: [],
+          },
+          summary: {
+            title: ids.length > 0 ? '필터 적용 완료' : '필터 해제 완료',
+            description: ids.length > 0
+              ? `${ids.length}개 영상만 보이도록 목록을 갱신했습니다.`
+              : '전체 목록 기준으로 다시 표시합니다.',
+            metrics: [
+              { key: 'count', label: '대상 수', value: ids.length },
+            ],
+          },
+          highlights: [],
+          insights: [],
+          suggestedActions: [],
+          previewItems: [],
+          previewActors: [],
+          previewStats: [],
+          folderCounts: [],
+          actorCounts: [],
+          totalCount: ids.length,
+          currentQuery: '',
+          appliedScope: null,
+        },
+        lastResultIds: ids,
+      }
+
+      setIsDrawerOpen(true)
+      updateSession(sessionId, (prev) => ({
+        ...prev,
+        title: isDefaultTitle(prev.title) ? buildSessionTitle(userContent) : prev.title,
+        updatedAt: nowIso(),
+        messages: [...prev.messages, userMessage, assistantMessage],
+      }))
+
+      window.dispatchEvent(new CustomEvent('ai-chat:filter-videos', {
+        detail: {
+          videoIds: ids,
+          source: 'ai-chat',
+          label: userContent,
+        },
+      }))
+      return { success: true }
     }
 
     if (isSending) {

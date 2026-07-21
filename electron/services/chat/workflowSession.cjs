@@ -55,7 +55,14 @@ function computeMissingSlots(workflowId, collectedSlots = {}) {
   })
 }
 
-function getNextMissingSlotQuestion(workflowId, collectedSlots = {}) {
+function getSlotOptions(slotConfig = {}, context = {}) {
+  if (typeof slotConfig.resolveOptions === 'function') {
+    return slotConfig.resolveOptions(context)
+  }
+  return Array.isArray(slotConfig.options) ? slotConfig.options : []
+}
+
+function getNextMissingSlotQuestion(workflowId, collectedSlots = {}, context = {}) {
   const workflow = getWorkflow(workflowId)
   if (!workflow) return null
   const missing = computeMissingSlots(workflowId, collectedSlots)
@@ -65,7 +72,7 @@ function getNextMissingSlotQuestion(workflowId, collectedSlots = {}) {
   return {
     slot: slotName,
     question: slotConfig.question || `${slotName} 값을 선택해 주세요.`,
-    options: Array.isArray(slotConfig.options) ? slotConfig.options : [],
+    options: getSlotOptions(slotConfig, context),
   }
 }
 
@@ -125,7 +132,7 @@ function buildQuickHomeResponse(state) {
   }
 }
 
-function buildWorkflowSlotQuestionResponse(state, workflowId, collectedSlots = {}) {
+function buildWorkflowSlotQuestionResponse(state, workflowId, collectedSlots = {}, context = {}) {
   const workflow = getWorkflow(workflowId)
   if (!workflow) {
     return {
@@ -135,7 +142,7 @@ function buildWorkflowSlotQuestionResponse(state, workflowId, collectedSlots = {
     }
   }
 
-  const nextQuestion = getNextMissingSlotQuestion(workflowId, collectedSlots)
+  const nextQuestion = getNextMissingSlotQuestion(workflowId, collectedSlots, context)
   if (!nextQuestion) {
     return null
   }
@@ -156,6 +163,8 @@ function buildWorkflowSlotQuestionResponse(state, workflowId, collectedSlots = {
       options: (nextQuestion.options || []).map((option) => ({
         id: `${workflowId}-${nextQuestion.slot}-${option.value}`,
         label: option.label,
+        description: option.disabledReason || option.hint || undefined,
+        disabled: Boolean(option.disabled),
         type: 'set_workflow_slot',
         payload: {
           type: 'set_workflow_slot',
@@ -179,7 +188,18 @@ function buildActionPreviewResponse(state, workflowId, slots = {}, context = {},
     }
   }
 
-  const action = toToolAction(workflowId, slots, context)
+  let action
+  try {
+    action = toToolAction(workflowId, slots, context)
+  } catch (error) {
+    return {
+      success: false,
+      errorCode: 'VALIDATION_ERROR',
+      error: String(error?.message || '실행 계획을 생성하지 못했습니다.'),
+      state,
+    }
+  }
+
   if (!action) {
     return {
       success: false,
@@ -190,6 +210,39 @@ function buildActionPreviewResponse(state, workflowId, slots = {}, context = {},
 
   const isCleanup = workflowId === 'cleanup_storage'
   const confirmLabel = isCleanup ? '후보 조회' : '조회하기'
+  const nextState = mergeWorkflowState(state, {
+    phase: 'confirming',
+    workflowId,
+    collectedSlots: slots,
+    missingSlots: [],
+    proposedAction: action,
+    awaitingConfirmation: true,
+  })
+
+  const args = action.arguments || {}
+  const scopeMap = {
+    all: '전체 라이브러리',
+    current_drive: '현재 드라이브',
+    current_folder: '현재 폴더',
+    selected_videos: '선택한 영상',
+  }
+  const metrics = [
+    { key: 'workflow', label: '작업', value: workflow.title },
+    { key: 'tool', label: '도구', value: action.toolName },
+  ]
+
+  if (args.scope) {
+    metrics.push({ key: 'scope', label: '범위', value: scopeMap[args.scope] || args.scope })
+  }
+  if (args.drive) {
+    metrics.push({ key: 'drive', label: '드라이브', value: args.drive })
+  }
+  if (args.folder) {
+    metrics.push({ key: 'folder', label: '폴더', value: args.folder })
+  }
+  if (Array.isArray(args.baseResultIds) && args.baseResultIds.length > 0) {
+    metrics.push({ key: 'targets', label: '대상', value: `${args.baseResultIds.length}개` })
+  }
 
   return {
     success: true,
@@ -198,7 +251,7 @@ function buildActionPreviewResponse(state, workflowId, slots = {}, context = {},
     workflow: {
       workflowId,
       workflowTitle: workflow.title,
-      phase: state.phase,
+      phase: nextState.phase,
       collectedSlots: slots,
       missingSlots: [],
       proposedAction: action,
@@ -207,11 +260,7 @@ function buildActionPreviewResponse(state, workflowId, slots = {}, context = {},
     summary: {
       title: '실행할 작업',
       description: action.summary || workflow.description,
-      metrics: [
-        { key: 'workflow', label: '작업', value: workflow.title },
-        { key: 'scope', label: '범위', value: slots.scope || '기본값' },
-        { key: 'tool', label: '도구', value: action.toolName },
-      ],
+      metrics,
     },
     clarification: {
       question: isCleanup
@@ -232,7 +281,7 @@ function buildActionPreviewResponse(state, workflowId, slots = {}, context = {},
         },
       ],
     },
-    state,
+    state: nextState,
   }
 }
 

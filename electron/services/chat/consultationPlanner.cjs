@@ -213,7 +213,7 @@ function planConsultationTurn({ message, context = {}, workflowState = {} }) {
 
   const missingSlots = computeMissingSlots(picked.workflowId, extractedSlots)
   if (missingSlots.length > 0) {
-    const nextQuestion = getNextMissingSlotQuestion(picked.workflowId, extractedSlots)
+    const nextQuestion = getNextMissingSlotQuestion(picked.workflowId, extractedSlots, context)
     return {
       workflowId: picked.workflowId,
       confidence: picked.confidence,
@@ -241,7 +241,46 @@ function planConsultationTurn({ message, context = {}, workflowState = {} }) {
     }
   }
 
-  const proposedAction = toToolAction(picked.workflowId, extractedSlots, context)
+  let proposedAction = null
+  try {
+    proposedAction = toToolAction(picked.workflowId, extractedSlots, context)
+  } catch (error) {
+    const scopeSlot = workflow.slots?.scope || null
+    const scopeOptions = typeof scopeSlot?.resolveOptions === 'function'
+      ? scopeSlot.resolveOptions(context)
+      : Array.isArray(scopeSlot?.options)
+        ? scopeSlot.options
+        : []
+
+    return {
+      workflowId: picked.workflowId,
+      confidence: picked.confidence,
+      extractedSlots,
+      missingSlots: [],
+      needsClarification: true,
+      shouldExecuteImmediately: false,
+      response: {
+        message: String(error?.message || `${workflow.title} 조건을 확인해 주세요.`),
+        question: String(error?.message || `${workflow.title} 조건을 확인해 주세요.`),
+        options: scopeOptions.map((option) => ({
+          id: `${picked.workflowId}-scope-${option.value}`,
+          label: option.label,
+          description: option.disabledReason || option.hint || undefined,
+          disabled: Boolean(option.disabled),
+          type: 'set_workflow_slot',
+          payload: {
+            type: 'set_workflow_slot',
+            workflowId: picked.workflowId,
+            slot: 'scope',
+            value: option.value,
+          },
+        })),
+      },
+      proposedAction: null,
+      requiresConfirmation: false,
+    }
+  }
+
   return {
     workflowId: picked.workflowId,
     confidence: picked.confidence,

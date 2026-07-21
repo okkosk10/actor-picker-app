@@ -1,7 +1,6 @@
 'use strict'
 
 const path = require('path')
-const { askAiChatRecommend } = require('../aiChatRecommendService.cjs')
 const { getDriveStats, getDeleteCandidatesByDrive, calcDeleteScore, extractDrive } = require('../driveStatsService.cjs')
 
 function formatSearchPrompt(plan) {
@@ -167,28 +166,131 @@ function buildDeleteCandidateRows(db, plan) {
   }
 }
 
-function buildSubtitleSummaryRows(db, drive) {
+function normalizeWindowsPath(value) {
+  if (typeof value !== 'string') return null
+  let normalized = value.trim()
+  if (!normalized) return null
+  normalized = normalized.replace(/\//g, '\\').replace(/\\+/g, '\\').replace(/\\+$/, '')
+  if (/^[a-z]:/i.test(normalized)) {
+    normalized = `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`
+  }
+  if (!normalized || normalized.length > 500) return null
+  return normalized
+}
+
+function escapeSqlLike(value) {
+  return String(value || '')
+    .replace(/!/g, '!!')
+    .replace(/%/g, '!%')
+    .replace(/_/g, '!_')
+}
+
+function toUniquePositiveIds(value, maxItems = 500) {
+  if (!Array.isArray(value)) return []
+  const result = []
+  const seen = new Set()
+  for (const item of value) {
+    const parsed = Number(item)
+    if (!Number.isInteger(parsed) || parsed <= 0 || seen.has(parsed)) continue
+    seen.add(parsed)
+    result.push(parsed)
+    if (result.length >= maxItems) break
+  }
+  return result
+}
+
+function buildSubtitleSummaryRows(db, args = {}) {
   const whereClauses = [
     "v.status = 'normal'",
     "v.status != 'duplicate'",
     'COALESCE(v.subtitle_count, 0) = 0',
   ]
   const params = []
+  const scope = String(args.scope || 'all')
+  const drive = typeof args.drive === 'string' ? args.drive.trim().toUpperCase() : null
+  const folder = normalizeWindowsPath(args.folder)
+  const baseResultIds = toUniquePositiveIds(args.baseResultIds, 500)
 
-  if (drive) {
+  if (scope === 'current_drive' && drive) {
     whereClauses.push('UPPER(SUBSTR(v.file_path, 1, 2)) = ?')
-    params.push(String(drive).toUpperCase().slice(0, 2))
+    params.push(drive.slice(0, 2))
   }
 
-  return db.prepare(`
+  if (scope === 'current_folder' && folder) {
+    const escapedFolder = escapeSqlLike(folder)
+    const winPrefix = `${escapedFolder}\\%`
+    const unixPrefix = `${escapedFolder}/%`
+    whereClauses.push(`(
+      REPLACE(COALESCE(v.folder_path, ''), '/', '\\') = ?
+      OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE ? ESCAPE '!'
+      OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE ? ESCAPE '!'
+      OR REPLACE(v.file_path, '/', '\\') LIKE ? ESCAPE '!'
+      OR REPLACE(v.file_path, '/', '\\') LIKE ? ESCAPE '!'
+    )`)
+    params.push(folder, winPrefix, unixPrefix, winPrefix, unixPrefix)
+  }
+
+  if (scope === 'selected_videos') {
+    if (baseResultIds.length === 0) {
+      whereClauses.push('1 = 0')
+    } else {
+      const placeholders = baseResultIds.map(() => '?').join(',')
+      whereClauses.push(`v.id IN (${placeholders})`)
+      params.push(...baseResultIds)
+    }
+  }
+
+  const rows = db.prepare(`
     SELECT
       v.id,
       v.file_path,
       v.folder_path,
-      v.file_name
+      v.file_name,
+      COALESCE(v.file_size, v.size, 0) AS file_size,
+      COALESCE(v.rating, 0) AS rating,
+      COALESCE(v.play_count, 0) AS play_count,
+      COALESCE(v.actor_name, '') AS actor_name,
+      COALESCE(v.code, '') AS code,
+      COALESCE(v.grade, '') AS grade,
+      COALESCE(v.recommended, 0) AS recommended,
+      COALESCE(v.is_new, 0) AS is_new,
+      COALESCE(v.tags, '') AS tags,
+      COALESCE(s.copy_count, 0) AS copy_count,
+      COALESCE(v.subtitle_count, 0) AS subtitle_count
     FROM videos v
+    LEFT JOIN (
+      SELECT
+        video_id,
+        SUM(CASE WHEN action_type IN ('copy_to_clipboard','copy_to_device') THEN 1 ELSE 0 END) AS copy_count
+      FROM video_activity_logs
+      GROUP BY video_id
+    ) s ON s.video_id = v.id
     WHERE ${whereClauses.join(' AND ')}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM scanned_roots sr
+        WHERE COALESCE(sr.is_active, 1) = 0
+          AND (
+            REPLACE(COALESCE(v.folder_path, ''), '/', '\\') = REPLACE(sr.root_path, '/', '\\')
+            OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '\\%'
+            OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '/%'
+            OR REPLACE(COALESCE(v.file_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '\\%'
+            OR REPLACE(COALESCE(v.file_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '/%'
+          )
+      )
+    ORDER BY v.updated_at DESC, v.created_at DESC
   `).all(...params)
+
+  return {
+    rows,
+    appliedFilters: {
+      scope,
+      drive: scope === 'current_drive' ? drive : null,
+      folder: scope === 'current_folder' ? folder : null,
+      baseResultIds: scope === 'selected_videos' ? baseResultIds : [],
+      subtitleMissing: true,
+    },
+  }
 }
 
 async function executeChatPlan(db, plan, context = {}) {
@@ -198,6 +300,7 @@ async function executeChatPlan(db, plan, context = {}) {
   }
 
   if (toolName === 'search_videos') {
+    const { askAiChatRecommend } = require('../aiChatRecommendService.cjs')
     const prompt = formatSearchPrompt(plan)
     const result = await askAiChatRecommend(db, prompt, {
       selectedVideoIds: Array.isArray(plan.arguments?.baseResultIds) ? plan.arguments.baseResultIds : [],
@@ -313,7 +416,8 @@ async function executeChatPlan(db, plan, context = {}) {
   }
 
   if (toolName === 'get_unmapped_subtitle_summary') {
-    const rows = buildSubtitleSummaryRows(db, plan.arguments?.drive || null)
+    const subtitleResult = buildSubtitleSummaryRows(db, plan.arguments || {})
+    const rows = subtitleResult.rows
     if (rows.length === 0) {
       return {
         success: true,
@@ -322,27 +426,14 @@ async function executeChatPlan(db, plan, context = {}) {
         reason: '현재 조건에서 자막이 없는 영상이 없습니다.',
         intent: plan,
         toolCall: { name: toolName, arguments: plan.arguments || {} },
+        appliedFilters: subtitleResult.appliedFilters,
         totalCount: 0,
         folderCounts: [],
         lastResultIds: [],
       }
     }
 
-    const folderMap = new Map()
-    for (const row of rows) {
-      const folderPath = row.folder_path || '폴더 미상'
-      if (!folderMap.has(folderPath)) {
-        folderMap.set(folderPath, { folderPath, count: 0, sampleFiles: [] })
-      }
-      const entry = folderMap.get(folderPath)
-      entry.count += 1
-      if (entry.sampleFiles.length < 3) {
-        entry.sampleFiles.push(row.file_name)
-      }
-    }
-
-    const folderCounts = Array.from(folderMap.values())
-      .sort((left, right) => right.count - left.count || left.folderPath.localeCompare(right.folderPath))
+    const { folderCounts, actorCounts } = buildSubtitleBreakdown(rows)
 
     return {
       success: true,
@@ -351,41 +442,55 @@ async function executeChatPlan(db, plan, context = {}) {
       reason: '폴더별로 자막이 연결되지 않은 영상을 집계했습니다.',
       intent: plan,
       toolCall: { name: toolName, arguments: plan.arguments || {} },
+      appliedFilters: subtitleResult.appliedFilters,
       totalCount: rows.length,
       folderCounts,
+      actorCounts,
       lastResultIds: rows.map((row) => row.id),
     }
   }
 
   if (toolName === 'search_videos_without_subtitles') {
-    const rows = buildSubtitleSummaryRows(db, plan.arguments?.drive || null)
-    const limited = rows.slice(0, Math.min(Math.max(Number(plan.arguments?.limit) || 20, 1), 100))
+    const subtitleResult = buildSubtitleSummaryRows(db, plan.arguments || {})
+    const rows = subtitleResult.rows
+    const limited = rows.slice(0, Math.min(Math.max(Number(plan.arguments?.limit) || 100, 1), 500))
     if (limited.length === 0) {
       return { success: false, errorCode: 'EMPTY_RESULT', error: '자막이 없는 영상을 찾지 못했습니다.' }
     }
 
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[tool-applied-filters]', subtitleResult.appliedFilters)
+    }
+
+    const { folderCounts, actorCounts } = buildSubtitleBreakdown(rows)
+
     return {
       success: true,
-      resultType: 'video-list',
+      resultType: 'subtitle-video-list',
       summary: `${limited.length}개의 자막 미매핑 영상을 찾았습니다.`,
       reason: '자막 파일이 연결되지 않은 영상만 조회했습니다.',
       intent: plan,
       toolCall: { name: toolName, arguments: plan.arguments || {} },
+      appliedFilters: subtitleResult.appliedFilters,
+      totalCount: rows.length,
+      folderCounts,
+      actorCounts,
       items: limited.map((row) => ({
         video: {
           id: row.id,
           file_name: row.file_name,
           file_path: row.file_path,
-          code: '',
-          actor_name: '',
-          rating: 0,
-          grade: '',
-          recommended: 0,
-          is_new: 0,
-          play_count: 0,
-          copy_count: 0,
-          subtitle_count: 0,
-          tags: '',
+          code: row.code,
+          actor_name: row.actor_name,
+          rating: row.rating,
+          grade: row.grade,
+          recommended: row.recommended,
+          is_new: row.is_new,
+          play_count: row.play_count,
+          copy_count: row.copy_count,
+          subtitle_count: row.subtitle_count,
+          tags: row.tags,
+          file_size: row.file_size,
           themeScore: 0,
           actorsList: [],
         },
@@ -427,4 +532,46 @@ module.exports = {
   executeChatPlan,
   buildSummaryStatsFromVideos,
   buildSummaryStatsFromCandidates,
+}
+
+function buildSubtitleBreakdown(rows = []) {
+  const folderMap = new Map()
+  const actorMap = new Map()
+
+  for (const row of rows) {
+    const videoId = Number(row.id)
+    const folderPath = row.folder_path || '폴더 미상'
+    if (!folderMap.has(folderPath)) {
+      folderMap.set(folderPath, { folderPath, count: 0, sampleFiles: [], videoIds: [] })
+    }
+    const folderEntry = folderMap.get(folderPath)
+    folderEntry.count += 1
+    if (folderEntry.sampleFiles.length < 3) {
+      folderEntry.sampleFiles.push(row.file_name)
+    }
+    if (Number.isInteger(videoId) && videoId > 0 && folderEntry.videoIds.length < 500) {
+      folderEntry.videoIds.push(videoId)
+    }
+
+    const actorName = String(row.actor_name || '').trim() || '배우 미상'
+    if (!actorMap.has(actorName)) {
+      actorMap.set(actorName, { actorName, count: 0, sampleCodes: [], videoIds: [] })
+    }
+    const actorEntry = actorMap.get(actorName)
+    actorEntry.count += 1
+    const sampleCode = String(row.code || row.file_name || '').trim()
+    if (sampleCode && actorEntry.sampleCodes.length < 3) {
+      actorEntry.sampleCodes.push(sampleCode)
+    }
+    if (Number.isInteger(videoId) && videoId > 0 && actorEntry.videoIds.length < 500) {
+      actorEntry.videoIds.push(videoId)
+    }
+  }
+
+  return {
+    folderCounts: Array.from(folderMap.values())
+      .sort((left, right) => right.count - left.count || left.folderPath.localeCompare(right.folderPath)),
+    actorCounts: Array.from(actorMap.values())
+      .sort((left, right) => right.count - left.count || left.actorName.localeCompare(right.actorName)),
+  }
 }

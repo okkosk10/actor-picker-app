@@ -334,6 +334,13 @@
   cursor: pointer;
 }
 
+.ai-chat-action-btn__desc {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #bfdbfe;
+}
+
 .ai-chat-action-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;

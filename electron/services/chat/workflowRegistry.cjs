@@ -1,23 +1,102 @@
 'use strict'
 
-function normalizeDriveFromContext(context = {}) {
-  const direct = typeof context?.activeFilters?.drive === 'string' ? context.activeFilters.drive : ''
-  if (/^[A-Za-z]:$/.test(direct)) return direct.toUpperCase()
-  const folder = typeof context?.currentFolder === 'string' ? context.currentFolder : ''
-  const match = folder.match(/^([A-Za-z]:)/)
-  return match ? match[1].toUpperCase() : null
+const SCOPE_VALUES = Object.freeze({
+  ALL: 'all',
+  CURRENT_DRIVE: 'current_drive',
+  CURRENT_FOLDER: 'current_folder',
+  SELECTED_VIDEOS: 'selected_videos',
+})
+
+function normalizeWindowsPath(value) {
+  if (typeof value !== 'string') return null
+  let normalized = value.trim()
+  if (!normalized) return null
+  normalized = normalized.replace(/\//g, '\\').replace(/\\+/g, '\\')
+  if (/^[a-z]:/i.test(normalized)) {
+    normalized = `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`
+  }
+  normalized = normalized.replace(/\\+$/, '')
+  if (!normalized || normalized.length > 500) return null
+  return normalized
+}
+
+function normalizeIds(value, maxItems = 500) {
+  if (!Array.isArray(value)) return []
+  const result = []
+  const seen = new Set()
+  for (const item of value) {
+    const parsed = Number(item)
+    if (!Number.isInteger(parsed) || parsed <= 0 || seen.has(parsed)) continue
+    seen.add(parsed)
+    result.push(parsed)
+    if (result.length >= maxItems) break
+  }
+  return result
+}
+
+function resolveCurrentFolder(context = {}) {
+  const direct = normalizeWindowsPath(context?.currentFolder)
+  if (direct) return direct
+  return normalizeWindowsPath(context?.activeFilters?.folder)
+}
+
+function resolveCurrentDrive(context = {}) {
+  const direct = typeof context?.currentDrive === 'string' ? context.currentDrive : context?.activeFilters?.drive
+  const match = String(direct || '').trim().match(/^([A-Za-z]):$/)
+  if (match) return `${match[1].toUpperCase()}:`
+  const folder = resolveCurrentFolder(context)
+  const folderMatch = String(folder || '').match(/^([A-Za-z]:)/)
+  return folderMatch ? folderMatch[1].toUpperCase() : null
+}
+
+function createWorkflowValidationError(code, message) {
+  const error = new Error(message)
+  error.name = 'WorkflowValidationError'
+  error.code = code
+  return error
+}
+
+function buildScopeOptions(context = {}) {
+  const currentDrive = resolveCurrentDrive(context)
+  const currentFolder = resolveCurrentFolder(context)
+  const selectedVideoIds = normalizeIds(context?.selectedVideoIds, 500)
+
+  return [
+    {
+      label: '전체 라이브러리',
+      value: SCOPE_VALUES.ALL,
+      disabled: false,
+    },
+    {
+      label: '현재 드라이브',
+      value: SCOPE_VALUES.CURRENT_DRIVE,
+      disabled: !currentDrive,
+      disabledReason: !currentDrive ? '현재 선택된 드라이브가 없습니다.' : null,
+      hint: currentDrive || null,
+    },
+    {
+      label: '현재 폴더',
+      value: SCOPE_VALUES.CURRENT_FOLDER,
+      disabled: !currentFolder,
+      disabledReason: !currentFolder ? '현재 화면에서 선택된 폴더가 없습니다.' : null,
+      hint: currentFolder || null,
+    },
+    {
+      label: '선택한 영상',
+      value: SCOPE_VALUES.SELECTED_VIDEOS,
+      disabled: selectedVideoIds.length === 0,
+      disabledReason: selectedVideoIds.length === 0 ? '선택한 영상이 없습니다.' : null,
+      hint: selectedVideoIds.length > 0 ? `${selectedVideoIds.length}개 선택됨` : null,
+    },
+  ]
 }
 
 function buildScopeSlot() {
   return {
     type: 'enum',
     question: '어느 범위에서 확인할까요?',
-    options: [
-      { label: '전체 라이브러리', value: 'all' },
-      { label: '현재 드라이브', value: 'current_drive' },
-      { label: '현재 폴더', value: 'current_folder' },
-      { label: '선택한 영상', value: 'selected_videos' },
-    ],
+    options: buildScopeOptions(),
+    resolveOptions: (context = {}) => buildScopeOptions(context),
   }
 }
 
@@ -34,12 +113,30 @@ const WORKFLOW_REGISTRY = {
     },
     toolName: 'search_videos_without_subtitles',
     buildArguments(slots = {}, context = {}) {
-      const scope = slots.scope || 'all'
-      const driveFromContext = normalizeDriveFromContext(context)
+      const scope = slots.scope || SCOPE_VALUES.ALL
+      const currentDrive = resolveCurrentDrive(context)
+      const currentFolder = resolveCurrentFolder(context)
+      const selectedVideoIds = normalizeIds(context?.selectedVideoIds, 500)
+      const parsedLimit = Number(slots.limit)
+
+      if (scope === SCOPE_VALUES.CURRENT_DRIVE && !currentDrive) {
+        throw createWorkflowValidationError('CURRENT_DRIVE_NOT_AVAILABLE', '현재 선택된 드라이브가 없습니다.')
+      }
+
+      if (scope === SCOPE_VALUES.CURRENT_FOLDER && !currentFolder) {
+        throw createWorkflowValidationError('CURRENT_FOLDER_NOT_AVAILABLE', '현재 화면에서 선택된 폴더가 없습니다.')
+      }
+
+      if (scope === SCOPE_VALUES.SELECTED_VIDEOS && selectedVideoIds.length === 0) {
+        throw createWorkflowValidationError('SELECTED_VIDEOS_NOT_AVAILABLE', '선택한 영상이 없습니다.')
+      }
+
       return {
-        drive: scope === 'current_drive' ? driveFromContext : (slots.drive || null),
-        baseResultIds: scope === 'selected_videos' ? (context.selectedVideoIds || []) : [],
-        limit: Number(slots.limit) > 0 ? Number(slots.limit) : 100,
+        scope,
+        drive: scope === SCOPE_VALUES.CURRENT_DRIVE ? currentDrive : null,
+        folder: scope === SCOPE_VALUES.CURRENT_FOLDER ? currentFolder : null,
+        baseResultIds: scope === SCOPE_VALUES.SELECTED_VIDEOS ? selectedVideoIds : [],
+        limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 500) : 100,
       }
     },
     summary(slots = {}) {
@@ -59,16 +156,34 @@ const WORKFLOW_REGISTRY = {
     description: '자막 미매핑 전체 개수와 폴더별 현황을 조회합니다.',
     category: 'subtitles',
     requiredSlots: ['scope'],
-    optionalSlots: ['drive'],
+    optionalSlots: ['drive', 'folder', 'baseResultIds'],
     slots: {
       scope: buildScopeSlot(),
     },
     toolName: 'get_unmapped_subtitle_summary',
     buildArguments(slots = {}, context = {}) {
-      const scope = slots.scope || 'all'
-      const driveFromContext = normalizeDriveFromContext(context)
+      const scope = slots.scope || SCOPE_VALUES.ALL
+      const currentDrive = resolveCurrentDrive(context)
+      const currentFolder = resolveCurrentFolder(context)
+      const selectedVideoIds = normalizeIds(context?.selectedVideoIds, 500)
+
+      if (scope === SCOPE_VALUES.CURRENT_DRIVE && !currentDrive) {
+        throw createWorkflowValidationError('CURRENT_DRIVE_NOT_AVAILABLE', '현재 선택된 드라이브가 없습니다.')
+      }
+
+      if (scope === SCOPE_VALUES.CURRENT_FOLDER && !currentFolder) {
+        throw createWorkflowValidationError('CURRENT_FOLDER_NOT_AVAILABLE', '현재 화면에서 선택된 폴더가 없습니다.')
+      }
+
+      if (scope === SCOPE_VALUES.SELECTED_VIDEOS && selectedVideoIds.length === 0) {
+        throw createWorkflowValidationError('SELECTED_VIDEOS_NOT_AVAILABLE', '선택한 영상이 없습니다.')
+      }
+
       return {
-        drive: scope === 'current_drive' ? driveFromContext : (slots.drive || null),
+        scope,
+        drive: scope === SCOPE_VALUES.CURRENT_DRIVE ? currentDrive : null,
+        folder: scope === SCOPE_VALUES.CURRENT_FOLDER ? currentFolder : null,
+        baseResultIds: scope === SCOPE_VALUES.SELECTED_VIDEOS ? selectedVideoIds : [],
       }
     },
     summary(slots = {}) {
@@ -88,7 +203,7 @@ const WORKFLOW_REGISTRY = {
     description: '조건에 맞는 영상을 조회합니다.',
     category: 'videos',
     requiredSlots: ['searchCriterion'],
-    optionalSlots: ['query', 'actorName', 'minRating', 'actorMinRating', 'onlyNotCopied', 'onlyNew', 'sortBy', 'scope', 'limit'],
+    optionalSlots: ['query', 'actorName', 'minRating', 'actorMinRating', 'onlyNotCopied', 'onlyNew', 'sortBy', 'limit'],
     slots: {
       searchCriterion: {
         type: 'enum',
@@ -100,7 +215,6 @@ const WORKFLOW_REGISTRY = {
           { label: '직접 검색어 입력', value: 'query' },
         ],
       },
-      scope: buildScopeSlot(),
     },
     toolName: 'search_videos',
     buildArguments(slots = {}, context = {}) {
@@ -124,10 +238,6 @@ const WORKFLOW_REGISTRY = {
         args.onlyNotCopied = true
       } else if (criterion === 'recent') {
         args.sortBy = 'recent'
-      }
-
-      if (slots.scope === 'selected_videos') {
-        args.baseResultIds = context.selectedVideoIds || []
       }
 
       return args
@@ -206,7 +316,7 @@ const WORKFLOW_REGISTRY = {
     toolName: 'get_drive_stats',
     buildArguments(slots = {}, context = {}) {
       if (slots.scope === 'current_drive') {
-        return { drive: normalizeDriveFromContext(context) }
+        return { drive: resolveCurrentDrive(context) }
       }
       if (slots.scope === 'specific_drive') {
         return { drive: slots.drive || null }
@@ -261,7 +371,7 @@ const WORKFLOW_REGISTRY = {
         limit: Number(slots.limit) > 0 ? Number(slots.limit) : 20,
       }
 
-      if (slots.scope === 'current_drive') args.drive = normalizeDriveFromContext(context)
+      if (slots.scope === 'current_drive') args.drive = resolveCurrentDrive(context)
       if (slots.scope === 'specific_drive') args.drive = slots.drive || null
 
       if (goal === 'large_files') {
@@ -363,6 +473,13 @@ function toToolAction(workflowId, slots = {}, context = {}) {
 module.exports = {
   WORKFLOW_REGISTRY,
   QUICK_WORKFLOW_CATEGORIES,
+  SCOPE_VALUES,
+  normalizeWindowsPath,
+  normalizeIds,
+  resolveCurrentFolder,
+  resolveCurrentDrive,
+  buildScopeOptions,
+  createWorkflowValidationError,
   getWorkflow,
   listWorkflowCategories,
   listWorkflowsByCategory,

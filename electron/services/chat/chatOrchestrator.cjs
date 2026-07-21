@@ -1,7 +1,7 @@
 'use strict'
 
 const { buildFallbackPlan } = require('./intentPlanner.cjs')
-const { sanitizeToolArguments, isRegisteredTool } = require('./toolRegistry.cjs')
+const { sanitizeToolArguments, isRegisteredTool, validateSubtitleSearchScope } = require('./toolRegistry.cjs')
 const { executeChatPlan } = require('./toolExecutor.cjs')
 const { presentChatResponse } = require('./responsePresenter.cjs')
 const {
@@ -201,6 +201,11 @@ function withExecutionState(workflowState, patch = {}) {
   return mergeWorkflowState(workflowState, patch)
 }
 
+function debugLog(label, payload) {
+  if (process.env.NODE_ENV === 'production') return
+  console.debug(label, payload)
+}
+
 async function executeWorkflowAction(db, workflowState, context = {}) {
   const proposedAction = workflowState.proposedAction || null
   if (!proposedAction?.toolName) {
@@ -216,6 +221,17 @@ async function executeWorkflowAction(db, workflowState, context = {}) {
     sanitizeToolArguments(proposedAction.toolName, proposedAction.arguments || {}, context, {}),
     workflowState,
   )
+
+  const validation = validateSubtitleSearchScope(plan.toolName, plan.arguments)
+  if (validation.success === false) {
+    return validation
+  }
+
+  debugLog('[workflow-arguments]', {
+    workflowId: workflowState.workflowId,
+    toolName: plan.toolName,
+    arguments: plan.arguments,
+  })
 
   const execution = await executeChatPlan(db, plan, context)
   if (!execution || execution.success === false) return execution
@@ -263,6 +279,8 @@ async function handleChatRequest(db, payload, options = {}) {
   let workflowState = resolveWorkflowStateFromRequest(state)
   const parsedAction = parseStructuredAction(action, workflowState)
 
+  debugLog('[ai-chat-context]', context)
+
   if (!workflowState.entryMode && !parsedAction && !message) {
     const next = resetWorkflowState(null)
     return buildModeSelectionResponse(next)
@@ -306,11 +324,6 @@ async function handleChatRequest(db, payload, options = {}) {
     }, next)
   }
 
-  if (!workflowState.entryMode) {
-    const next = resetWorkflowState(null)
-    return buildModeSelectionResponse(next)
-  }
-
   if (parsedAction?.actionType === 'select_entry_mode') {
     const mode = parsedAction.payload.mode === 'quick' ? 'quick' : 'consult'
     const next = resetWorkflowState(mode)
@@ -321,6 +334,11 @@ async function handleChatRequest(db, payload, options = {}) {
       message: 'AI 상담 모드로 시작합니다. 요청을 말씀해 주세요.',
       clarification: { question: '무엇을 도와드릴까요?', options: [] },
     }, next)
+  }
+
+  if (!workflowState.entryMode) {
+    const next = resetWorkflowState(null)
+    return buildModeSelectionResponse(next)
   }
 
   if (parsedAction?.actionType === 'start_new_workflow') {
@@ -391,7 +409,7 @@ async function handleChatRequest(db, payload, options = {}) {
         proposedAction: null,
         awaitingConfirmation: false,
       })
-      return buildWorkflowSlotQuestionResponse(next, workflow.id, next.collectedSlots)
+      return buildWorkflowSlotQuestionResponse(next, workflow.id, next.collectedSlots, context)
     }
 
     if (parsedAction?.actionType === 'set_workflow_slot') {
@@ -404,6 +422,7 @@ async function handleChatRequest(db, payload, options = {}) {
         [parsedAction.payload.slot]: parsedAction.payload.value,
       }
       const missing = computeMissingSlots(workflowId, nextSlots)
+      debugLog('[workflow-slots]', { workflowId, collectedSlots: nextSlots, missingSlots: missing })
       const next = mergeWorkflowState(workflowState, {
         phase: missing.length > 0 ? 'collecting_slots' : 'confirming',
         workflowId,
@@ -412,7 +431,7 @@ async function handleChatRequest(db, payload, options = {}) {
       })
 
       if (missing.length > 0) {
-        const questionResponse = buildWorkflowSlotQuestionResponse(next, workflowId, nextSlots)
+        const questionResponse = buildWorkflowSlotQuestionResponse(next, workflowId, nextSlots, context)
         return questionResponse
       }
 
@@ -428,13 +447,42 @@ async function handleChatRequest(db, payload, options = {}) {
         proposedAction: null,
         awaitingConfirmation: false,
       })
-      return buildWorkflowSlotQuestionResponse(next, workflowId, next.collectedSlots)
+      return buildWorkflowSlotQuestionResponse(next, workflowId, next.collectedSlots, context)
     }
 
     if (parsedAction?.actionType === 'confirm_workflow_execution') {
       const executing = mergeWorkflowState(workflowState, { phase: 'executing', awaitingConfirmation: false })
       const execution = await executeWorkflowAction(db, executing, context)
       return execution
+    }
+
+    if (parsedAction?.actionType === 'legacy_refine') {
+      const legacyPlan = buildPlanFromLegacyAction(parsedAction, context, state)
+      if (legacyPlan?.success === false) return legacyPlan
+      if (legacyPlan?.needsClarification) {
+        return appendWorkflowState(presentChatResponse(legacyPlan, {
+          success: true,
+          resultType: 'clarification',
+          clarification: legacyPlan.clarification,
+          items: [],
+          lastResultIds: [],
+        }, context), workflowState)
+      }
+      if (!legacyPlan?.requiresConfirmation) {
+        const execution = await executeChatPlan(db, legacyPlan, context)
+        if (!execution || execution.success === false) return execution
+        const presented = presentChatResponse(legacyPlan, execution, context)
+        return appendWorkflowState(presented, {
+          ...workflowState,
+          phase: 'completed',
+          awaitingConfirmation: false,
+          proposedAction: null,
+          lastToolCall: { name: legacyPlan.toolName, arguments: legacyPlan.arguments || {} },
+          lastResultIds: execution.lastResultIds || [],
+          activeFilters: legacyPlan.arguments || {},
+        })
+      }
+      return buildConfirmationResponse(legacyPlan, workflowState)
     }
 
     return buildQuickHomeResponse(workflowState)
@@ -453,7 +501,7 @@ async function handleChatRequest(db, payload, options = {}) {
         proposedAction: null,
         awaitingConfirmation: false,
       })
-      return buildWorkflowSlotQuestionResponse(next, workflowId, next.collectedSlots)
+      return buildWorkflowSlotQuestionResponse(next, workflowId, next.collectedSlots, context)
     }
 
     if (parsedAction?.actionType === 'set_workflow_slot') {
@@ -466,6 +514,7 @@ async function handleChatRequest(db, payload, options = {}) {
         [parsedAction.payload.slot]: parsedAction.payload.value,
       }
       const missing = computeMissingSlots(workflowId, nextSlots)
+      debugLog('[workflow-slots]', { workflowId, collectedSlots: nextSlots, missingSlots: missing })
       const next = mergeWorkflowState(workflowState, {
         workflowId,
         collectedSlots: nextSlots,
@@ -474,7 +523,7 @@ async function handleChatRequest(db, payload, options = {}) {
       })
 
       if (missing.length > 0) {
-        return buildWorkflowSlotQuestionResponse(next, workflowId, nextSlots)
+        return buildWorkflowSlotQuestionResponse(next, workflowId, nextSlots, context)
       }
 
       const preview = buildActionPreviewResponse(next, workflowId, nextSlots, context)
@@ -488,7 +537,7 @@ async function handleChatRequest(db, payload, options = {}) {
         workflowId,
         proposedAction: null,
       })
-      return buildWorkflowSlotQuestionResponse(next, workflowId, next.collectedSlots)
+      return buildWorkflowSlotQuestionResponse(next, workflowId, next.collectedSlots, context)
     }
 
     if (parsedAction?.actionType === 'confirm_workflow_execution') {
@@ -507,6 +556,20 @@ async function handleChatRequest(db, payload, options = {}) {
           items: [],
           lastResultIds: [],
         }, context), workflowState)
+      }
+      if (!legacyPlan?.requiresConfirmation) {
+        const execution = await executeChatPlan(db, legacyPlan, context)
+        if (!execution || execution.success === false) return execution
+        const presented = presentChatResponse(legacyPlan, execution, context)
+        return appendWorkflowState(presented, {
+          ...workflowState,
+          phase: 'completed',
+          awaitingConfirmation: false,
+          proposedAction: null,
+          lastToolCall: { name: legacyPlan.toolName, arguments: legacyPlan.arguments || {} },
+          lastResultIds: execution.lastResultIds || [],
+          activeFilters: legacyPlan.arguments || {},
+        })
       }
       return buildConfirmationResponse(legacyPlan, workflowState)
     }
