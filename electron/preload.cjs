@@ -49,6 +49,16 @@ contextBridge.exposeInMainWorld('api', {
   searchVideos: (query, options) =>
     ipcRenderer.invoke('search-videos', query, options),
 
+  // ── AI 챗봇 메시지 전송 ───────────────────────────────────────
+  // @param payload {{ requestId, sessionId, message, context, state }}
+  // 반환: { success, resultType, summary, reason, intent, items? }
+  sendAiChatMessage: (payload) =>
+    ipcRenderer.invoke('ai-chat:send', payload),
+
+  // ── 기존 AI 추천 단일 호출 (하위 호환) ─────────────────────────
+  askAiChatRecommend: (userPrompt, options) =>
+    ipcRenderer.invoke('ai-chat-recommend:ask', userPrompt, options),
+
   // ── 동영상 메타 업데이트 ──────────────────────────────────────
   // @param id   {number}
   // @param data {{ memo, tags, rating, status, recommended }}

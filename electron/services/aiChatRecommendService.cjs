@@ -34,6 +34,7 @@ async function parseIntent(userPrompt) {
   const system = `당신은 영상 라이브러리 검색 쿼리 분석기입니다.
 사용자의 자연어 입력을 분석해서 아래 JSON 형식으로만 반환하세요.
 설명 문장이나 마크다운 코드 블록 없이 JSON 객체 하나만 출력하세요.
+반드시 json 객체만 출력해야 합니다.
 
 중요: "영상 별점"과 "배우 별점"을 반드시 구분하세요.
 - "5점 배우", "별점 5개 배우", "배우 별점 5", "평점 높은 배우", "탑 배우", "최고 평점 배우" 등
@@ -82,7 +83,7 @@ async function parseIntent(userPrompt) {
     model,
     temperature: 0.2,
     instructions: system,
-    input: `다음 사용자 요청을 분석해 JSON으로 반환해 주세요: ${userPrompt}`,
+    input: `다음 사용자 요청을 json으로 반환해 주세요: ${userPrompt}`,
     text: { format: { type: 'json_object' } },
   })
 
@@ -109,7 +110,7 @@ async function parseIntent(userPrompt) {
  * @param {object} intent
  * @returns {object[]} video rows
  */
-function queryCandidates(db, intent) {
+function queryCandidates(db, intent, options = {}) {
   const {
     actorTags        = [],
     videoTags        = [],
@@ -131,6 +132,20 @@ function queryCandidates(db, intent) {
     "v.status = 'normal'",
     "v.status != 'duplicate'",
   ]
+
+  const selectedVideoIds = Array.isArray(options.selectedVideoIds)
+    ? options.selectedVideoIds.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+    : []
+  if (selectedVideoIds.length > 0) {
+    const placeholders = selectedVideoIds.map(() => '?').join(',')
+    whereClauses.push(`v.id IN (${placeholders})`)
+    bindings.push(...selectedVideoIds)
+  }
+
+  if (typeof options.currentFolder === 'string' && options.currentFolder.trim()) {
+    whereClauses.push('v.folder_path = ?')
+    bindings.push(options.currentFolder.trim())
+  }
 
   // 영상 최소 별점 (videos.rating)
   if (minRating > 0) {
@@ -454,6 +469,7 @@ async function callAiRecommend(userPrompt, intent, candidates, maxItems = 30) {
 - 각 항목에 한국어로 간결한 추천 이유를 적으세요.
 - 후보 목록 끝부분에는 순환 다양성을 위해 점수가 낮은 탐색 후보가 1~2개 포함되어 있습니다. 사용자 요청에 조금이라도 맞는다면 이들을 추천에 포함해 새로운 발견 기회를 제공하세요.
 - JSON만 반환하세요. 설명 문장이나 마크다운 코드 블록 없이.
+반드시 json 객체만 반환하세요.
 
 응답 형식:
 {
@@ -464,7 +480,7 @@ async function callAiRecommend(userPrompt, intent, candidates, maxItems = 30) {
   ]
 }`
 
-  const userMsg = `요청: "${userPrompt}"\n\n후보 목록:\n${JSON.stringify(safeCandidates)}`
+  const userMsg = `요청: "${userPrompt}"\n\njson 후보 목록:\n${JSON.stringify(safeCandidates)}`
 
   const resp = await client.responses.create({
     model,
@@ -497,7 +513,7 @@ async function callAiRecommend(userPrompt, intent, candidates, maxItems = 30) {
  *   items: Array<{video: object, reason: string, scoreComment: string}>
  * } | { success: false, error: string }>}
  */
-async function askAiChatRecommend(db, userPrompt) {
+async function askAiChatRecommend(db, userPrompt, options = {}) {
   if (!userPrompt || !userPrompt.trim()) {
     return { success: false, error: '질문을 입력해 주세요.' }
   }
@@ -520,7 +536,7 @@ async function askAiChatRecommend(db, userPrompt) {
   // 2. DB 후보 조회 (일반 추천)
   let rows
   try {
-    rows = queryCandidates(db, intent)
+    rows = queryCandidates(db, intent, options)
   } catch (err) {
     return { success: false, error: `DB 조회 실패: ${err.message}` }
   }
@@ -758,6 +774,7 @@ async function _handleDeleteModeRecommend(db, userPrompt, intent) {
 - 각 항목에 한국어로 간결한 삭제 이유를 적으세요.
 - 이 응답은 볼만한 영상 추천이 아니라 지워도 될 영상 추천입니다.
 - JSON만 반환하세요.
+반드시 json 객체만 반환하세요.
 
 응답 형식:
 {
@@ -774,7 +791,7 @@ async function _handleDeleteModeRecommend(db, userPrompt, intent) {
       model,
       temperature: 0.3,
       instructions: system,
-      input: `요청: "${userPrompt}"\n\n삭제 후보 목록:\n${JSON.stringify(safeCandidates)}`,
+      input: `요청: "${userPrompt}"\n\njson 삭제 후보 목록:\n${JSON.stringify(safeCandidates)}`,
       text: { format: { type: 'json_object' } },
     })
     const raw = resp.output_text?.trim() ?? ''

@@ -231,6 +231,455 @@ function buildSubtitleRestorePlan(archiveFiles, rows) {
   return { plans, unmatchedFiles }
 }
 
+function normalizeAiChatPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return { success: false, errorCode: 'VALIDATION_ERROR', error: '잘못된 요청입니다.' }
+  }
+
+  const requestId = typeof payload.requestId === 'string' && payload.requestId.trim() ? payload.requestId.trim() : null
+  const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim() ? payload.sessionId.trim() : null
+  const message = typeof payload.message === 'string' ? payload.message.trim() : ''
+  const context = payload.context && typeof payload.context === 'object' ? payload.context : {}
+  const state = payload.state && typeof payload.state === 'object' ? payload.state : {}
+
+  if (!requestId || !sessionId) {
+    return { success: false, errorCode: 'VALIDATION_ERROR', error: '세션 정보가 올바르지 않습니다.' }
+  }
+
+  if (!message) {
+    return { success: false, errorCode: 'VALIDATION_ERROR', error: '메시지를 입력해 주세요.' }
+  }
+
+  if (message.length > 2000) {
+    return { success: false, errorCode: 'VALIDATION_ERROR', error: '메시지는 2000자 이하로 입력해 주세요.' }
+  }
+
+  const normalizedSelectedIds = Array.isArray(context.selectedVideoIds)
+    ? context.selectedVideoIds.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+    : []
+
+  const allowedFilters = context.activeFilters && typeof context.activeFilters === 'object'
+    ? {
+        drive: typeof context.activeFilters.drive === 'string' ? context.activeFilters.drive : null,
+        tabMode: typeof context.activeFilters.tabMode === 'string' ? context.activeFilters.tabMode : null,
+        excludeMissing: Boolean(context.activeFilters.excludeMissing),
+        excludeDeleteGrade: Boolean(context.activeFilters.excludeDeleteGrade),
+        recommendedOnly: Boolean(context.activeFilters.recommendedOnly),
+        minRating: Number.isFinite(Number(context.activeFilters.minRating)) ? Number(context.activeFilters.minRating) : 0,
+      }
+    : {}
+
+  return {
+    success: true,
+    value: {
+      requestId,
+      sessionId,
+      message,
+      context: {
+        currentPage: typeof context.currentPage === 'string' ? context.currentPage : 'library',
+        currentFolder: typeof context.currentFolder === 'string' ? context.currentFolder : null,
+        selectedVideoIds: normalizedSelectedIds.slice(0, 100),
+        activeFilters: allowedFilters,
+      },
+      state: {
+        lastToolCall: state.lastToolCall || null,
+        lastResultIds: Array.isArray(state.lastResultIds)
+          ? state.lastResultIds.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+          : [],
+        activeFilters: state.activeFilters && typeof state.activeFilters === 'object' ? state.activeFilters : {},
+      },
+    },
+  }
+}
+
+function detectAiChatTool(message, context) {
+  const text = String(message || '')
+  const page = String(context?.currentPage || '')
+  const hasSelected = Array.isArray(context?.selectedVideoIds) && context.selectedVideoIds.length > 0
+  const currentFolder = typeof context?.currentFolder === 'string' ? context.currentFolder.trim() : ''
+  const driveMatch = text.match(/([A-Za-z]:)/)
+  const requestedDrive = driveMatch ? driveMatch[1].toUpperCase() : null
+
+  if (/(전체적으로|전체\s*자막|폴더별|몇개인지|개수|카운트|통계).*(자막\s*없|자막\s*매핑\s*안[됨된]|자막\s*미매핑|연결\s*안[됨된]|매칭\s*안[됨된])|(?:자막\s*없|자막\s*매핑\s*안[됨된]|자막\s*미매핑|연결\s*안[됨된]|매칭\s*안[됨된]).*(전체적으로|폴더별|몇개인지|개수|카운트|통계)/i.test(text)) {
+    return {
+      name: 'get_unmapped_subtitle_summary',
+      arguments: {
+        drive: requestedDrive || context?.activeFilters?.drive || extractDriveFromPath(currentFolder) || null,
+      },
+    }
+  }
+
+  if (/(자막\s*없|자막이\s*없|자막\s*없는|자막\s*없는\s*것|자막\s*미보유|자막\s*매핑\s*안[됨된]|자막\s*미매핑|연결\s*안[됨된]|매칭\s*안[됨된]|subtitle\s*missing|subtitle\s*없)/i.test(text) || page === 'subtitles') {
+    return {
+      name: 'search_videos_without_subtitles',
+      arguments: {
+        drive: requestedDrive || context?.activeFilters?.drive || extractDriveFromPath(currentFolder) || null,
+      },
+    }
+  }
+
+  if (/(드라이브|저장소|용량|공간|통계)/.test(text) || page === 'storage') {
+    return { name: 'get_drive_stats', arguments: { drive: requestedDrive || context?.activeFilters?.drive || extractDriveFromPath(currentFolder) || null } }
+  }
+
+  if (/(배우|메타데이터|태그가 비어|배우 검색|배우 찾아|배우 목록|부족한 배우)/.test(text) || page === 'actors') {
+    return { name: 'search_actors', arguments: {} }
+  }
+
+  if (/(삭제 후보|지울만한|공간 확보|삭제해도|정리해줘|삭제요망)/.test(text)) {
+    return {
+      name: 'get_delete_candidates_by_drive',
+      arguments: {
+        drive: requestedDrive || context?.activeFilters?.drive || extractDriveFromPath(currentFolder) || null,
+      },
+    }
+  }
+
+  if (hasSelected || /(선택한|선택된|여기서|이거 기준|이걸 기준)/.test(text)) {
+    return { name: 'search_videos', arguments: { selectedVideoIds: context.selectedVideoIds || [] } }
+  }
+
+  return { name: 'search_videos', arguments: {} }
+}
+
+function extractDriveFromPath(filePath) {
+  if (!filePath) return null
+  const match = String(filePath).match(/^([A-Za-z]:)/)
+  return match ? match[1].toUpperCase() : null
+}
+
+function summarizeDriveStats(drives, targetDrive) {
+  if (targetDrive) {
+    const row = drives.find((drive) => drive.drive === targetDrive)
+    if (row) {
+      return `${row.drive} 드라이브에 영상 ${row.totalVideos}개, 사용 용량 ${Math.round((row.totalSize / (1024 ** 3)) * 10) / 10}GB입니다.`
+    }
+  }
+
+  const top = drives.slice(0, 3)
+  if (top.length === 0) return '저장소 통계를 찾지 못했습니다.'
+  return `${top.map((drive) => `${drive.drive} ${drive.totalVideos}개`).join(', ')}를 확인했습니다.`
+}
+
+async function handleAiChatRequest(db, payload) {
+  const normalized = normalizeAiChatPayload(payload)
+  if (!normalized.success) return normalized
+
+  const { message, context } = normalized.value
+  const tool = detectAiChatTool(message, context)
+
+  if (tool.name === 'get_drive_stats') {
+    const { getDriveStats } = require('./services/driveStatsService.cjs')
+    const drives = getDriveStats(db)
+    const summary = summarizeDriveStats(drives, tool.arguments.drive)
+    return {
+      success: true,
+      resultType: 'drive-stats',
+      summary,
+      reason: '드라이브 저장소 통계를 조회했습니다.',
+      toolCall: tool,
+      drives,
+      lastResultIds: [],
+    }
+  }
+
+  if (tool.name === 'search_actors') {
+    const whereClauses = ['a.is_archived = 0']
+    const params = []
+    const messageText = String(message || '')
+    const selectedVideoIds = Array.isArray(context.selectedVideoIds) ? context.selectedVideoIds : []
+
+    if (/부족|누락|빈|없는/.test(messageText)) {
+      whereClauses.push("(COALESCE(a.tags, '') = '' OR COALESCE(a.memo, '') = '' OR COALESCE(a.agency, '') = '' OR COALESCE(a.rating, 0) = 0)")
+    }
+
+    const ratingMatch = messageText.match(/([0-9]+(?:\.[0-9]+)?)\s*점/)
+    if (ratingMatch) {
+      whereClauses.push('a.rating >= ?')
+      params.push(Number(ratingMatch[1]))
+    }
+
+    if (selectedVideoIds.length > 0 && /(선택|기준)/.test(messageText)) {
+      const placeholders = selectedVideoIds.map(() => '?').join(',')
+      whereClauses.push(`a.id IN (SELECT DISTINCT va.actor_id FROM video_actors va WHERE va.video_id IN (${placeholders}))`)
+      params.push(...selectedVideoIds)
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        a.id,
+        a.name,
+        a.rating,
+        a.agency,
+        a.tags,
+        a.memo,
+        a.tier,
+        COUNT(DISTINCT va.video_id) AS video_count
+      FROM actors a
+      LEFT JOIN video_actors va ON va.actor_id = a.id
+      WHERE ${whereClauses.join(' AND ')}
+      GROUP BY a.id
+      ORDER BY a.rating DESC, video_count DESC, a.name ASC
+      LIMIT 20
+    `).all(...params)
+
+    if (rows.length === 0) {
+      return { success: false, errorCode: 'EMPTY_RESULT', error: '조건에 맞는 배우가 없습니다.' }
+    }
+
+    return {
+      success: true,
+      resultType: 'actor-list',
+      summary: `${rows.length}명의 배우를 찾았습니다.`,
+      reason: '배우 메타데이터를 기준으로 검색했습니다.',
+      toolCall: tool,
+      items: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        rating: row.rating,
+        agency: row.agency,
+        tags: row.tags,
+        memo: row.memo,
+        tier: row.tier,
+        videoCount: row.video_count,
+      })),
+      lastResultIds: rows.map((row) => row.id),
+    }
+  }
+
+  if (tool.name === 'search_videos_without_subtitles') {
+    const whereClauses = [
+      "v.status = 'normal'",
+      "v.status != 'duplicate'",
+      'COALESCE(v.subtitle_count, 0) = 0',
+    ]
+    const params = []
+
+    if (tool.arguments.drive) {
+      whereClauses.push('UPPER(SUBSTR(v.file_path, 1, 2)) = ?')
+      params.push(String(tool.arguments.drive).toUpperCase().slice(0, 2))
+    }
+
+    if (Array.isArray(context.selectedVideoIds) && context.selectedVideoIds.length > 0 && /(선택|기준)/.test(message)) {
+      const placeholders = context.selectedVideoIds.map(() => '?').join(',')
+      whereClauses.push(`v.id IN (${placeholders})`)
+      params.push(...context.selectedVideoIds)
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        v.id,
+        v.file_name,
+        v.file_path,
+        v.code,
+        v.actor_name,
+        v.rating,
+        v.grade,
+        v.recommended,
+        v.is_new,
+        v.play_count,
+        COALESCE(s.copy_count, 0) AS copy_count,
+        COALESCE(v.subtitle_count, 0) AS subtitle_count,
+        v.tags
+      FROM videos v
+      LEFT JOIN (
+        SELECT
+          video_id,
+          SUM(CASE WHEN action_type IN ('copy_to_clipboard','copy_to_device') THEN 1 ELSE 0 END) AS copy_count
+        FROM video_activity_logs
+        GROUP BY video_id
+      ) s ON s.video_id = v.id
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY v.updated_at DESC, v.created_at DESC
+      LIMIT 20
+    `).all(...params)
+
+    if (rows.length === 0) {
+      return {
+        success: false,
+        errorCode: 'EMPTY_RESULT',
+        error: '자막이 없는 영상을 찾지 못했습니다.',
+      }
+    }
+
+    return {
+      success: true,
+      resultType: 'video-list',
+      summary: `${rows.length}개의 자막 미매핑 영상을 찾았습니다.`,
+      reason: '자막 파일이 연결되지 않은 영상만 조회했습니다.',
+      toolCall: tool,
+      items: rows.map((row) => ({
+        video: {
+          id: row.id,
+          file_name: row.file_name,
+          file_path: row.file_path,
+          code: row.code,
+          actor_name: row.actor_name,
+          rating: row.rating,
+          grade: row.grade,
+          recommended: row.recommended,
+          is_new: row.is_new,
+          play_count: row.play_count,
+          copy_count: row.copy_count,
+          subtitle_count: row.subtitle_count,
+          tags: row.tags,
+          themeScore: 0,
+          actorsList: [],
+        },
+        reason: '자막 미보유',
+        scoreComment: 'subtitle_count = 0',
+      })),
+      lastResultIds: rows.map((row) => row.id),
+    }
+  }
+
+  if (tool.name === 'get_unmapped_subtitle_summary') {
+    const whereClauses = [
+      "v.status = 'normal'",
+      "v.status != 'duplicate'",
+      'COALESCE(v.subtitle_count, 0) = 0',
+    ]
+    const params = []
+
+    if (tool.arguments.drive) {
+      whereClauses.push('UPPER(SUBSTR(v.file_path, 1, 2)) = ?')
+      params.push(String(tool.arguments.drive).toUpperCase().slice(0, 2))
+    }
+
+    const rows = db.prepare(`
+      SELECT
+        v.id,
+        v.file_path,
+        v.folder_path,
+        v.file_name
+      FROM videos v
+      WHERE ${whereClauses.join(' AND ')}
+    `).all(...params)
+
+    if (rows.length === 0) {
+      return {
+        success: true,
+        resultType: 'subtitle-summary',
+        summary: '자막 미매핑 영상이 없습니다.',
+        reason: '현재 조건에서 자막이 없는 영상이 없습니다.',
+        toolCall: tool,
+        totalCount: 0,
+        folderCounts: [],
+        lastResultIds: [],
+      }
+    }
+
+    const folderMap = new Map()
+    for (const row of rows) {
+      const folderPath = row.folder_path || '폴더 미상'
+      const key = folderPath
+      if (!folderMap.has(key)) {
+        folderMap.set(key, {
+          folderPath,
+          count: 0,
+          sampleFiles: [],
+        })
+      }
+      const entry = folderMap.get(key)
+      entry.count += 1
+      if (entry.sampleFiles.length < 3) {
+        entry.sampleFiles.push(row.file_name)
+      }
+    }
+
+    const folderCounts = Array.from(folderMap.values())
+      .sort((a, b) => b.count - a.count || a.folderPath.localeCompare(b.folderPath))
+
+    return {
+      success: true,
+      resultType: 'subtitle-summary',
+      summary: `자막 미매핑 영상 ${rows.length}개를 찾았습니다.`,
+      reason: '폴더별로 자막이 연결되지 않은 영상을 집계했습니다.',
+      toolCall: tool,
+      totalCount: rows.length,
+      folderCounts,
+      lastResultIds: rows.map((row) => row.id),
+    }
+  }
+
+  if (tool.name === 'get_delete_candidates_by_drive') {
+    const { getDeleteCandidatesByDrive } = require('./services/driveStatsService.cjs')
+    const result = getDeleteCandidatesByDrive(db, tool.arguments.drive || null)
+
+    if (!result.candidates || result.candidates.length === 0) {
+      return {
+        success: false,
+        errorCode: 'EMPTY_RESULT',
+        error: '조건에 맞는 삭제 후보가 없습니다.',
+      }
+    }
+
+    return {
+      success: true,
+      resultType: 'delete-candidate-list',
+      summary: `${result.candidates.length}개의 삭제 후보를 찾았습니다.`,
+      reason: result.drive === 'all'
+        ? '전체 라이브러리 기준 삭제 후보를 조회했습니다.'
+        : `${result.drive} 드라이브 기준 삭제 후보를 조회했습니다.`,
+      toolCall: tool,
+      driveInfo: {
+        drive: result.drive,
+        freeSpace: result.freeSpace,
+        totalDiskSize: result.totalDiskSize,
+        usedByLibrary: result.usedByLibrary,
+      },
+      items: result.candidates.slice(0, 20).map((candidate) => ({
+        video: {
+          id: candidate.id,
+          file_name: candidate.filename,
+          file_path: candidate.file_path,
+          rating: candidate.rating,
+          tags: Array.isArray(candidate.tags) ? candidate.tags.join(', ') : String(candidate.tags || ''),
+          copy_count: candidate.copy_count,
+          play_count: candidate.watch_count,
+          actor_name: Array.isArray(candidate.actorNames) ? candidate.actorNames.join(', ') : '',
+        },
+        reason: Array.isArray(candidate.reason) ? candidate.reason.join(', ') : String(candidate.reason || ''),
+        scoreComment: `삭제 점수 ${candidate.deleteScore}`,
+      })),
+      lastResultIds: result.candidates.map((candidate) => candidate.id),
+    }
+  }
+
+  const { askAiChatRecommend } = require('./services/aiChatRecommendService.cjs')
+  const recommendResult = await askAiChatRecommend(db, message, {
+    selectedVideoIds: context.selectedVideoIds,
+    currentFolder: context.currentFolder,
+  })
+
+  if (!recommendResult?.success) {
+    return {
+      success: false,
+      errorCode: /조건에 맞는 .* 없습니다/.test(String(recommendResult?.error || '')) ? 'EMPTY_RESULT' : 'TOOL_EXECUTION_ERROR',
+      error: recommendResult?.error || '추천 결과를 가져오지 못했습니다.',
+    }
+  }
+
+  const resultType = recommendResult.deleteMode ? 'delete-candidate-list' : 'video-list'
+  const items = Array.isArray(recommendResult.items) ? recommendResult.items : []
+  return {
+    success: true,
+    resultType,
+    summary: recommendResult.summary || '',
+    reason: recommendResult.reason || '',
+    intent: recommendResult.intent || null,
+    toolCall: { name: 'search_videos', arguments: { selectedVideoIds: context.selectedVideoIds } },
+    items: items.map((item) => ({
+      video: item.video,
+      reason: item.reason,
+      scoreComment: item.scoreComment,
+    })),
+    actorSummaries: Array.isArray(recommendResult.actorSummaries) ? recommendResult.actorSummaries : [],
+    driveInfo: recommendResult.driveInfo || null,
+    lastResultIds: items.map((item) => Number(item?.video?.id)).filter((value) => Number.isFinite(value)),
+  }
+}
+
 // ── MTP 액션 디스패첫 (needsCheck 일시정지 중 UI가 동작을 확인해 가져옵니다) ─────
 // device-copy-action IPC 메시지를 받아 대기 중인 프로미스를 해제한다.
 let _resolveAction = null
@@ -4737,6 +5186,19 @@ function registerIpcHandlers() {
     } catch (err) {
       console.error('[ai-chat-recommend:ask]', err)
       return { success: false, error: err.message }
+    }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // 전역 AI 챗봇 메시지 처리 (ai-chat:send)
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('ai-chat:send', async (_event, payload = {}) => {
+    try {
+      const db = getDb()
+      return await handleAiChatRequest(db, payload)
+    } catch (err) {
+      console.error('[ai-chat:send]', err)
+      return { success: false, errorCode: 'UNKNOWN_TOOL', error: 'AI 요청 처리 중 오류가 발생했습니다.' }
     }
   })
 

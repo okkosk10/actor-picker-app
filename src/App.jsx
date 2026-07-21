@@ -9,6 +9,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Alert, Modal } from 'antd'
 import './App.css'
 
+import { AiChatProvider } from './contexts/AiChatContext.jsx'
+import { AiChatLauncher, AiChatDrawer, AiChatFullscreen } from './components/aiChat/AiChatShell.jsx'
+
 import { useVideoSearch }       from './hooks/useVideoSearch.js'
 import SearchBar                from './components/SearchBar.jsx'
 import FilterBar                from './components/FilterBar.jsx'
@@ -355,10 +358,26 @@ export default function App() {
     ? `${Number(selectedSubtitleDateKey.slice(5, 7))}.${Number(selectedSubtitleDateKey.slice(8, 10))}`
     : null
 
+  const aiChatContext = useMemo(() => ({
+    currentPage: appTab,
+    currentFolder: currentFolder || null,
+    selectedVideoIds: Array.from(checkedIds),
+    activeFilters: {
+      tabMode,
+      excludeMissing: Boolean(filters.excludeMissing),
+      excludeDeleteGrade: Boolean(filters.excludeDeleteGrade),
+      recommendedOnly: Boolean(filters.recommendedOnly),
+      minRating: Number(filters.minRating) || 0,
+      subtitleAddedDays: Number(filters.subtitleAddedDays) || 0,
+      drive: folderPath ? String(folderPath).match(/^([A-Za-z]:)/)?.[1] || null : null,
+    },
+  }), [appTab, checkedIds, currentFolder, filters.excludeDeleteGrade, filters.excludeMissing, filters.minRating, filters.recommendedOnly, filters.subtitleAddedDays, folderPath, tabMode])
+
   return (
-    <div className="app">
-      {/* 헤더 */}
-      <header className="app-header">
+    <AiChatProvider currentContext={aiChatContext}>
+      <div className="app">
+        {/* 헤더 */}
+        <header className="app-header">
         <div className="header-brand">
           <h1 className="app-title">Actor Picker</h1>
         </div>
@@ -409,25 +428,25 @@ export default function App() {
           onRecRefresh={() => {}} /* RecommendationsPage 내부에서 관리 */
           onDashRefresh={() => window.location.reload()}
         />
-      </header>
+        </header>
 
       {/* ── 배우 관리 탭 ─────────────────────────────────── */}
-      {appTab === 'actors' && <ActorsPage />}
+        {appTab === 'actors' && <ActorsPage />}
 
       {/* ── 배우 태그 일괄 관리 탭 ────────────────────────── */}
-      {appTab === 'actor-tags' && <ActorTagBatchPage />}
+        {appTab === 'actor-tags' && <ActorTagBatchPage />}
 
       {/* ── 자막 보관소 탭 ───────────────────────────────── */}
-      {appTab === 'subtitles' && <SubtitlesPage />}
+        {appTab === 'subtitles' && <SubtitlesPage />}
 
       {/* ── 추천·탐색 탭 ─────────────────────────────────── */}
       {/* display:none 방식으로 유지 — 탭 이동 시 AI 결과 state 보존 */}
-      <div style={{ display: appTab === 'recommendations' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
-        <RecommendationsPage onCopyFiles={handleOpenFileCopy} />
-      </div>
+        <div style={{ display: appTab === 'recommendations' ? 'flex' : 'none', flex: 1, flexDirection: 'column', minHeight: 0 }}>
+          <RecommendationsPage onCopyFiles={handleOpenFileCopy} />
+        </div>
 
       {/* ── 대시보드 탭 ──────────────────────────────────── */}
-      {appTab === 'dashboard' && (
+        {appTab === 'dashboard' && (
         <DashboardPage
           onViewDetail={(videoId) => {
             // 라이브러리 탭으로 이동 후 해당 영상 선택 시도
@@ -440,13 +459,13 @@ export default function App() {
           }}
           onCopyFiles={handleOpenFileCopy}
         />
-      )}
+        )}
 
       {/* ── 저장소 관리 탭 ───────────────────────────────── */}
-      {appTab === 'storage' && <StoragePage />}
+        {appTab === 'storage' && <StoragePage />}
 
       {/* ── 영상 관리 탭 ─────────────────────────────────── */}
-      {appTab === 'library' && (
+        {appTab === 'library' && (
         <>
           <TabBar
             tabMode={tabMode}
@@ -601,20 +620,20 @@ export default function App() {
             </div>
           </div>
         </>
-      )}
+        )}
 
       {/* 랜덤 추천 모달 */}
-      {randomResult && (
+        {randomResult && (
         <RandomPanel result={randomResult} onClose={() => setRandomResult(null)} />
       )}
 
       {/* 배우별 추출 모달 */}
-      {actorPickResult && (
+        {actorPickResult && (
         <ActorPickPanel result={actorPickResult} onClose={() => setActorPickResult(null)} />
       )}
 
       {/* 삭제요망 정리 모달 */}
-      {showDeleteModal && (
+        {showDeleteModal && (
         <DeleteCleanupModal
           onClose={() => setShowDeleteModal(false)}
           onDeleted={handleDeleted}
@@ -623,14 +642,18 @@ export default function App() {
       )}
 
       {/* 파일 복사 모달 */}
-      {showFileCopyModal && (
+        {showFileCopyModal && (
         <FileCopyModal
           videos={activeVideos}
           selectedIds={checkedIds}
           onClose={() => { setShowFileCopyModal(false); setCheckedIds(new Set()) }}
         />
       )}
-    </div>
+        <AiChatLauncher />
+        <AiChatDrawer />
+        <AiChatFullscreen />
+      </div>
+    </AiChatProvider>
   )
 }
 
