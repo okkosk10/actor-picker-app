@@ -363,14 +363,14 @@ function MessageList({ messages, onAction }) {
   )
 }
 
-function Composer({ onSend, isSending, currentPage }) {
+function Composer({ onSend, isSending, currentPage, disabled = false, placeholder }) {
   const [draft, setDraft] = useState('')
   const textareaRef = useRef(null)
   const examples = useMemo(() => getExamples(currentPage), [currentPage])
 
   const submit = async () => {
     const message = draft.trim()
-    if (!message || isSending) return
+    if (!message || isSending || disabled) return
     const result = await onSend(message)
     if (result?.success) {
       setDraft('')
@@ -406,7 +406,8 @@ function Composer({ onSend, isSending, currentPage }) {
             submit()
           }
         }}
-        placeholder="메시지를 입력하세요. Enter 전송 / Shift+Enter 줄바꿈"
+        placeholder={placeholder || '메시지를 입력하세요. Enter 전송 / Shift+Enter 줄바꿈'}
+        disabled={disabled}
       />
       <div className="ai-chat-composer__footer">
         <span className="ai-chat-composer__hint">
@@ -416,7 +417,7 @@ function Composer({ onSend, isSending, currentPage }) {
           type="button"
           className="ai-chat-send-btn"
           onClick={submit}
-          disabled={isSending || !draft.trim()}
+          disabled={disabled || isSending || !draft.trim()}
         >
           {isSending ? '전송 중…' : '전송'}
         </button>
@@ -425,7 +426,18 @@ function Composer({ onSend, isSending, currentPage }) {
   )
 }
 
-function Header({ title, currentPage, onNewChat, onOpenFullScreen, onClose, onClearSessions, compact = false }) {
+function Header({
+  title,
+  currentPage,
+  onNewChat,
+  onOpenFullScreen,
+  onClose,
+  onClearSessions,
+  onSwitchQuick,
+  onSwitchConsult,
+  entryMode,
+  compact = false,
+}) {
   return (
     <div className={`ai-chat-header ${compact ? 'ai-chat-header--compact' : ''}`}>
       <div className="ai-chat-header__main">
@@ -433,10 +445,51 @@ function Header({ title, currentPage, onNewChat, onOpenFullScreen, onClose, onCl
         <div className="ai-chat-header__subtitle">현재 화면: {getPageLabel(currentPage)}</div>
       </div>
       <div className="ai-chat-header__actions">
+        <button
+          type="button"
+          className={`ai-chat-header__button ${entryMode === 'quick' ? '' : 'ai-chat-header__button--ghost'}`}
+          onClick={onSwitchQuick}
+        >
+          빠른 작업으로 전환
+        </button>
+        <button
+          type="button"
+          className={`ai-chat-header__button ${entryMode === 'consult' ? '' : 'ai-chat-header__button--ghost'}`}
+          onClick={onSwitchConsult}
+        >
+          AI 상담으로 전환
+        </button>
         <button type="button" className="ai-chat-header__button" onClick={onNewChat}>새 채팅</button>
         {!compact && <button type="button" className="ai-chat-header__button" onClick={onClearSessions}>초기화</button>}
         <button type="button" className="ai-chat-header__button" onClick={onOpenFullScreen}>전체 화면</button>
         <button type="button" className="ai-chat-header__button ai-chat-header__button--ghost" onClick={onClose}>닫기</button>
+      </div>
+    </div>
+  )
+}
+
+function ModeSelectionPanel({ onSelectMode }) {
+  return (
+    <div className="ai-chat-entry-panel">
+      <div className="ai-chat-entry-panel__title">Actor Picker AI</div>
+      <div className="ai-chat-entry-panel__desc">원하는 방식으로 시작하세요.</div>
+      <div className="ai-chat-entry-panel__actions">
+        <button
+          type="button"
+          className="ai-chat-entry-panel__button"
+          onClick={() => onSelectMode('quick')}
+        >
+          <div className="ai-chat-entry-panel__button-title">빠른 작업</div>
+          <div className="ai-chat-entry-panel__button-desc">정해진 선택지를 따라 정확하게 실행합니다.</div>
+        </button>
+        <button
+          type="button"
+          className="ai-chat-entry-panel__button"
+          onClick={() => onSelectMode('consult')}
+        >
+          <div className="ai-chat-entry-panel__button-title">AI에게 물어보기</div>
+          <div className="ai-chat-entry-panel__button-desc">상담하듯 요청하면 필요한 조건을 함께 정리합니다.</div>
+        </button>
       </div>
     </div>
   )
@@ -482,17 +535,38 @@ function SessionList({ sessions, activeSessionId, onSelectSession, onDeleteSessi
 }
 
 function ChatBody({ session, isSending, currentPage, onSend, onAction }) {
+  const entryMode = session?.entryMode || null
+  const phase = session?.phase || 'mode_selection'
+  const composerDisabled = !entryMode || entryMode === 'quick'
+
   return (
     <div className="ai-chat-body">
       <div className="ai-chat-body__context">
         <Tag color="blue">{getPageLabel(currentPage)}</Tag>
+        {entryMode && <Tag color={entryMode === 'quick' ? 'green' : 'purple'}>{entryMode === 'quick' ? '빠른 작업' : 'AI 상담'}</Tag>}
+        {phase && <Tag color="gold">{phase}</Tag>}
         {session?.activeFilters?.drive && <Tag color="geekblue">{session.activeFilters.drive}</Tag>}
         {Array.isArray(session?.lastResultIds) && session.lastResultIds.length > 0 && (
           <Tag color="cyan">최근 결과 {session.lastResultIds.length}개</Tag>
         )}
       </div>
+      {!entryMode && (
+        <ModeSelectionPanel
+          onSelectMode={(mode) => onAction({ type: 'select_entry_mode', label: mode === 'quick' ? '빠른 작업' : 'AI 상담', payload: { type: 'select_entry_mode', mode } })}
+        />
+      )}
       <MessageList messages={session?.messages || []} onAction={onAction} />
-      <Composer onSend={onSend} isSending={isSending} currentPage={currentPage} />
+      <Composer
+        onSend={onSend}
+        isSending={isSending}
+        currentPage={currentPage}
+        disabled={composerDisabled}
+        placeholder={!entryMode
+          ? '모드를 먼저 선택해 주세요.'
+          : entryMode === 'quick'
+            ? '빠른 작업 모드는 버튼 선택으로 진행합니다.'
+            : '요청을 입력하세요. Enter 전송 / Shift+Enter 줄바꿈'}
+      />
     </div>
   )
 }
@@ -553,6 +627,22 @@ export function AiChatDrawer() {
     openDrawer()
   }
 
+  const switchMode = async (mode) => {
+    const hasInProgress = ['collecting_slots', 'confirming', 'executing'].includes(activeSession?.phase)
+    if (hasInProgress) {
+      const ok = window.confirm('진행 중인 작업이 있습니다. 현재 작업을 초기화하고 모드를 전환할까요?')
+      if (!ok) return
+    }
+    await sendMessage({
+      action: {
+        type: 'switch_mode',
+        label: mode === 'quick' ? '빠른 작업으로 전환' : 'AI 상담으로 전환',
+        payload: { type: 'switch_mode', mode },
+      },
+      context: currentContext,
+    })
+  }
+
   return (
     <Drawer
       open={isDrawerOpen && !isFullScreen}
@@ -575,6 +665,9 @@ export function AiChatDrawer() {
         onOpenFullScreen={openFullScreen}
         onClose={closeDrawer}
         onClearSessions={clearSessions}
+        onSwitchQuick={() => switchMode('quick')}
+        onSwitchConsult={() => switchMode('consult')}
+        entryMode={activeSession?.entryMode || null}
         compact
       />
       <ChatBody
@@ -612,6 +705,22 @@ export function AiChatFullscreen() {
     createSession('새 채팅', currentContext.activeFilters)
   }
 
+  const switchMode = async (mode) => {
+    const hasInProgress = ['collecting_slots', 'confirming', 'executing'].includes(activeSession?.phase)
+    if (hasInProgress) {
+      const ok = window.confirm('진행 중인 작업이 있습니다. 현재 작업을 초기화하고 모드를 전환할까요?')
+      if (!ok) return
+    }
+    await sendMessage({
+      action: {
+        type: 'switch_mode',
+        label: mode === 'quick' ? '빠른 작업으로 전환' : 'AI 상담으로 전환',
+        payload: { type: 'switch_mode', mode },
+      },
+      context: currentContext,
+    })
+  }
+
   return (
     <div className="ai-chat-fullscreen">
       <div className="ai-chat-fullscreen__header">
@@ -622,6 +731,9 @@ export function AiChatFullscreen() {
           onOpenFullScreen={closeFullScreen}
           onClose={closeFullScreen}
           onClearSessions={clearSessions}
+          onSwitchQuick={() => switchMode('quick')}
+          onSwitchConsult={() => switchMode('consult')}
+          entryMode={activeSession?.entryMode || null}
         />
       </div>
       <div className="ai-chat-fullscreen__content">

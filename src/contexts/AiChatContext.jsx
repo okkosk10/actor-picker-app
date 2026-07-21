@@ -209,6 +209,19 @@ function sortSessions(sessions) {
   })
 }
 
+function buildDefaultWorkflowState(partial = {}) {
+  return {
+    entryMode: partial?.entryMode || null,
+    phase: partial?.phase || 'mode_selection',
+    workflowId: partial?.workflowId || null,
+    collectedSlots: partial?.collectedSlots && typeof partial.collectedSlots === 'object' ? partial.collectedSlots : {},
+    missingSlots: Array.isArray(partial?.missingSlots) ? partial.missingSlots : [],
+    proposedAction: partial?.proposedAction && typeof partial.proposedAction === 'object' ? partial.proposedAction : null,
+    awaitingConfirmation: Boolean(partial?.awaitingConfirmation),
+    lastQuestion: partial?.lastQuestion && typeof partial.lastQuestion === 'object' ? partial.lastQuestion : null,
+  }
+}
+
 function updateSessionList(sessions, sessionId, updater) {
   const nextSessions = sessions.map((session) => {
     if (session.id !== sessionId) return session
@@ -226,7 +239,10 @@ function replaceMessage(session, messageId, updater) {
 
 export function AiChatProvider({ children, currentContext }) {
   const initialState = useMemo(() => loadAiChatState(), [])
-  const [sessions, setSessions] = useState(() => sortSessions(initialState.sessions || []))
+  const [sessions, setSessions] = useState(() => sortSessions((initialState.sessions || []).map((session) => ({
+    ...session,
+    ...buildDefaultWorkflowState(session),
+  }))))
   const [activeSessionId, setActiveSessionId] = useState(initialState.activeSessionId || null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
@@ -261,6 +277,7 @@ export function AiChatProvider({ children, currentContext }) {
       lastResultIds: [],
       activeFilters: seedFilters,
       pendingAction: null,
+      ...buildDefaultWorkflowState(),
     }
 
     setSessions((prev) => sortSessions([session, ...prev]))
@@ -365,6 +382,14 @@ export function AiChatProvider({ children, currentContext }) {
           lastResultIds: session.lastResultIds || [],
           activeFilters: session.activeFilters || {},
           pendingAction: session.pendingAction || null,
+          entryMode: session.entryMode || null,
+          phase: session.phase || 'mode_selection',
+          workflowId: session.workflowId || null,
+          collectedSlots: session.collectedSlots || {},
+          missingSlots: session.missingSlots || [],
+          proposedAction: session.proposedAction || null,
+          awaitingConfirmation: Boolean(session.awaitingConfirmation),
+          lastQuestion: session.lastQuestion || null,
         },
       })
 
@@ -389,6 +414,16 @@ export function AiChatProvider({ children, currentContext }) {
             : prev.lastResultIds,
         activeFilters: response.state?.activeFilters || response.intent?.arguments || prev.activeFilters,
         pendingAction: response.state?.pendingAction || null,
+        ...buildDefaultWorkflowState({
+          entryMode: response.state?.entryMode ?? prev.entryMode,
+          phase: response.state?.phase ?? prev.phase,
+          workflowId: response.state?.workflowId ?? prev.workflowId,
+          collectedSlots: response.state?.collectedSlots ?? prev.collectedSlots,
+          missingSlots: response.state?.missingSlots ?? prev.missingSlots,
+          proposedAction: response.state?.proposedAction ?? prev.proposedAction,
+          awaitingConfirmation: response.state?.awaitingConfirmation ?? prev.awaitingConfirmation,
+          lastQuestion: response.state?.lastQuestion ?? prev.lastQuestion,
+        }),
       }))
 
       return response

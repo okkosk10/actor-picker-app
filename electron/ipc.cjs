@@ -301,6 +301,15 @@ function normalizeAiChatPayload(payload) {
           ? state.lastResultIds.map((value) => Number(value)).filter((value) => Number.isFinite(value))
           : [],
         activeFilters: state.activeFilters && typeof state.activeFilters === 'object' ? state.activeFilters : {},
+        pendingAction: state.pendingAction && typeof state.pendingAction === 'object' ? state.pendingAction : null,
+        entryMode: typeof state.entryMode === 'string' ? state.entryMode : null,
+        phase: typeof state.phase === 'string' ? state.phase : null,
+        workflowId: typeof state.workflowId === 'string' ? state.workflowId : null,
+        collectedSlots: state.collectedSlots && typeof state.collectedSlots === 'object' ? state.collectedSlots : {},
+        missingSlots: Array.isArray(state.missingSlots) ? state.missingSlots : [],
+        proposedAction: state.proposedAction && typeof state.proposedAction === 'object' ? state.proposedAction : null,
+        awaitingConfirmation: Boolean(state.awaitingConfirmation),
+        lastQuestion: state.lastQuestion && typeof state.lastQuestion === 'object' ? state.lastQuestion : null,
       },
     },
   }

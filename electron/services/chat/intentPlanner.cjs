@@ -1,6 +1,4 @@
 'use strict'
-
-const { getOpenAIClient } = require('../openaiClient.cjs')
 const {
   DEFAULT_CLARIFICATION_OPTIONS,
   PLAN_RESPONSE_SCHEMA,
@@ -58,7 +56,69 @@ function buildFallbackPlan(message, context, state) {
     return buildStructuredError('VALIDATION_ERROR', '메시지를 입력해 주세요.')
   }
 
-  if (/삭제|지워|정리|공간 확보|삭제요망/.test(text)) {
+  if (/자막.*없|미매핑|매핑.*안/.test(text)) {
+    const hasDeleteIntentInsideSubtitle = /삭제|지워|삭제요망|삭제\s*후보|공간\s*확보|지워도\s*될/.test(text)
+      || (/정리/.test(text) && /용량|공간|안\s*본|재생\s*안|별점\s*낮|복사\s*안|미복사/.test(text))
+
+    if (hasDeleteIntentInsideSubtitle) {
+      return {
+        success: true,
+        intent: 'cleanup_storage',
+        confidence: 0.77,
+        toolName: 'get_delete_candidates',
+        arguments: {
+          drive,
+          lowRating: /별점|낮은 평점/.test(text),
+          lowPlayCount: /안\s*본|안봤|재생\s*안/.test(text),
+          onlyNotCopied: /복사\s*안|미복사/.test(text),
+          sortBy: /용량|크기/.test(text) ? 'size' : 'deleteScore',
+          limit: 20,
+        },
+        usePreviousResults: false,
+        needsClarification: false,
+        clarification: null,
+        requiresConfirmation: /삭제|지워/.test(text),
+        writeIntent: /삭제|지워/.test(text),
+      }
+    }
+
+    if (/전체|폴더별|몇\s*개|개수|카운트|통계/.test(text)) {
+      return {
+        success: true,
+        intent: 'get_unmapped_subtitle_summary',
+        confidence: 0.8,
+        toolName: 'get_unmapped_subtitle_summary',
+        arguments: { drive },
+        usePreviousResults: false,
+        needsClarification: false,
+        clarification: null,
+        requiresConfirmation: false,
+        writeIntent: false,
+      }
+    }
+
+    return {
+      success: true,
+      intent: 'search_videos_without_subtitles',
+      confidence: 0.82,
+      toolName: 'search_videos_without_subtitles',
+      arguments: { drive, limit: 20 },
+      usePreviousResults: previous.usePreviousResults,
+      needsClarification: false,
+      clarification: null,
+      requiresConfirmation: false,
+      writeIntent: false,
+    }
+  }
+
+  const explicitDeleteIntent =
+    /삭제|지워|삭제요망|삭제\s*후보|공간\s*확보|지워도\s*될/.test(text)
+    || (
+      /정리/.test(text)
+      && /용량|공간|안\s*본|재생\s*안|별점\s*낮|복사\s*안|미복사/.test(text)
+    )
+
+  if (explicitDeleteIntent) {
     return {
       success: true,
       intent: 'cleanup_storage',
@@ -66,9 +126,9 @@ function buildFallbackPlan(message, context, state) {
       toolName: 'get_delete_candidates',
       arguments: {
         drive,
-        lowRating: /별점|낮은 평점|안 본|안 봤|재생/.test(text),
-        lowPlayCount: /안 본|안봤|재생/.test(text),
-        onlyNotCopied: /복사 안|미복사/.test(text),
+        lowRating: /별점|낮은 평점/.test(text),
+        lowPlayCount: /안\s*본|안봤|재생\s*안/.test(text),
+        onlyNotCopied: /복사\s*안|미복사/.test(text),
         sortBy: /용량|크기/.test(text) ? 'size' : 'deleteScore',
         limit: 20,
       },
@@ -116,36 +176,6 @@ function buildFallbackPlan(message, context, state) {
     }
   }
 
-  if (/자막.*없|미매핑|매핑.*안/.test(text)) {
-    if (/전체|폴더별|몇개|개수|통계/.test(text)) {
-      return {
-        success: true,
-        intent: 'get_unmapped_subtitle_summary',
-        confidence: 0.76,
-        toolName: 'get_unmapped_subtitle_summary',
-        arguments: { drive },
-        usePreviousResults: false,
-        needsClarification: false,
-        clarification: null,
-        requiresConfirmation: false,
-        writeIntent: false,
-      }
-    }
-
-    return {
-      success: true,
-      intent: 'search_videos_without_subtitles',
-      confidence: 0.76,
-      toolName: 'search_videos_without_subtitles',
-      arguments: { drive, limit: 20 },
-      usePreviousResults: previous.usePreviousResults,
-      needsClarification: false,
-      clarification: null,
-      requiresConfirmation: false,
-      writeIntent: false,
-    }
-  }
-
   if (previous.usePreviousResults && !previous.hasPreviousResults) {
     return {
       success: true,
@@ -179,6 +209,7 @@ function buildFallbackPlan(message, context, state) {
 }
 
 async function planIntentWithOpenAI(message, context, state) {
+  const { getOpenAIClient } = require('../openaiClient.cjs')
   const client = getOpenAIClient()
   const model = process.env.OPENAI_MODEL || 'gpt-4.1'
   const previous = extractPreviousResultHint(message, state)
@@ -198,6 +229,21 @@ async function planIntentWithOpenAI(message, context, state) {
 8. 쓰기 작업은 직접 실행하지 않고 requiresConfirmation 상태를 반환한다.
 9. 영상 별점과 배우 별점을 구분한다.
 10. 삭제 후보 요청과 드라이브 통계 요청을 구분한다.
+11. 아래 표현은 결과 표시 방식 요청이며 삭제 의도가 아니다.
+   - 정리해서 보여줘
+   - 목록으로 정리해줘
+   - 한눈에 정리해줘
+   - 보기 좋게 정리해줘
+
+예시:
+- "자막 없는 파일들 정리해서 보여줘"
+  → search_videos_without_subtitles
+- "자막 없는 영상 목록으로 정리해줘"
+  → search_videos_without_subtitles
+- "자막 없는 파일 중 지워도 될 것 정리해줘"
+  → 삭제 의도가 있으므로 get_delete_candidates 또는 적절한 삭제 후보 도구
+- "용량 많이 먹고 안 본 파일 정리해줘"
+  → get_delete_candidates
 
 허용 도구:
 ${buildToolManifestBlock()}
