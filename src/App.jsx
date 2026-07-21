@@ -136,7 +136,7 @@ export default function App() {
         .map((value) => Number(value))
         .filter((value) => Number.isInteger(value) && value > 0)
       ))
-      const label = String(event?.detail?.label || 'AI 결과')
+      const label = String(event?.detail?.label || '작업 결과')
 
       setAppTab('library')
       setSelectedSubtitleDateKey(null)
@@ -423,7 +423,7 @@ export default function App() {
     const normalizedFolder = pageHasFolderContext && typeof currentFolder === 'string' && currentFolder.trim()
       ? currentFolder.trim()
       : null
-    const currentDrive = extractDrive(normalizedFolder) || extractDrive(folderPath)
+    const currentDrive = extractDrive(normalizedFolder)
 
     return {
       currentPage: appTab,
@@ -441,7 +441,7 @@ export default function App() {
         subtitleAddedDays: Number(filters.subtitleAddedDays) || 0,
       },
     }
-  }, [appTab, checkedIds, currentFolder, filters.excludeDeleteGrade, filters.excludeMissing, filters.minRating, filters.recommendedOnly, filters.subtitleAddedDays, folderPath, tabMode])
+  }, [appTab, checkedIds, currentFolder, filters.excludeDeleteGrade, filters.excludeMissing, filters.minRating, filters.recommendedOnly, filters.subtitleAddedDays, tabMode])
 
   return (
     <AiChatProvider currentContext={aiChatContext}>
@@ -663,8 +663,8 @@ export default function App() {
               showIcon
               closable
               onClose={handleClearAiResultFilter}
-              message={`AI 결과 필터 적용 중 · ${filters.baseResultIds.length}개`}
-              description={aiResultFilterMeta?.label ? `${aiResultFilterMeta.label} 기준으로 영상 목록을 필터링했습니다.` : 'AI 결과 기준으로 영상 목록을 필터링했습니다.'}
+              message={`작업 결과 필터 적용 중 · ${filters.baseResultIds.length}개`}
+              description={aiResultFilterMeta?.label ? `${aiResultFilterMeta.label} 기준으로 영상 목록을 필터링했습니다.` : '작업 결과 기준으로 영상 목록을 필터링했습니다.'}
               action={(
                 <button
                   type="button"

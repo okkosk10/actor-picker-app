@@ -4,6 +4,8 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
 
+const ENABLE_AI_CONSULTATION = import.meta.env.VITE_ENABLE_AI_CONSULTATION === 'true'
+
 // ─────────────────────────────────────────────────────────────
 // 추천 프리셋 정의
 // ─────────────────────────────────────────────────────────────
@@ -458,25 +460,28 @@ export default function RecommendationsPage({ onCopyFiles }) {
         >
           🎬 추천 프리셋
         </button>
-        <button
-          type="button"
-          onClick={() => setTab('ai-chat')}
-          style={{
-            padding: '10px 20px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600,
-            background: 'none',
-            color: tab === 'ai-chat' ? '#a78bfa' : '#64748b',
-            borderBottom: tab === 'ai-chat' ? '2px solid #a78bfa' : '2px solid transparent',
-            marginBottom: -2,
-          }}
-        >
-          💬 AI 채팅 추천
-        </button>
+        {ENABLE_AI_CONSULTATION && (
+          <button
+            type="button"
+            onClick={() => setTab('ai-chat')}
+            style={{
+              padding: '10px 20px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600,
+              background: 'none',
+              color: tab === 'ai-chat' ? '#a78bfa' : '#64748b',
+              borderBottom: tab === 'ai-chat' ? '2px solid #a78bfa' : '2px solid transparent',
+              marginBottom: -2,
+            }}
+          >
+            💬 AI 채팅 추천
+          </button>
+        )}
       </div>
 
-      {/* AI 채팅 탭 — display:none으로 마운트 유지, state 보존 */}
-      <div style={{ flex: 1, minHeight: 0, display: tab === 'ai-chat' ? 'flex' : 'none', flexDirection: 'column' }}>
-        <AiChatPanel onCopyFiles={onCopyFiles} />
-      </div>
+      {ENABLE_AI_CONSULTATION && (
+        <div style={{ flex: 1, minHeight: 0, display: tab === 'ai-chat' ? 'flex' : 'none', flexDirection: 'column' }}>
+          <AiChatPanel onCopyFiles={onCopyFiles} />
+        </div>
+      )}
 
       {/* 프리셋 탭 — display:none으로 마운트 유지 */}
       <div className="rec-page" style={{ flex: 1, minHeight: 0, display: tab === 'preset' ? 'flex' : 'none' }}>

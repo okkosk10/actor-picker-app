@@ -18,6 +18,16 @@ const {
 const { listWorkflowsByCategory, getWorkflow, toToolAction } = require('./workflowRegistry.cjs')
 const { planConsultationTurn } = require('./consultationPlanner.cjs')
 
+const ENABLE_AI_CONSULTATION = process.env.ENABLE_AI_CONSULTATION === 'true'
+
+function buildConsultationDisabledResponse() {
+  return {
+    success: false,
+    errorCode: 'FEATURE_DISABLED',
+    error: '자유 AI 상담 기능은 현재 준비 중입니다.',
+  }
+}
+
 function sanitizeAction(action) {
   if (!action || typeof action !== 'object') return null
   const payload = action.payload && typeof action.payload === 'object' ? action.payload : {}
@@ -281,9 +291,17 @@ async function handleChatRequest(db, payload, options = {}) {
 
   debugLog('[ai-chat-context]', context)
 
+  const requestsConsultation = workflowState.entryMode === 'consult'
+    || parsedAction?.payload?.mode === 'consult'
+    || (!parsedAction && Boolean(message))
+
+  if (!ENABLE_AI_CONSULTATION && requestsConsultation) {
+    return buildConsultationDisabledResponse()
+  }
+
   if (!workflowState.entryMode && !parsedAction && !message) {
-    const next = resetWorkflowState(null)
-    return buildModeSelectionResponse(next)
+    const next = resetWorkflowState('quick')
+    return buildQuickHomeResponse(next)
   }
 
   if (!workflowState.entryMode && !parsedAction && message) {
@@ -337,8 +355,8 @@ async function handleChatRequest(db, payload, options = {}) {
   }
 
   if (!workflowState.entryMode) {
-    const next = resetWorkflowState(null)
-    return buildModeSelectionResponse(next)
+    const next = resetWorkflowState('quick')
+    return buildQuickHomeResponse(next)
   }
 
   if (parsedAction?.actionType === 'start_new_workflow') {

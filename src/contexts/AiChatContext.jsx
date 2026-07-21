@@ -1,9 +1,10 @@
 'use strict'
 
-import { createContext, useCallback, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clearAiChatState, loadAiChatState, saveAiChatState } from '../services/aiChatStorage.js'
 
 const AiChatContext = createContext(null)
+const ENABLE_AI_CONSULTATION = import.meta.env.VITE_ENABLE_AI_CONSULTATION === 'true'
 
 function createId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
@@ -16,7 +17,7 @@ function nowIso() {
 
 function isDefaultTitle(title) {
   const value = String(title || '').trim()
-  return !value || value === '새 채팅' || value === '기본 채팅' || value === 'New chat'
+  return !value || value === '새 채팅' || value === '새 작업' || value === '기본 채팅' || value === 'New chat'
 }
 
 function buildSessionTitle(message) {
@@ -26,7 +27,7 @@ function buildSessionTitle(message) {
     .replace(/\s+/g, ' ')
     .trim()
 
-  if (!cleaned) return '새 채팅'
+  if (!cleaned) return '새 작업'
 
   const withoutSuffix = cleaned
     .replace(/[?!.]+$/g, '')
@@ -132,6 +133,44 @@ function inferErrorCode(errorMessage) {
   return 'UNKNOWN_TOOL'
 }
 
+function getUserFacingErrorMessage(response) {
+  const code = String(response?.errorCode || inferErrorCode(response?.error || ''))
+
+  if (code === 'CURRENT_FOLDER_NOT_AVAILABLE') {
+    return '현재 화면에서 선택된 폴더가 없습니다. 영상 관리 화면에서 폴더를 선택한 뒤 다시 시도해 주세요.'
+  }
+
+  if (code === 'CURRENT_DRIVE_NOT_AVAILABLE') {
+    return '현재 선택된 드라이브가 없습니다. 현재 폴더가 있는 화면에서 다시 시도해 주세요.'
+  }
+
+  if (code === 'SELECTED_VIDEOS_NOT_AVAILABLE') {
+    return '선택한 영상이 없습니다. 영상 관리 화면에서 영상을 선택한 뒤 다시 시도해 주세요.'
+  }
+
+  if (code === 'FEATURE_DISABLED') {
+    return '자유 AI 상담 기능은 현재 준비 중입니다.'
+  }
+
+  if (code === 'EMPTY_RESULT') {
+    return '조건에 맞는 결과가 없습니다. 다른 범위나 조건으로 다시 시도해 주세요.'
+  }
+
+  if (code === 'TOOL_ARGUMENT_ERROR') {
+    return '작업 조건을 확인할 수 없습니다. 범위를 다시 선택해 주세요.'
+  }
+
+  if (code === 'TOOL_EXECUTION_ERROR') {
+    return '작업 실행 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'
+  }
+
+  if (code === 'REQUEST_CANCELLED') {
+    return '이전 작업을 처리하는 중입니다. 잠시 후 다시 시도해 주세요.'
+  }
+
+  return String(response?.error || '알 수 없는 오류가 발생했습니다.')
+}
+
 function buildAssistantMessage(response) {
   const success = response?.success === true
   const summaryCard = response?.summary && typeof response.summary === 'object' ? response.summary : null
@@ -144,7 +183,7 @@ function buildAssistantMessage(response) {
   }
 
   if (!success) {
-    const errorMessage = String(response?.error || '알 수 없는 오류가 발생했습니다.')
+    const errorMessage = getUserFacingErrorMessage(response)
     return {
       ...base,
       content: errorMessage,
@@ -235,8 +274,8 @@ function sortSessions(sessions) {
 
 function buildDefaultWorkflowState(partial = {}) {
   return {
-    entryMode: partial?.entryMode || null,
-    phase: partial?.phase || 'mode_selection',
+    entryMode: partial?.entryMode || 'quick',
+    phase: partial?.phase || 'quick_home',
     workflowId: partial?.workflowId || null,
     collectedSlots: partial?.collectedSlots && typeof partial.collectedSlots === 'object' ? partial.collectedSlots : {},
     missingSlots: Array.isArray(partial?.missingSlots) ? partial.missingSlots : [],
@@ -261,39 +300,60 @@ function replaceMessage(session, messageId, updater) {
   }
 }
 
+function isEmptyQuickSession(session) {
+  return session
+    && session.entryMode === 'quick'
+    && session.phase === 'quick_home'
+    && !session.workflowId
+    && (!Array.isArray(session.messages) || session.messages.length === 0)
+}
+
+function sanitizeDuplicatedSlots(collectedSlots = {}, context = {}) {
+  const next = { ...(collectedSlots || {}) }
+
+  if (next.scope === 'current_folder' && !context.currentFolder) {
+    delete next.scope
+  }
+
+  if (next.scope === 'current_drive' && !context.currentDrive) {
+    delete next.scope
+  }
+
+  if (next.scope === 'selected_videos' && (!Array.isArray(context.selectedVideoIds) || context.selectedVideoIds.length === 0)) {
+    delete next.scope
+  }
+
+  return next
+}
+
 export function AiChatProvider({ children, currentContext }) {
   const initialState = useMemo(() => loadAiChatState(), [])
   const [sessions, setSessions] = useState(() => sortSessions((initialState.sessions || []).map((session) => ({
     ...session,
     ...buildDefaultWorkflowState(session),
   }))))
-  const [activeSessionId, setActiveSessionId] = useState(initialState.activeSessionId || null)
+  const [activeSessionId, setActiveSessionId] = useState(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [pendingRequest, setPendingRequest] = useState(null)
+  const openingRef = useRef(false)
 
   useEffect(() => {
     saveAiChatState({ sessions, activeSessionId })
   }, [sessions, activeSessionId])
-
-  useEffect(() => {
-    if (!activeSessionId && sessions.length > 0) {
-      setActiveSessionId(sessions[0].id)
-    }
-  }, [activeSessionId, sessions])
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
     [sessions, activeSessionId],
   )
 
-  const createSession = useCallback((title, seedFilters = {}) => {
+  const createSession = useCallback((title = '새 작업', seedFilters = {}, partial = {}) => {
     const sessionId = createId()
     const now = nowIso()
     const session = {
       id: sessionId,
-      title: isDefaultTitle(title) ? '새 채팅' : String(title || '새 채팅'),
+      title: isDefaultTitle(title) ? '새 작업' : String(title || '새 작업'),
       createdAt: now,
       updatedAt: now,
       messages: [],
@@ -301,7 +361,7 @@ export function AiChatProvider({ children, currentContext }) {
       lastResultIds: [],
       activeFilters: seedFilters,
       pendingAction: null,
-      ...buildDefaultWorkflowState(),
+      ...buildDefaultWorkflowState(partial),
     }
 
     setSessions((prev) => sortSessions([session, ...prev]))
@@ -323,25 +383,79 @@ export function AiChatProvider({ children, currentContext }) {
     setActiveSessionId(sessionId)
   }, [])
 
-  const openDrawer = useCallback(() => {
-    if (!activeSession && sessions.length === 0) {
-      createSession('새 채팅')
+  const duplicateSessionAsNewWork = useCallback((sourceSessionId, seedContext = currentContext) => {
+    const sourceSession = sessions.find((session) => session.id === sourceSessionId)
+    if (!sourceSession?.workflowId) {
+      return createSession('새 작업', sanitizeContext(seedContext).activeFilters)
     }
-    setIsDrawerOpen(true)
-  }, [activeSession, createSession, sessions.length])
 
-  const closeDrawer = useCallback(() => setIsDrawerOpen(false), [])
+    const normalizedContext = sanitizeContext(seedContext)
+    const nextSlots = sanitizeDuplicatedSlots(sourceSession.collectedSlots || {}, normalizedContext)
+
+    return createSession(sourceSession.title || '새 작업', normalizedContext.activeFilters, {
+      entryMode: 'quick',
+      phase: 'collecting_slots',
+      workflowId: sourceSession.workflowId,
+      collectedSlots: nextSlots,
+      missingSlots: [],
+      proposedAction: null,
+      awaitingConfirmation: false,
+      lastQuestion: null,
+    })
+  }, [createSession, currentContext, sessions])
+
+  const openDrawer = useCallback(() => {
+    if (openingRef.current || isDrawerOpen || isFullScreen) return
+
+    openingRef.current = true
+    try {
+      createSession('새 작업', sanitizeContext(currentContext).activeFilters)
+      setIsDrawerOpen(true)
+    } finally {
+      queueMicrotask(() => {
+        openingRef.current = false
+      })
+    }
+  }, [createSession, currentContext, isDrawerOpen, isFullScreen])
+
+  const closeAssistant = useCallback(() => {
+    const closingSessionId = activeSessionId
+
+    setSessions((prev) => {
+      const closingSession = prev.find((session) => session.id === closingSessionId)
+      if (!closingSession || !isEmptyQuickSession(closingSession)) {
+        return prev
+      }
+      return prev.filter((session) => session.id !== closingSessionId)
+    })
+
+    setIsDrawerOpen(false)
+    setIsFullScreen(false)
+    setActiveSessionId(null)
+  }, [activeSessionId])
+
+  const closeDrawer = useCallback(() => {
+    closeAssistant()
+  }, [closeAssistant])
   const openFullScreen = useCallback(() => {
     setIsDrawerOpen(false)
     setIsFullScreen(true)
   }, [])
-  const closeFullScreen = useCallback(() => setIsFullScreen(false), [])
+  const returnToDrawer = useCallback(() => {
+    setIsFullScreen(false)
+    setIsDrawerOpen(true)
+  }, [])
+  const closeFullScreen = useCallback(() => {
+    closeAssistant()
+  }, [closeAssistant])
 
   const deleteSession = useCallback((sessionId) => {
     setSessions((prev) => {
       const next = prev.filter((session) => session.id !== sessionId)
       if (sessionId === activeSessionId) {
-        setActiveSessionId(next[0]?.id || null)
+        setActiveSessionId(null)
+        setIsDrawerOpen(false)
+        setIsFullScreen(false)
       }
       return next
     })
@@ -364,7 +478,7 @@ export function AiChatProvider({ children, currentContext }) {
 
     if (action?.type === 'client_select_video_ids') {
       const requestContext = sanitizeContext(payload.context || currentContext)
-      const sessionTitleSeed = action?.label || action?.type || '새 채팅'
+      const sessionTitleSeed = action?.label || action?.type || '새 작업'
       const session = ensureActiveSession(buildSessionTitle(sessionTitleSeed), requestContext.activeFilters)
       const sessionId = session.id
       const now = nowIso()
@@ -432,7 +546,7 @@ export function AiChatProvider({ children, currentContext }) {
 
     if (action?.type === 'client_filter_video_ids') {
       const requestContext = sanitizeContext(payload.context || currentContext)
-      const sessionTitleSeed = action?.label || action?.type || '새 채팅'
+      const sessionTitleSeed = action?.label || action?.type || '새 작업'
       const session = ensureActiveSession(buildSessionTitle(sessionTitleSeed), requestContext.activeFilters)
       const sessionId = session.id
       const now = nowIso()
@@ -510,8 +624,12 @@ export function AiChatProvider({ children, currentContext }) {
       return { success: false, errorCode: 'REQUEST_CANCELLED', error: '이전 요청을 처리하는 중입니다.' }
     }
 
+    if (!ENABLE_AI_CONSULTATION && text) {
+      return { success: false, errorCode: 'FEATURE_DISABLED', error: '자유 AI 상담 기능은 현재 준비 중입니다.' }
+    }
+
     const requestContext = sanitizeContext(payload.context || currentContext)
-    const sessionTitleSeed = text || action?.label || action?.type || '새 채팅'
+    const sessionTitleSeed = text || action?.label || action?.type || '새 작업'
     const session = ensureActiveSession(buildSessionTitle(sessionTitleSeed), requestContext.activeFilters)
     const sessionId = session.id
     const now = nowIso()
@@ -523,7 +641,7 @@ export function AiChatProvider({ children, currentContext }) {
       content: userContent,
       createdAt: now,
     }
-    const pendingMessage = buildPendingMessage(userContent, action ? 'AI 작업 실행 중...' : 'AI 도구 실행 중...')
+    const pendingMessage = buildPendingMessage(userContent, '작업 실행 중...')
 
     setIsDrawerOpen(true)
     setIsSending(true)
@@ -551,7 +669,7 @@ export function AiChatProvider({ children, currentContext }) {
           activeFilters: session.activeFilters || {},
           pendingAction: session.pendingAction || null,
           entryMode: session.entryMode || null,
-          phase: session.phase || 'mode_selection',
+          phase: session.phase || 'quick_home',
           workflowId: session.workflowId || null,
           collectedSlots: session.collectedSlots || {},
           missingSlots: session.missingSlots || [],
@@ -612,7 +730,7 @@ export function AiChatProvider({ children, currentContext }) {
       setIsSending(false)
       setPendingRequest((prev) => (prev?.requestId === requestId ? null : prev))
     }
-  }, [activeSession, currentContext, ensureActiveSession, isSending, updateSession])
+  }, [currentContext, ensureActiveSession, isSending, updateSession])
 
   const value = useMemo(() => ({
     sessions,
@@ -626,9 +744,11 @@ export function AiChatProvider({ children, currentContext }) {
     openDrawer,
     closeDrawer,
     openFullScreen,
+    returnToDrawer,
     closeFullScreen,
     selectSession,
     createSession,
+    duplicateSessionAsNewWork,
     deleteSession,
     clearSessions,
     sendMessage,
@@ -642,12 +762,14 @@ export function AiChatProvider({ children, currentContext }) {
     currentContext,
     createSession,
     deleteSession,
+    duplicateSessionAsNewWork,
     isDrawerOpen,
     isFullScreen,
     isSending,
     openDrawer,
     openFullScreen,
     pendingRequest,
+    returnToDrawer,
     selectSession,
     sendMessage,
     sessions,

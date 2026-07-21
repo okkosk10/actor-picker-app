@@ -2,25 +2,7 @@
 
 const path = require('path')
 const { getDriveStats, getDeleteCandidatesByDrive, calcDeleteScore, extractDrive } = require('../driveStatsService.cjs')
-
-function formatSearchPrompt(plan) {
-  const args = plan?.arguments || {}
-  return [
-    '다음 조건으로 영상을 검색해 주세요.',
-    `query: ${args.query || ''}`,
-    `actorNames: ${(args.actorNames || []).join(', ')}`,
-    `minRating: ${args.minRating ?? 0}`,
-    `actorMinRating: ${args.actorMinRating ?? 0}`,
-    `onlyNotCopied: ${Boolean(args.onlyNotCopied)}`,
-    `onlyNew: ${Boolean(args.onlyNew)}`,
-    `onlyFavorite: ${Boolean(args.onlyFavorite)}`,
-    `sortBy: ${args.sortBy || 'themeScore'}`,
-    `limit: ${args.limit || 20}`,
-    `drive: ${args.drive || ''}`,
-    `baseResultIds: ${(args.baseResultIds || []).join(', ')}`,
-    'JSON 결과를 반환해 주세요.',
-  ].join('\n')
-}
+const { calcScores } = require('../themeCandidateService.cjs')
 
 function buildActorSearchRows(db, plan) {
   const args = plan.arguments || {}
@@ -199,6 +181,174 @@ function toUniquePositiveIds(value, maxItems = 500) {
   return result
 }
 
+function applyVideoScope(whereClauses, params, args = {}) {
+  const scope = String(args.scope || 'all')
+  const drive = typeof args.drive === 'string' ? args.drive.trim().toUpperCase() : null
+  const folder = normalizeWindowsPath(args.folder)
+  const baseResultIds = toUniquePositiveIds(args.baseResultIds, 500)
+
+  if (scope === 'current_drive' && drive) {
+    whereClauses.push('UPPER(SUBSTR(v.file_path, 1, 2)) = ?')
+    params.push(drive.slice(0, 2))
+  }
+
+  if (scope === 'current_folder' && folder) {
+    const escapedFolder = escapeSqlLike(folder)
+    const winPrefix = `${escapedFolder}\\%`
+    const unixPrefix = `${escapedFolder}/%`
+    whereClauses.push(`(
+      REPLACE(COALESCE(v.folder_path, ''), '/', '\\') = ?
+      OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE ? ESCAPE '!'
+      OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE ? ESCAPE '!'
+      OR REPLACE(COALESCE(v.file_path, ''), '/', '\\') LIKE ? ESCAPE '!'
+      OR REPLACE(COALESCE(v.file_path, ''), '/', '\\') LIKE ? ESCAPE '!'
+    )`)
+    params.push(folder, winPrefix, unixPrefix, winPrefix, unixPrefix)
+  }
+
+  if (scope === 'selected_videos') {
+    if (baseResultIds.length === 0) {
+      whereClauses.push('1 = 0')
+    } else {
+      const placeholders = baseResultIds.map(() => '?').join(',')
+      whereClauses.push(`v.id IN (${placeholders})`)
+      params.push(...baseResultIds)
+    }
+  }
+
+  return {
+    scope,
+    drive: scope === 'current_drive' ? drive : null,
+    folder: scope === 'current_folder' ? folder : null,
+    baseResultIds: scope === 'selected_videos' ? baseResultIds : [],
+  }
+}
+
+function buildVideoSearchRows(db, args = {}) {
+  const whereClauses = [
+    "v.status = 'normal'",
+    "v.status != 'duplicate'",
+  ]
+  const params = []
+  const appliedScope = applyVideoScope(whereClauses, params, args)
+  const query = String(args.query || '').trim()
+  const limit = Math.min(Math.max(Number(args.limit) || 100, 1), 500)
+  const fetchLimit = args.sortBy === 'themeScore'
+    ? Math.min(Math.max(limit * 5, 200), 1000)
+    : limit
+
+  if (query) {
+    const escaped = `%${escapeSqlLike(query)}%`
+    whereClauses.push('(v.file_name LIKE ? ESCAPE \"!\" OR v.code LIKE ? ESCAPE \"!\" OR v.actor_name LIKE ? ESCAPE \"!\" OR v.memo LIKE ? ESCAPE \"!\" OR v.tags LIKE ? ESCAPE \"!\")')
+    params.push(escaped, escaped, escaped, escaped, escaped)
+  }
+
+  if (Number(args.minRating) > 0) {
+    whereClauses.push('COALESCE(v.rating, 0) >= ?')
+    params.push(Number(args.minRating))
+  }
+
+  if (args.onlyNew) {
+    whereClauses.push('COALESCE(v.is_new, 0) = 1')
+  }
+
+  if (args.onlyFavorite) {
+    whereClauses.push('COALESCE(v.favorite, 0) = 1')
+  }
+
+  if (args.onlyNotCopied) {
+    whereClauses.push('COALESCE(s.copy_count, 0) = 0')
+  }
+
+  const orderClause = args.sortBy === 'rating'
+    ? 'COALESCE(v.rating, 0) DESC, v.updated_at DESC, v.created_at DESC'
+    : args.sortBy === 'recent'
+      ? 'COALESCE(v.created_at, v.updated_at) DESC, v.updated_at DESC'
+      : 'v.updated_at DESC, v.created_at DESC'
+
+  const rows = db.prepare(`
+    SELECT
+      v.id,
+      v.file_path,
+      v.folder_path,
+      v.file_name,
+      COALESCE(v.file_size, v.size, 0) AS file_size,
+      COALESCE(v.rating, 0) AS rating,
+      COALESCE(v.play_count, 0) AS play_count,
+      COALESCE(v.actor_name, '') AS actor_name,
+      COALESCE(v.code, '') AS code,
+      COALESCE(v.grade, '') AS grade,
+      COALESCE(v.recommended, 0) AS recommended,
+      COALESCE(v.favorite, 0) AS favorite,
+      COALESCE(v.is_new, 0) AS is_new,
+      COALESCE(v.tags, '') AS tags,
+      COALESCE(s.copy_count, 0) AS copy_count,
+      COALESCE(v.subtitle_count, 0) AS subtitle_count,
+      v.created_at,
+      v.updated_at
+    FROM videos v
+    LEFT JOIN (
+      SELECT
+        video_id,
+        SUM(CASE WHEN action_type IN ('copy_to_clipboard','copy_to_device') THEN 1 ELSE 0 END) AS copy_count
+      FROM video_activity_logs
+      GROUP BY video_id
+    ) s ON s.video_id = v.id
+    WHERE ${whereClauses.join(' AND ')}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM scanned_roots sr
+        WHERE COALESCE(sr.is_active, 1) = 0
+          AND (
+            REPLACE(COALESCE(v.folder_path, ''), '/', '\\') = REPLACE(sr.root_path, '/', '\\')
+            OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '\\%'
+            OR REPLACE(COALESCE(v.folder_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '/%'
+            OR REPLACE(COALESCE(v.file_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '\\%'
+            OR REPLACE(COALESCE(v.file_path, ''), '/', '\\') LIKE REPLACE(sr.root_path, '/', '\\') || '/%'
+          )
+      )
+    ORDER BY ${orderClause}
+    LIMIT ${fetchLimit}
+  `).all(...params)
+
+  const scoredRows = rows.map((row) => {
+    const tags = String(row.tags || '').split(',').map((value) => value.trim()).filter(Boolean)
+    const scores = calcScores({
+      rating: row.rating,
+      playCount: row.play_count,
+      copyCount: row.copy_count,
+      favorite: Boolean(row.favorite),
+      recommended: Boolean(row.recommended),
+      grade: row.grade,
+      tags,
+      actors: row.actor_name,
+      folderName: row.folder_path ? path.basename(row.folder_path) : '',
+    })
+
+    return {
+      ...row,
+      themeScore: scores.themeScore,
+    }
+  })
+
+  if (args.sortBy === 'themeScore') {
+    scoredRows.sort((left, right) => right.themeScore - left.themeScore || right.rating - left.rating || String(right.updated_at || '').localeCompare(String(left.updated_at || '')))
+  }
+
+  return {
+    rows: scoredRows.slice(0, limit),
+    appliedFilters: {
+      ...appliedScope,
+      minRating: Number(args.minRating) || 0,
+      onlyNotCopied: Boolean(args.onlyNotCopied),
+      onlyNew: Boolean(args.onlyNew),
+      onlyFavorite: Boolean(args.onlyFavorite),
+      sortBy: args.sortBy || 'themeScore',
+      query,
+    },
+  }
+}
+
 function buildSubtitleSummaryRows(db, args = {}) {
   const whereClauses = [
     "v.status = 'normal'",
@@ -300,27 +450,54 @@ async function executeChatPlan(db, plan, context = {}) {
   }
 
   if (toolName === 'search_videos') {
-    const { askAiChatRecommend } = require('../aiChatRecommendService.cjs')
-    const prompt = formatSearchPrompt(plan)
-    const result = await askAiChatRecommend(db, prompt, {
-      selectedVideoIds: Array.isArray(plan.arguments?.baseResultIds) ? plan.arguments.baseResultIds : [],
-      currentFolder: context.currentFolder,
-    })
+    const searchResult = buildVideoSearchRows(db, plan.arguments || {})
+    const rows = Array.isArray(searchResult.rows) ? searchResult.rows : []
 
-    if (!result?.success) return result
+    if (rows.length === 0) {
+      return { success: false, errorCode: 'EMPTY_RESULT', error: '조건에 맞는 영상이 없습니다.' }
+    }
 
-    const enrichedItems = enrichVideosFromDb(db, Array.isArray(result.items) ? result.items : [])
     return {
       success: true,
-      resultType: result.deleteMode ? 'delete-candidate-list' : 'video-list',
-      summary: result.summary || '',
-      reason: result.reason || '',
+      resultType: 'video-list',
+      summary: `${rows.length}개의 영상을 찾았습니다.`,
+      reason: plan.arguments?.onlyNotCopied
+        ? '복사 이력이 없는 영상만 조회했습니다.'
+        : plan.arguments?.sortBy === 'rating'
+          ? '별점이 높은 순으로 영상을 조회했습니다.'
+          : plan.arguments?.sortBy === 'recent'
+            ? '최근 추가된 순으로 영상을 조회했습니다.'
+            : '조건에 맞는 영상을 조회했습니다.',
       intent: plan,
       toolCall: { name: toolName, arguments: plan.arguments || {} },
-      items: enrichedItems,
-      actorSummaries: Array.isArray(result.actorSummaries) ? result.actorSummaries : [],
-      driveInfo: result.driveInfo || null,
-      lastResultIds: enrichedItems.map((item) => Number(item?.video?.id)).filter((value) => Number.isFinite(value)),
+      appliedFilters: searchResult.appliedFilters,
+      items: rows.map((row) => ({
+        video: {
+          id: row.id,
+          file_name: row.file_name,
+          file_path: row.file_path,
+          folder_path: row.folder_path,
+          code: row.code,
+          actor_name: row.actor_name,
+          rating: row.rating,
+          grade: row.grade,
+          recommended: row.recommended,
+          favorite: row.favorite,
+          is_new: row.is_new,
+          play_count: row.play_count,
+          copy_count: row.copy_count,
+          subtitle_count: row.subtitle_count,
+          tags: row.tags,
+          file_size: row.file_size,
+          themeScore: row.themeScore,
+          actorsList: [],
+        },
+        reason: plan.arguments?.onlyNotCopied ? '미복사' : plan.arguments?.sortBy === 'rating' ? '고평점' : plan.arguments?.sortBy === 'recent' ? '최근 추가' : '조회 결과',
+        scoreComment: `themeScore ${row.themeScore}`,
+      })),
+      actorSummaries: [],
+      driveInfo: null,
+      lastResultIds: rows.map((row) => Number(row.id)).filter((value) => Number.isFinite(value)),
     }
   }
 

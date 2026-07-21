@@ -100,6 +100,35 @@ function buildScopeSlot() {
   }
 }
 
+function buildScopedVideoArguments(slots = {}, context = {}, defaults = {}) {
+  const scope = slots.scope || SCOPE_VALUES.ALL
+  const currentDrive = resolveCurrentDrive(context)
+  const currentFolder = resolveCurrentFolder(context)
+  const selectedVideoIds = normalizeIds(context?.selectedVideoIds, 500)
+  const parsedLimit = Number(slots.limit)
+
+  if (scope === SCOPE_VALUES.CURRENT_DRIVE && !currentDrive) {
+    throw createWorkflowValidationError('CURRENT_DRIVE_NOT_AVAILABLE', '현재 선택된 드라이브가 없습니다.')
+  }
+
+  if (scope === SCOPE_VALUES.CURRENT_FOLDER && !currentFolder) {
+    throw createWorkflowValidationError('CURRENT_FOLDER_NOT_AVAILABLE', '현재 화면에서 선택된 폴더가 없습니다.')
+  }
+
+  if (scope === SCOPE_VALUES.SELECTED_VIDEOS && selectedVideoIds.length === 0) {
+    throw createWorkflowValidationError('SELECTED_VIDEOS_NOT_AVAILABLE', '선택한 영상이 없습니다.')
+  }
+
+  return {
+    scope,
+    drive: scope === SCOPE_VALUES.CURRENT_DRIVE ? currentDrive : null,
+    folder: scope === SCOPE_VALUES.CURRENT_FOLDER ? currentFolder : null,
+    baseResultIds: scope === SCOPE_VALUES.SELECTED_VIDEOS ? selectedVideoIds : [],
+    limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 500) : 100,
+    ...defaults,
+  }
+}
+
 const WORKFLOW_REGISTRY = {
   find_videos_without_subtitles: {
     id: 'find_videos_without_subtitles',
@@ -152,7 +181,7 @@ const WORKFLOW_REGISTRY = {
 
   get_unmapped_subtitle_summary: {
     id: 'get_unmapped_subtitle_summary',
-    title: '자막 미매핑 현황 조회',
+    title: '자막 미매핑 현황',
     description: '자막 미매핑 전체 개수와 폴더별 현황을 조회합니다.',
     category: 'subtitles',
     requiredSlots: ['scope'],
@@ -194,6 +223,89 @@ const WORKFLOW_REGISTRY = {
         selected_videos: '선택한 영상',
       }
       return `자막 미매핑 현황을 ${scopeMap[slots.scope] || '전체 라이브러리'} 기준으로 집계합니다.`
+    },
+  },
+
+  find_uncopied_videos: {
+    id: 'find_uncopied_videos',
+    title: '미복사 영상 찾기',
+    description: '복사 이력이 없는 영상을 조회합니다.',
+    category: 'videos',
+    requiredSlots: ['scope'],
+    optionalSlots: ['drive', 'folder', 'limit'],
+    slots: {
+      scope: buildScopeSlot(),
+    },
+    toolName: 'search_videos',
+    buildArguments(slots = {}, context = {}) {
+      return buildScopedVideoArguments(slots, context, {
+        onlyNotCopied: true,
+        sortBy: 'themeScore',
+      })
+    },
+    summary(slots = {}) {
+      const scopeMap = {
+        all: '전체 라이브러리',
+        current_drive: '현재 드라이브',
+        current_folder: '현재 폴더',
+        selected_videos: '선택한 영상',
+      }
+      return `미복사 영상을 ${scopeMap[slots.scope] || '전체 라이브러리'} 범위에서 조회합니다.`
+    },
+  },
+
+  find_high_rated_videos: {
+    id: 'find_high_rated_videos',
+    title: '별점 높은 영상 찾기',
+    description: '별점 4점 이상 영상을 높은 순으로 조회합니다.',
+    category: 'videos',
+    requiredSlots: ['scope'],
+    optionalSlots: ['drive', 'folder', 'limit'],
+    slots: {
+      scope: buildScopeSlot(),
+    },
+    toolName: 'search_videos',
+    buildArguments(slots = {}, context = {}) {
+      return buildScopedVideoArguments(slots, context, {
+        minRating: 4,
+        sortBy: 'rating',
+      })
+    },
+    summary(slots = {}) {
+      const scopeMap = {
+        all: '전체 라이브러리',
+        current_drive: '현재 드라이브',
+        current_folder: '현재 폴더',
+        selected_videos: '선택한 영상',
+      }
+      return `별점 높은 영상을 ${scopeMap[slots.scope] || '전체 라이브러리'} 범위에서 조회합니다.`
+    },
+  },
+
+  find_recent_videos: {
+    id: 'find_recent_videos',
+    title: '최근 추가 영상 찾기',
+    description: '최근 추가된 영상을 최신 순으로 조회합니다.',
+    category: 'videos',
+    requiredSlots: ['scope'],
+    optionalSlots: ['drive', 'folder', 'limit'],
+    slots: {
+      scope: buildScopeSlot(),
+    },
+    toolName: 'search_videos',
+    buildArguments(slots = {}, context = {}) {
+      return buildScopedVideoArguments(slots, context, {
+        sortBy: 'recent',
+      })
+    },
+    summary(slots = {}) {
+      const scopeMap = {
+        all: '전체 라이브러리',
+        current_drive: '현재 드라이브',
+        current_folder: '현재 폴더',
+        selected_videos: '선택한 영상',
+      }
+      return `최근 추가 영상을 ${scopeMap[slots.scope] || '전체 라이브러리'} 범위에서 조회합니다.`
     },
   },
 
@@ -402,34 +514,19 @@ const WORKFLOW_REGISTRY = {
 
 const QUICK_WORKFLOW_CATEGORIES = [
   {
-    id: 'videos',
-    title: '영상 찾기',
-    workflows: ['search_videos'],
-  },
-  {
     id: 'subtitles',
-    title: '자막 상태 확인',
+    title: '자막 관리',
     workflows: ['find_videos_without_subtitles', 'get_unmapped_subtitle_summary'],
   },
   {
-    id: 'actors',
-    title: '배우 찾기',
-    workflows: ['search_actors'],
+    id: 'videos',
+    title: '영상 찾기',
+    workflows: ['find_uncopied_videos', 'find_high_rated_videos', 'find_recent_videos'],
   },
   {
     id: 'storage',
-    title: '저장소 현황',
-    workflows: ['get_drive_stats'],
-  },
-  {
-    id: 'cleanup',
-    title: '저장 공간 정리',
-    workflows: ['cleanup_storage'],
-  },
-  {
-    id: 'recommendation',
-    title: '추천 영상 찾기',
-    workflows: ['search_videos'],
+    title: '저장소',
+    workflows: ['get_drive_stats', 'cleanup_storage'],
   },
 ]
 

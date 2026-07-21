@@ -5,6 +5,36 @@ import { Drawer, Tag } from 'antd'
 import { useAiChat } from '../../hooks/useAiChat.js'
 import './aiChat.css'
 
+const ENABLE_AI_CONSULTATION = import.meta.env.VITE_ENABLE_AI_CONSULTATION === 'true'
+
+const QUICK_WORKFLOW_GROUPS = [
+  {
+    id: 'subtitles',
+    title: '자막 관리',
+    workflows: [
+      { id: 'find_videos_without_subtitles', title: '자막 없는 영상 찾기' },
+      { id: 'get_unmapped_subtitle_summary', title: '자막 미매핑 현황' },
+    ],
+  },
+  {
+    id: 'videos',
+    title: '영상 찾기',
+    workflows: [
+      { id: 'find_uncopied_videos', title: '미복사 영상 찾기' },
+      { id: 'find_high_rated_videos', title: '별점 높은 영상 찾기' },
+      { id: 'find_recent_videos', title: '최근 추가 영상 찾기' },
+    ],
+  },
+  {
+    id: 'storage',
+    title: '저장소',
+    workflows: [
+      { id: 'get_drive_stats', title: '드라이브 현황' },
+      { id: 'cleanup_storage', title: '저장 공간 정리 후보' },
+    ],
+  },
+]
+
 const EXAMPLE_PROMPTS = {
   library: ['별점 높은 영상 찾아줘', '아직 복사하지 않은 영상만 보여줘', '선택한 영상 기준으로 추천해줘', '삭제 후보 추려줘'],
   actors: ['메타데이터가 부족한 배우 찾아줘', '별점 4점 이상 배우만 보여줘', '태그가 비어 있는 배우 찾아줘'],
@@ -439,9 +469,9 @@ function MessageList({ messages, onAction }) {
       {messages.length === 0 ? (
         <div className="ai-chat-empty-state">
           <div className="ai-chat-empty-state__icon">💬</div>
-          <div className="ai-chat-empty-state__title">질문을 입력하면 Actor Picker 기능을 호출합니다.</div>
+          <div className="ai-chat-empty-state__title">빠른 작업을 선택하면 바로 조회를 시작합니다.</div>
           <div className="ai-chat-empty-state__desc">
-            영상 검색, 배우 검색, 저장소 통계를 자연어로 요청할 수 있습니다.
+            공개된 작업만 구조화된 버튼으로 실행합니다.
           </div>
         </div>
       ) : messages.map((message) => (
@@ -515,6 +545,105 @@ function Composer({ onSend, isSending, currentPage, disabled = false, placeholde
   )
 }
 
+function QuickHomePanel({ onAction }) {
+  return (
+    <div className="ai-chat-entry-panel">
+      <div className="ai-chat-entry-panel__title">빠른 작업</div>
+      <div className="ai-chat-entry-panel__desc">무엇을 도와드릴까요?</div>
+      <div className="ai-chat-quick-home">
+        {QUICK_WORKFLOW_GROUPS.map((group) => (
+          <div key={group.id} className="ai-chat-quick-home__group">
+            <div className="ai-chat-quick-home__title">{group.title}</div>
+            <div className="ai-chat-entry-panel__actions">
+              {group.workflows.map((workflow) => (
+                <button
+                  key={workflow.id}
+                  type="button"
+                  className="ai-chat-entry-panel__button"
+                  onClick={() => onAction({
+                    type: 'select_workflow',
+                    label: workflow.title,
+                    payload: { type: 'select_workflow', workflowId: workflow.id },
+                  })}
+                >
+                  <div className="ai-chat-entry-panel__button-title">{workflow.title}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function WorkflowDraftPanel({ session, onAction }) {
+  const entries = Object.entries(session?.collectedSlots || {})
+  const firstEntry = entries[0] || null
+
+  return (
+    <div className="ai-chat-entry-panel">
+      <div className="ai-chat-entry-panel__title">{session?.title || '새 작업'}</div>
+      <div className="ai-chat-entry-panel__desc">이전 조건으로 새 작업을 준비했습니다.</div>
+      <div className="ai-chat-result-card__summary">
+        {entries.length > 0
+          ? `저장된 조건 ${entries.map(([key, value]) => `${key}: ${value}`).join(' · ')}`
+          : '현재 화면 기준으로 범위를 다시 선택해 주세요.'}
+      </div>
+      <div className="ai-chat-action-row">
+        {firstEntry ? (
+          <button
+            type="button"
+            className="ai-chat-action-btn"
+            onClick={() => onAction({
+              type: 'set_workflow_slot',
+              label: '같은 조건 확인',
+              payload: {
+                type: 'set_workflow_slot',
+                workflowId: session.workflowId,
+                slot: firstEntry[0],
+                value: firstEntry[1],
+              },
+            })}
+          >
+            같은 조건 확인
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="ai-chat-action-btn"
+          onClick={() => onAction({
+            type: 'select_workflow',
+            label: session?.title || '작업 선택',
+            payload: {
+              type: 'select_workflow',
+              workflowId: session?.workflowId,
+            },
+          })}
+        >
+          범위 다시 선택
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function HistoryActionPanel({ session, onDuplicate }) {
+  if (!session?.workflowId || session?.messages?.length === 0) return null
+
+  return (
+    <div className="ai-chat-action-row" style={{ padding: '0 16px 12px' }}>
+      <button
+        type="button"
+        className="ai-chat-action-btn"
+        onClick={() => onDuplicate(session.id)}
+      >
+        같은 조건으로 새 작업
+      </button>
+    </div>
+  )
+}
+
 function Header({
   title,
   currentPage,
@@ -525,9 +654,10 @@ function Header({
   onSwitchQuick,
   onSwitchConsult,
   entryMode,
+  fullScreen = false,
   compact = false,
 }) {
-  const showModeSwitchButtons = Boolean(entryMode)
+  const showModeSwitchButtons = Boolean(entryMode) && ENABLE_AI_CONSULTATION
 
   return (
     <div className={`ai-chat-header ${compact ? 'ai-chat-header--compact' : ''}`}>
@@ -554,37 +684,10 @@ function Header({
             </button>
           </>
         )}
-        <button type="button" className="ai-chat-header__button" onClick={onNewChat}>새 채팅</button>
+        <button type="button" className="ai-chat-header__button" onClick={onNewChat}>새 작업</button>
         {!compact && <button type="button" className="ai-chat-header__button" onClick={onClearSessions}>초기화</button>}
-        <button type="button" className="ai-chat-header__button" onClick={onOpenFullScreen}>전체 화면</button>
+        <button type="button" className="ai-chat-header__button" onClick={onOpenFullScreen}>{fullScreen ? '드로어로 보기' : '전체 화면'}</button>
         <button type="button" className="ai-chat-header__button ai-chat-header__button--ghost" onClick={onClose}>닫기</button>
-      </div>
-    </div>
-  )
-}
-
-function ModeSelectionPanel({ onSelectMode }) {
-  return (
-    <div className="ai-chat-entry-panel">
-      <div className="ai-chat-entry-panel__title">Actor Picker AI</div>
-      <div className="ai-chat-entry-panel__desc">원하는 방식으로 시작하세요.</div>
-      <div className="ai-chat-entry-panel__actions">
-        <button
-          type="button"
-          className="ai-chat-entry-panel__button"
-          onClick={() => onSelectMode('quick')}
-        >
-          <div className="ai-chat-entry-panel__button-title">빠른 작업</div>
-          <div className="ai-chat-entry-panel__button-desc">정해진 선택지를 따라 정확하게 실행합니다.</div>
-        </button>
-        <button
-          type="button"
-          className="ai-chat-entry-panel__button"
-          onClick={() => onSelectMode('consult')}
-        >
-          <div className="ai-chat-entry-panel__button-title">AI에게 물어보기</div>
-          <div className="ai-chat-entry-panel__button-desc">상담하듯 요청하면 필요한 조건을 함께 정리합니다.</div>
-        </button>
       </div>
     </div>
   )
@@ -594,14 +697,15 @@ function SessionList({ sessions, activeSessionId, onSelectSession, onDeleteSessi
   return (
     <div className={`ai-chat-session-list ${collapsed ? 'ai-chat-session-list--collapsed' : ''}`}>
       <div className="ai-chat-session-list__top">
-        <button type="button" className="ai-chat-session-list__action" onClick={onNewChat}>＋ 새 채팅</button>
+        <div className="ai-chat-session-list__title">작업 기록</div>
+        <button type="button" className="ai-chat-session-list__action" onClick={onNewChat}>＋ 새 작업</button>
         <button type="button" className="ai-chat-session-list__action ai-chat-session-list__action--ghost" onClick={onToggleCollapsed}>
           {collapsed ? '펼치기' : '접기'}
         </button>
       </div>
       <div className="ai-chat-session-list__items">
         {sessions.length === 0 ? (
-          <div className="ai-chat-session-list__empty">저장된 대화가 없습니다.</div>
+          <div className="ai-chat-session-list__empty">저장된 작업 기록이 없습니다.</div>
         ) : sessions.map((session) => (
           <button
             key={session.id}
@@ -629,12 +733,13 @@ function SessionList({ sessions, activeSessionId, onSelectSession, onDeleteSessi
   )
 }
 
-function ChatBody({ session, isSending, currentPage, onSend, onAction }) {
+function ChatBody({ session, isSending, currentPage, onSend, onAction, onDuplicate }) {
   const entryMode = session?.entryMode || null
-  const phase = session?.phase || 'mode_selection'
+  const phase = session?.phase || 'quick_home'
   const composerDisabled = !entryMode || entryMode === 'quick'
   const messages = session?.messages || []
-  const shouldShowEntryPanel = !entryMode && messages.length === 0
+  const shouldShowQuickHome = entryMode === 'quick' && phase === 'quick_home' && messages.length === 0
+  const shouldShowWorkflowDraft = entryMode === 'quick' && phase === 'collecting_slots' && messages.length === 0 && session?.workflowId
 
   return (
     <div className="ai-chat-body">
@@ -647,23 +752,23 @@ function ChatBody({ session, isSending, currentPage, onSend, onAction }) {
           <Tag color="cyan">최근 결과 {session.lastResultIds.length}개</Tag>
         )}
       </div>
-      {shouldShowEntryPanel && (
-        <ModeSelectionPanel
-          onSelectMode={(mode) => onAction({ type: 'select_entry_mode', label: mode === 'quick' ? '빠른 작업' : 'AI 상담', payload: { type: 'select_entry_mode', mode } })}
+      {shouldShowQuickHome && <QuickHomePanel onAction={onAction} />}
+      {shouldShowWorkflowDraft && <WorkflowDraftPanel session={session} onAction={onAction} />}
+      <HistoryActionPanel session={session} onDuplicate={onDuplicate} />
+      <MessageList messages={messages} onAction={onAction} />
+      {ENABLE_AI_CONSULTATION && (
+        <Composer
+          onSend={onSend}
+          isSending={isSending}
+          currentPage={currentPage}
+          disabled={composerDisabled}
+          placeholder={!entryMode
+            ? '모드를 먼저 선택해 주세요.'
+            : entryMode === 'quick'
+              ? '빠른 작업 모드는 버튼 선택으로 진행합니다.'
+              : '요청을 입력하세요. Enter 전송 / Shift+Enter 줄바꿈'}
         />
       )}
-      <MessageList messages={messages} onAction={onAction} />
-      <Composer
-        onSend={onSend}
-        isSending={isSending}
-        currentPage={currentPage}
-        disabled={composerDisabled}
-        placeholder={!entryMode
-          ? '모드를 먼저 선택해 주세요.'
-          : entryMode === 'quick'
-            ? '빠른 작업 모드는 버튼 선택으로 진행합니다.'
-            : '요청을 입력하세요. Enter 전송 / Shift+Enter 줄바꿈'}
-      />
     </div>
   )
 }
@@ -678,8 +783,8 @@ export function AiChatLauncher() {
       type="button"
       className="ai-chat-launcher"
       onClick={() => (isDrawerOpen ? closeDrawer() : openDrawer())}
-      aria-label="AI 챗봇 열기"
-      title="AI 챗봇"
+      aria-label="빠른 작업 열기"
+      title="빠른 작업"
     >
       <svg className="ai-chat-launcher__icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M7.5 17.2 4 20v-3.3C2.8 15.2 2 13.7 2 12c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8c-.8 0-1.6-.1-2.4-.3L7.5 17.2Z" fill="currentColor" opacity="0.18" />
@@ -702,6 +807,7 @@ export function AiChatDrawer() {
     openFullScreen,
     createSession,
     clearSessions,
+    duplicateSessionAsNewWork,
     sendMessage,
   } = useAiChat()
 
@@ -720,7 +826,7 @@ export function AiChatDrawer() {
   }, [])
 
   const handleNewChat = () => {
-    createSession('새 채팅', currentContext.activeFilters)
+    createSession('새 작업', currentContext.activeFilters)
     openDrawer()
   }
 
@@ -756,7 +862,7 @@ export function AiChatDrawer() {
       headerStyle={{ display: 'none' }}
     >
       <Header
-        title={activeSession?.title || 'AI 챗봇'}
+        title={activeSession?.title || '빠른 작업'}
         currentPage={currentContext.currentPage}
         onNewChat={handleNewChat}
         onOpenFullScreen={openFullScreen}
@@ -773,6 +879,7 @@ export function AiChatDrawer() {
         currentPage={currentContext.currentPage}
         onSend={async (message) => sendMessage({ message, context: currentContext })}
         onAction={async (action) => sendMessage({ action, context: currentContext })}
+        onDuplicate={(sessionId) => duplicateSessionAsNewWork(sessionId, currentContext)}
       />
     </Drawer>
   )
@@ -787,9 +894,11 @@ export function AiChatFullscreen() {
     isSending,
     currentContext,
     closeFullScreen,
+    returnToDrawer,
     createSession,
     deleteSession,
     clearSessions,
+    duplicateSessionAsNewWork,
     selectSession,
     sendMessage,
   } = useAiChat()
@@ -799,7 +908,7 @@ export function AiChatFullscreen() {
   if (!isFullScreen) return null
 
   const handleNewChat = () => {
-    createSession('새 채팅', currentContext.activeFilters)
+    createSession('새 작업', currentContext.activeFilters)
   }
 
   const switchMode = async (mode) => {
@@ -822,15 +931,16 @@ export function AiChatFullscreen() {
     <div className="ai-chat-fullscreen">
       <div className="ai-chat-fullscreen__header">
         <Header
-          title="AI 챗봇"
+          title="빠른 작업"
           currentPage={currentContext.currentPage}
           onNewChat={handleNewChat}
-          onOpenFullScreen={closeFullScreen}
+          onOpenFullScreen={returnToDrawer}
           onClose={closeFullScreen}
           onClearSessions={clearSessions}
           onSwitchQuick={() => switchMode('quick')}
           onSwitchConsult={() => switchMode('consult')}
           entryMode={activeSession?.entryMode || null}
+          fullScreen
         />
       </div>
       <div className="ai-chat-fullscreen__content">
@@ -850,6 +960,7 @@ export function AiChatFullscreen() {
             currentPage={currentContext.currentPage}
             onSend={async (message) => sendMessage({ message, context: currentContext })}
             onAction={async (action) => sendMessage({ action, context: currentContext })}
+            onDuplicate={(sessionId) => duplicateSessionAsNewWork(sessionId, currentContext)}
           />
         </div>
       </div>

@@ -31,7 +31,7 @@ function normalizeState(snapshot) {
   const sessions = Array.isArray(snapshot?.sessions) ? snapshot.sessions : []
   return {
     sessions,
-    activeSessionId: typeof snapshot?.activeSessionId === 'string' ? snapshot.activeSessionId : null,
+    activeSessionId: null,
   }
 }
 
@@ -48,11 +48,11 @@ export function loadAiChatState() {
           const now = new Date().toISOString()
           const sessionId = `legacy-${Date.now()}`
           return {
-            activeSessionId: sessionId,
+            activeSessionId: null,
             sessions: [
               {
                 id: sessionId,
-                title: '기존 AI 추천 기록',
+                title: '기존 작업 기록',
                 createdAt: now,
                 updatedAt: now,
                 messages: [],
@@ -60,8 +60,8 @@ export function loadAiChatState() {
                 lastResultIds: [],
                 activeFilters: {},
                 pendingAction: null,
-                entryMode: null,
-                phase: 'mode_selection',
+                entryMode: 'quick',
+                phase: 'quick_home',
                 workflowId: null,
                 collectedSlots: {},
                 missingSlots: [],

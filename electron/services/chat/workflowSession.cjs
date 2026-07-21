@@ -3,8 +3,8 @@
 const { getWorkflow, listWorkflowCategories, toToolAction } = require('./workflowRegistry.cjs')
 
 const DEFAULT_WORKFLOW_STATE = Object.freeze({
-  entryMode: null,
-  phase: 'mode_selection',
+  entryMode: 'quick',
+  phase: 'quick_home',
   workflowId: null,
   collectedSlots: {},
   missingSlots: [],
@@ -15,8 +15,8 @@ const DEFAULT_WORKFLOW_STATE = Object.freeze({
 
 function normalizeWorkflowState(state = {}) {
   return {
-    entryMode: typeof state.entryMode === 'string' ? state.entryMode : null,
-    phase: typeof state.phase === 'string' ? state.phase : 'mode_selection',
+    entryMode: typeof state.entryMode === 'string' ? state.entryMode : 'quick',
+    phase: typeof state.phase === 'string' ? state.phase : 'quick_home',
     workflowId: typeof state.workflowId === 'string' ? state.workflowId : null,
     collectedSlots: state.collectedSlots && typeof state.collectedSlots === 'object' ? { ...state.collectedSlots } : {},
     missingSlots: Array.isArray(state.missingSlots) ? state.missingSlots.slice(0, 20) : [],
@@ -26,11 +26,11 @@ function normalizeWorkflowState(state = {}) {
   }
 }
 
-function resetWorkflowState(mode = null) {
+function resetWorkflowState(mode = 'quick') {
   return {
     ...DEFAULT_WORKFLOW_STATE,
-    entryMode: mode,
-    phase: mode ? 'understanding' : 'mode_selection',
+    entryMode: mode === 'consult' ? 'consult' : 'quick',
+    phase: mode === 'consult' ? 'understanding' : 'quick_home',
   }
 }
 
@@ -77,35 +77,7 @@ function getNextMissingSlotQuestion(workflowId, collectedSlots = {}, context = {
 }
 
 function buildModeSelectionResponse(state) {
-  return {
-    success: true,
-    resultType: 'workflow-mode-selection',
-    message: '원하는 방식으로 시작하세요.',
-    workflow: {
-      phase: 'mode_selection',
-      entryMode: null,
-    },
-    clarification: {
-      question: '원하는 방식으로 시작하세요.',
-      options: [
-        {
-          id: 'mode_quick',
-          label: '빠른 작업',
-          description: '정해진 선택지를 따라 정확하게 실행합니다.',
-          type: 'select_entry_mode',
-          payload: { type: 'select_entry_mode', mode: 'quick' },
-        },
-        {
-          id: 'mode_consult',
-          label: 'AI에게 물어보기',
-          description: '상담하듯 요청하면 필요한 조건을 함께 정리합니다.',
-          type: 'select_entry_mode',
-          payload: { type: 'select_entry_mode', mode: 'consult' },
-        },
-      ],
-    },
-    state,
-  }
+  return buildQuickHomeResponse(resetWorkflowState(state?.entryMode || 'quick'))
 }
 
 function buildQuickHomeResponse(state) {

@@ -160,7 +160,7 @@ function buildResultSummary(type, plan, raw) {
     const stats = buildSummaryStatsFromCandidates(candidates)
     return {
       title: `${stats.totalCount}개 정리 후보`,
-      description: `${formatBytes(stats.totalSize)} 정도를 우선 검토하면 확보할 수 있습니다.`,
+      description: `${formatBytes(stats.totalSize)} 정도를 우선 검토하면 확보할 수 있습니다. 이 작업은 정리 후보를 조회할 뿐 실제 파일을 삭제하지 않습니다.`,
       metrics: [
         metric('count', '후보', stats.totalCount),
         metric('size', '예상 확보', formatBytes(stats.totalSize)),
@@ -225,7 +225,7 @@ function buildResultSummary(type, plan, raw) {
   const scopeInfo = describeAppliedScope(raw.appliedFilters || plan?.arguments || {})
   return {
     title: `${stats.totalCount}개 영상 검색 결과`,
-    description: `${formatBytes(stats.totalSize)} 정도의 라이브러리를 대상으로 정리했습니다.`,
+    description: `${scopeInfo.line} ${stats.totalCount}개 영상을 찾았습니다. 총 용량은 ${formatBytes(stats.totalSize)}입니다.`,
     metrics: [
       metric('count', '영상', stats.totalCount),
       metric('size', '총 용량', formatBytes(stats.totalSize)),
@@ -360,7 +360,14 @@ function buildSuggestedActions(type, plan, raw) {
   }
 
   if (type === 'video-list') {
+    const resultIds = Array.isArray(raw.lastResultIds) ? raw.lastResultIds : []
     return [
+      {
+        id: 'filter_in_library',
+        type: 'client_filter_video_ids',
+        label: '영상 관리 화면에 표시',
+        payload: { videoIds: resultIds },
+      },
       {
         id: 'show_all',
         type: 'view_results',
@@ -477,6 +484,17 @@ function buildState(raw, plan) {
 
 function buildUserFacingMessage(resultType, raw, fallbackMessage) {
   const subtitleScopeApplied = Boolean(raw?.appliedFilters?.subtitleMissing)
+  if (resultType === 'video-list') {
+    const scopeInfo = describeAppliedScope(raw?.appliedFilters || {})
+    const totalCount = Number(raw?.totalCount) || (Array.isArray(raw?.items) ? raw.items.length : 0)
+    return `${scopeInfo.line} 영상 ${totalCount}개를 찾았습니다.`
+  }
+
+  if (resultType === 'delete-candidate-list') {
+    const totalCount = Number(raw?.totalCount) || (Array.isArray(raw?.items) ? raw.items.length : 0)
+    return `정리 후보 ${totalCount}개를 찾았습니다. 이 작업은 정리 후보를 조회할 뿐 실제 파일을 삭제하지 않습니다.`
+  }
+
   if (!subtitleScopeApplied && resultType !== 'subtitle-summary' && resultType !== 'subtitle-video-list') {
     return fallbackMessage
   }
