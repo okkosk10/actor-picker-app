@@ -318,8 +318,21 @@ function createJellyfinApiService(options = {}) {
       'Content-Type': image.contentType,
       'Content-Length': String(image?.buffer?.length || 0),
     }
+    const noLengthHeaders = {
+      'Content-Type': image.contentType,
+    }
+    const attempts = []
+
+    const shouldFallback = (error) => {
+      if (!error) return false
+      if (error.name === 'AbortError') return false
+      const message = String(error.message || '').toLowerCase()
+      if (message.includes('aborted') || message.includes('취소')) return false
+      return true
+    }
 
     try {
+      attempts.push(`/Items/${encodedId}/Images/Primary`)
       await request(`/Items/${encodedId}/Images/Primary`, {
         method: 'POST',
         headers: baseHeaders,
@@ -328,11 +341,10 @@ function createJellyfinApiService(options = {}) {
         expect: 'empty',
       })
     } catch (primaryError) {
-      const status = Number(primaryError?.status || 0)
-      const canFallback = status === 500 || status === 415 || status === 404 || status === 400
-      if (!canFallback) throw primaryError
+      if (!shouldFallback(primaryError)) throw primaryError
 
       try {
+        attempts.push(`/Items/${encodedId}/Images?Type=Primary&ImageType=Primary`)
         await request(`/Items/${encodedId}/Images`, {
           method: 'POST',
           headers: baseHeaders,
@@ -342,8 +354,26 @@ function createJellyfinApiService(options = {}) {
           expect: 'empty',
         })
       } catch (fallbackError) {
-        const fallbackMessage = String(fallbackError?.message || 'fallback upload failed')
-        throw new Error(`${primaryError.message} (fallback 실패: ${fallbackMessage})`)
+        if (!shouldFallback(fallbackError)) throw fallbackError
+
+        try {
+          // Some servers reject explicit Content-Length for streamed bodies; retry without it.
+          attempts.push(`/Items/${encodedId}/Images?Type=Primary`)
+          await request(`/Items/${encodedId}/Images`, {
+            method: 'POST',
+            headers: noLengthHeaders,
+            query: { Type: 'Primary' },
+            body: image.buffer,
+            signal: options.signal,
+            expect: 'empty',
+          })
+        } catch (lastError) {
+          const chain = [primaryError, fallbackError, lastError]
+            .map((err) => String(err?.message || ''))
+            .filter(Boolean)
+            .join(' | ')
+          throw new Error(`${primaryError.message} (재시도 경로: ${attempts.join(' -> ')}) (fallback 실패: ${chain})`)
+        }
       }
     }
 
