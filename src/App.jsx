@@ -31,6 +31,7 @@ import DashboardPage            from './pages/Dashboard/index.jsx'
 import StoragePage              from './pages/Storage/index.jsx'
 import SubtitlesPage            from './pages/Subtitles/index.jsx'
 import ActorTagBatchPage        from './pages/ActorTagBatch/index.jsx'
+import JellyfinExportPage       from './pages/JellyfinExport/index.jsx'
 import { getLocalDateKey }      from './utils/format.js'
 
 function extractDrive(value) {
@@ -39,7 +40,7 @@ function extractDrive(value) {
 }
 
 export default function App() {
-  // ── 앱 탭 ('library' | 'actors' | 'actor-tags' | 'recommendations' | 'dashboard' | 'storage' | 'subtitles')
+  // ── 앱 탭 ('library' | 'actors' | 'actor-tags' | 'subtitles' | 'jellyfin-export' | 'recommendations' | 'dashboard' | 'storage')
   const [appTab, setAppTab] = useState('library')
 
   // ── 영상 검색 훅 ──────────────────────────────────────────────
@@ -459,6 +460,7 @@ export default function App() {
             { key: 'actors',          label: newActorCount > 0 ? `배우 관리 (${newActorCount})` : '배우 관리' },
             { key: 'actor-tags',      label: '배우 태그 일괄 관리' },
             { key: 'subtitles',       label: '자막 보관소' },
+            { key: 'jellyfin-export', label: 'Jellyfin 내보내기' },
             { key: 'recommendations', label: '🎬 추천·탐색' },
             { key: 'dashboard',       label: '대시보드' },
             { key: 'storage',         label: '💾 저장소' },
@@ -508,6 +510,9 @@ export default function App() {
 
       {/* ── 자막 보관소 탭 ───────────────────────────────── */}
         {appTab === 'subtitles' && <SubtitlesPage />}
+
+      {/* ── Jellyfin 내보내기 탭 ─────────────────────────── */}
+        {appTab === 'jellyfin-export' && <JellyfinExportPage />}
 
       {/* ── 추천·탐색 탭 ─────────────────────────────────── */}
       {/* display:none 방식으로 유지 — 탭 이동 시 AI 결과 state 보존 */}

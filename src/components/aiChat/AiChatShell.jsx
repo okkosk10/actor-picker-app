@@ -74,6 +74,7 @@ function getPageLabel(page) {
     actors: '배우 관리',
     'actor-tags': '배우 태그 일괄 관리',
     subtitles: '자막 보관소',
+    'jellyfin-export': 'Jellyfin 내보내기',
     recommendations: '추천·탐색',
     dashboard: '대시보드',
     storage: '저장소 관리',

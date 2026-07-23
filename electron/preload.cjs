@@ -36,6 +36,37 @@ contextBridge.exposeInMainWorld('api', {
   previewSubtitleFilesFromArchive: () =>
     ipcRenderer.invoke('preview-subtitle-files-from-archive'),
 
+  // ── Jellyfin 메타데이터 내보내기 ─────────────────────────────
+  getJellyfinExportStats: () =>
+    ipcRenderer.invoke('jellyfin:get-stats'),
+
+  listJellyfinExportItems: (options) =>
+    ipcRenderer.invoke('jellyfin:list-items', options),
+
+  scanJellyfinSubtitles: (options) =>
+    ipcRenderer.invoke('jellyfin:scan-subtitles', options),
+
+  exportSelectedJellyfinNfo: (payload) =>
+    ipcRenderer.invoke('jellyfin:export-selected', payload),
+
+  exportTestJellyfinNfo: (payload) =>
+    ipcRenderer.invoke('jellyfin:export-test', payload),
+
+  exportAllJellyfinNfo: (payload) =>
+    ipcRenderer.invoke('jellyfin:export-all', payload),
+
+  onJellyfinScanProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('jellyfin:scan-progress', listener)
+    return () => ipcRenderer.removeListener('jellyfin:scan-progress', listener)
+  },
+
+  onJellyfinExportProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('jellyfin:export-progress', listener)
+    return () => ipcRenderer.removeListener('jellyfin:export-progress', listener)
+  },
+
   // ── 폴더 스캔 및 DB 저장 ─────────────────────────────────────
   // @param folderPath {string}
   // 반환: { totalFiles, missingCount, scannedFolder }

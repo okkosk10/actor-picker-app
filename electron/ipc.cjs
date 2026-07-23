@@ -39,6 +39,12 @@ const { handleChatRequest }      = require('./services/chat/chatOrchestrator.cjs
 const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
 const { searchAvdbsActors, fetchAvdbsActorDetail, downloadImageToUserData, buildSuggestedTags } = require('./services/avdbsScraper.cjs')
 const { parseSubtitlePaths } = require('./subtitles.cjs')
+const { refreshSubtitleIndex, analyzeSubtitleForMetadata } = require('./services/subtitleIndexService.cjs')
+const {
+  getJellyfinExportStats,
+  listJellyfinExportItems,
+  exportJellyfinNfo,
+} = require('./services/jellyfinNfoService.cjs')
 
 const SUBTITLE_ARCHIVE_DIR = 'subtitle-archive'
 const SUBTITLE_ARCHIVE_SETTINGS_FILE = 'subtitle-archive.json'
@@ -3995,6 +4001,77 @@ function registerIpcHandlers() {
     fs.copyFileSync(sourcePath, backupPath)
 
     return { success: true, backupPath }
+  })
+
+  // ══════════════════════════════════════════════════════════════
+  // Jellyfin 메타데이터 내보내기
+  // ══════════════════════════════════════════════════════════════
+  ipcMain.handle('jellyfin:get-stats', async () => {
+    const db = getDb()
+    return getJellyfinExportStats(db)
+  })
+
+  ipcMain.handle('jellyfin:list-items', async (_event, options = {}) => {
+    const db = getDb()
+    return listJellyfinExportItems(db, options)
+  })
+
+  ipcMain.handle('jellyfin:scan-subtitles', async (event, options = {}) => {
+    const db = getDb()
+    return refreshSubtitleIndex(db, {
+      videoIds: Array.isArray(options?.itemIds) ? options.itemIds : [],
+      onProgress: (payload) => {
+        try {
+          event.sender.send('jellyfin:scan-progress', payload)
+        } catch {
+          // 렌더러가 닫힌 경우 무시
+        }
+      },
+    })
+  })
+
+  ipcMain.handle('jellyfin:export-selected', async (event, payload = {}) => {
+    const db = getDb()
+    return exportJellyfinNfo(db, {
+      itemIds: Array.isArray(payload.itemIds) ? payload.itemIds : [],
+      nfoMode: payload.nfoMode,
+      onProgress: (progress) => {
+        try {
+          event.sender.send('jellyfin:export-progress', progress)
+        } catch {
+          // ignore
+        }
+      },
+    })
+  })
+
+  ipcMain.handle('jellyfin:export-test', async (event, payload = {}) => {
+    const db = getDb()
+    return exportJellyfinNfo(db, {
+      limit: 10,
+      nfoMode: payload.nfoMode,
+      onProgress: (progress) => {
+        try {
+          event.sender.send('jellyfin:export-progress', progress)
+        } catch {
+          // ignore
+        }
+      },
+    })
+  })
+
+  ipcMain.handle('jellyfin:export-all', async (event, payload = {}) => {
+    const db = getDb()
+    return exportJellyfinNfo(db, {
+      nfoMode: payload.nfoMode,
+      onProgress: (progress) => {
+        try {
+          event.sender.send('jellyfin:export-progress', progress)
+        } catch {
+          // ignore
+        }
+      },
+    })
   })
 
   // ══════════════════════════════════════════════════════════════

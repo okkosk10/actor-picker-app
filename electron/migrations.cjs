@@ -992,6 +992,38 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: '025_add_jellyfin_metadata_fields',
+    description: '영상 테이블에 Jellyfin 내보내기 및 자막 AI 분석 필드 추가',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+
+      const additions = [
+        { name: 'subtitle_status', def: "TEXT DEFAULT 'unknown'" },
+        { name: 'primary_subtitle_path', def: "TEXT DEFAULT ''" },
+        { name: 'primary_subtitle_hash', def: "TEXT DEFAULT ''" },
+        { name: 'ai_outline', def: "TEXT DEFAULT ''" },
+        { name: 'ai_plot', def: "TEXT DEFAULT ''" },
+        { name: 'ai_tags', def: "TEXT DEFAULT '[]'" },
+        { name: 'ai_story_structure', def: "TEXT DEFAULT ''" },
+        { name: 'ai_summary_status', def: "TEXT DEFAULT 'not_analyzed'" },
+        { name: 'ai_summary_source_path', def: "TEXT DEFAULT ''" },
+        { name: 'ai_summary_source_hash', def: "TEXT DEFAULT ''" },
+        { name: 'ai_summary_updated_at', def: 'TEXT' },
+      ]
+
+      for (const col of additions) {
+        if (!cols.includes(col.name)) {
+          db.exec(`ALTER TABLE videos ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_videos_subtitle_status ON videos (subtitle_status);
+        CREATE INDEX IF NOT EXISTS idx_videos_ai_summary_status ON videos (ai_summary_status);
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────
