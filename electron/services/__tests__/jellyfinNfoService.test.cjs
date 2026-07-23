@@ -15,6 +15,7 @@ const {
   buildExportStats,
   getNfoPath,
   buildExportSnapshot,
+  exportJellyfinNfo,
 } = require('../jellyfinNfoService.cjs')
 
 test('XML 특수문자는 안전하게 escape된다', () => {
@@ -35,6 +36,84 @@ test('태그는 중복 없이 합쳐진다', () => {
     ai_tags: '["액션","스릴러","스릴러"]',
   })
   assert.deepEqual(tags, ['즐겨찾기', '액션', '등급: 재시청 추천', '스릴러'])
+})
+
+test('태그는 camelCase aiTags도 병합하고 배우 이름 태그는 제외한다', () => {
+  const tags = buildTagList({
+    tags: ['배우A', '상황극'],
+    aiTags: ['상황극', '배우A', '긴장감'],
+    actorNames: ['배우A'],
+  })
+  assert.deepEqual(tags, ['상황극', '긴장감'])
+})
+
+test('camelCase aiOutline/aiPlot은 tagline/plot으로 출력된다', () => {
+  const xml = buildMovieNfo({
+    code: 'SONE-200',
+    filePath: '/tmp/SONE-200.mp4',
+    aiOutline: '캐멀 한 줄 설명',
+    aiPlot: '캐멀 작품 설명',
+    aiTags: ['태그A'],
+    tags: ['태그A'],
+    rating: 0,
+    favorite: 0,
+    grade: '',
+    memo: '',
+  }, [])
+
+  assert.ok(xml.includes('<tagline>캐멀 한 줄 설명</tagline>'))
+  assert.ok(xml.includes('<plot>캐멀 작품 설명</plot>'))
+})
+
+test('snake_case ai_outline/ai_plot은 기존처럼 출력된다', () => {
+  const xml = buildMovieNfo({
+    code: 'SONE-201',
+    file_path: '/tmp/SONE-201.mp4',
+    ai_outline: '스네이크 한 줄 설명',
+    ai_plot: '스네이크 작품 설명',
+    ai_tags: '["태그B"]',
+    rating: 0,
+    favorite: 0,
+    grade: '',
+    memo: '',
+    tags: '',
+  }, [])
+
+  assert.ok(xml.includes('<tagline>스네이크 한 줄 설명</tagline>'))
+  assert.ok(xml.includes('<plot>스네이크 작품 설명</plot>'))
+})
+
+test('DB row와 snapshot item 입력은 동일한 NFO를 생성한다', () => {
+  const actors = [{ name: '배우A', is_main: 1, order_index: 0 }]
+  const dbRowXml = buildMovieNfo({
+    code: 'SONE-201A',
+    file_path: '/tmp/SONE-201A.mp4',
+    ai_outline: '동일성 한 줄 설명',
+    ai_plot: '동일성 작품 설명',
+    ai_tags: '["태그X","태그Y"]',
+    tags: '',
+    rating: 0,
+    favorite: 0,
+    grade: '',
+    memo: '',
+  }, actors)
+
+  const snapshotXml = buildMovieNfo({
+    code: 'SONE-201A',
+    filePath: '/tmp/SONE-201A.mp4',
+    aiOutline: '동일성 한 줄 설명',
+    aiPlot: '동일성 작품 설명',
+    aiTags: ['태그X', '태그Y'],
+    tags: ['태그X', '태그Y'],
+    actorNames: ['배우A'],
+    actors,
+    rating: 0,
+    favorite: 0,
+    grade: '',
+    memo: '',
+  }, actors)
+
+  assert.equal(dbRowXml, snapshotXml)
 })
 
 test('빈 필드는 NFO에서 생략된다', () => {
@@ -354,8 +433,169 @@ test('export summary는 missingVideo를 제외 항목으로 집계한다', async
     },
   }
 
-  const { summary, items } = await require('../jellyfinNfoService.cjs').exportJellyfinNfo(fakeDb, { limitEligibleOnly: true, limit: 10 })
+  const { summary, items } = await exportJellyfinNfo(fakeDb, { limitEligibleOnly: true, limit: 10 })
   assert.equal(summary.missingVideo, 1)
   assert.equal(summary.excludedMissingVideo, 1)
   assert.equal(items.filter((item) => item.exportEligible).length, 1)
+})
+
+test('buildExportSnapshot item을 buildMovieNfo에 전달해도 tagline/plot/tags가 출력된다', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'actor-picker-snapshot-'))
+  const videoPath = path.join(tempDir, 'SONE-202.mp4')
+  fs.writeFileSync(videoPath, 'video', 'utf8')
+
+  const fakeDb = {
+    prepare(sql) {
+      if (sql.includes('SELECT v.id') && sql.includes('FROM videos v')) {
+        return {
+          all() {
+            return [{ id: 1 }]
+          },
+        }
+      }
+      return {
+        all() {
+          return [
+            {
+              id: 1,
+              file_name: 'SONE-202.mp4',
+              file_path: videoPath,
+              folder_path: tempDir,
+              code: 'SONE-202',
+              actor_name: '',
+              tags: '상황극',
+              memo: '',
+              rating: 0,
+              favorite: 0,
+              grade: '',
+              status: 'normal',
+              size: 0,
+              subtitle_paths: '[]',
+              subtitle_files: '[]',
+              subtitle_exts: '',
+              subtitle_count: 1,
+              subtitle_size: 0,
+              subtitle_added_at: null,
+              primary_subtitle_path: path.join(tempDir, 'SONE-202.srt'),
+              primary_subtitle_hash: 'hash',
+              subtitle_status: 'available',
+              ai_outline: '스냅샷 한 줄 설명',
+              ai_plot: '스냅샷 작품 설명',
+              ai_tags: '["분위기","상황극"]',
+              ai_story_structure: '',
+              ai_relationship: '[]',
+              ai_tone: '[]',
+              ai_confidence: 0,
+              ai_warnings: '[]',
+              ai_raw_response: '',
+              ai_model: '',
+              ai_prompt_version: '',
+              ai_error: '',
+              ai_input_tokens: 0,
+              ai_output_tokens: 0,
+              ai_api_calls: 0,
+              ai_summary_status: 'approved',
+              ai_summary_source_path: '',
+              ai_summary_source_hash: '',
+              ai_summary_updated_at: null,
+              is_main: 1,
+              order_index: 0,
+              actor_id: 1,
+              actor_name_joined: '배우A',
+              actor_rating: 0,
+              aliases: '',
+            },
+          ]
+        },
+      }
+    },
+  }
+
+  const snapshot = buildExportSnapshot(fakeDb, { limit: 1 })
+  const item = snapshot.items[0]
+  const xml = buildMovieNfo(item, item.actors)
+
+  assert.ok(xml.includes('<tagline>스냅샷 한 줄 설명</tagline>'))
+  assert.ok(xml.includes('<plot>스냅샷 작품 설명</plot>'))
+  assert.ok(xml.includes('<tag>상황극</tag>'))
+  assert.ok(xml.includes('<tag>분위기</tag>'))
+})
+
+test('내보내기 결과 NFO에는 승인된 AI tagline/plot이 포함된다', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'actor-picker-export-ai-'))
+  const videoPath = path.join(tempDir, 'SONE-203.mp4')
+  fs.writeFileSync(videoPath, 'video', 'utf8')
+
+  const fakeDb = {
+    prepare(sql) {
+      if (sql.includes('SELECT v.id') && sql.includes('FROM videos v')) {
+        return {
+          all() {
+            return [{ id: 1 }]
+          },
+        }
+      }
+      return {
+        all() {
+          return [
+            {
+              id: 1,
+              file_name: 'SONE-203.mp4',
+              file_path: videoPath,
+              folder_path: tempDir,
+              code: 'SONE-203',
+              actor_name: '',
+              tags: '',
+              memo: '',
+              rating: 0,
+              favorite: 0,
+              grade: '',
+              status: 'normal',
+              size: 0,
+              subtitle_paths: '[]',
+              subtitle_files: '[]',
+              subtitle_exts: '',
+              subtitle_count: 1,
+              subtitle_size: 0,
+              subtitle_added_at: null,
+              primary_subtitle_path: path.join(tempDir, 'SONE-203.srt'),
+              primary_subtitle_hash: 'hash',
+              subtitle_status: 'available',
+              ai_outline: '승인된 한 줄 설명',
+              ai_plot: '승인된 작품 설명',
+              ai_tags: '["감정선"]',
+              ai_story_structure: '',
+              ai_relationship: '[]',
+              ai_tone: '[]',
+              ai_confidence: 0,
+              ai_warnings: '[]',
+              ai_raw_response: '',
+              ai_model: '',
+              ai_prompt_version: '',
+              ai_error: '',
+              ai_input_tokens: 0,
+              ai_output_tokens: 0,
+              ai_api_calls: 0,
+              ai_summary_status: 'approved',
+              ai_summary_source_path: '',
+              ai_summary_source_hash: '',
+              ai_summary_updated_at: null,
+              is_main: 1,
+              order_index: 0,
+              actor_id: 1,
+              actor_name_joined: '배우A',
+              actor_rating: 0,
+              aliases: '',
+            },
+          ]
+        },
+      }
+    },
+  }
+
+  const result = await exportJellyfinNfo(fakeDb, { itemIds: [1], nfoMode: 'backup-and-overwrite' })
+  assert.equal(result.success, true)
+  const xml = fs.readFileSync(path.join(tempDir, 'SONE-203.nfo'), 'utf8')
+  assert.ok(xml.includes('<tagline>승인된 한 줄 설명</tagline>'))
+  assert.ok(xml.includes('<plot>승인된 작품 설명</plot>'))
 })

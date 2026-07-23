@@ -313,7 +313,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
         message.error(response.error || '저장 실패')
       } else {
         if (approve) {
-          await window.api.exportSelectedJellyfinNfo({ itemIds: [payload.videoId], nfoMode: 'backup-and-overwrite' })
+          await window.api.exportSelectedJellyfinNfo({ itemIds: [payload.videoId], nfoMode: 'overwrite-generated-only' })
         }
         message.success(approve ? '저장 후 승인 완료' : '저장 완료')
         setEditingItem(null)
@@ -335,7 +335,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
       }
       await window.api.exportSelectedJellyfinNfo({
         itemIds: selectedItems.map((item) => item.id),
-        nfoMode: 'backup-and-overwrite',
+        nfoMode: 'overwrite-generated-only',
       })
       await refreshAfterAction()
       message.success('선택 작품을 승인했습니다.')
@@ -360,8 +360,14 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
 
   const regenerateSelectedNfo = useCallback(async () => {
     if (!selectedItems.length) return
-    await window.api.exportSelectedJellyfinNfo({ itemIds: selectedItems.map((item) => item.id), nfoMode: 'backup-and-overwrite' })
+    await window.api.exportSelectedJellyfinNfo({ itemIds: selectedItems.map((item) => item.id), nfoMode: 'overwrite-generated-only' })
     message.success('선택 작품 NFO 다시 생성 요청을 보냈습니다.')
+  }, [selectedItems])
+
+  const forceRegenerateSelectedNfoWithBackup = useCallback(async () => {
+    if (!selectedItems.length) return
+    await window.api.exportSelectedJellyfinNfo({ itemIds: selectedItems.map((item) => item.id), nfoMode: 'backup-and-overwrite' })
+    message.success('외부 NFO 포함 강제 재생성을 완료했습니다. (.bak 백업 생성)')
   }, [selectedItems])
 
   const columns = useMemo(() => [
@@ -492,6 +498,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
         <Button onClick={approveSelected} disabled={selectedItems.length === 0} loading={saving}>승인</Button>
         <Button onClick={unapproveSelected} disabled={selectedItems.length === 0} loading={saving}>승인 취소</Button>
         <Button onClick={regenerateSelectedNfo} disabled={selectedItems.length === 0}>선택 작품 NFO 다시 생성</Button>
+        <Button danger onClick={forceRegenerateSelectedNfoWithBackup} disabled={selectedItems.length === 0}>외부 NFO 포함 강제 재생성</Button>
       </div>
 
       <Card className="jellyfin-table-card" size="small">

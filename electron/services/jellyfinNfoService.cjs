@@ -58,9 +58,24 @@ function getVideoTitle(video) {
   return path.parse(String(video?.file_path || video?.filePath || video?.file_name || 'unknown')).name || 'unknown'
 }
 
+function buildActorNameSet(video) {
+  const names = []
+  if (Array.isArray(video?.actorNames)) names.push(...video.actorNames)
+  if (Array.isArray(video?.actors)) {
+    names.push(...video.actors.map((actor) => actor?.name))
+  }
+  const actorNameText = normalizeText(video?.actorNameText)
+  if (actorNameText) {
+    names.push(...actorNameText.split(',').map((item) => item.trim()))
+  }
+
+  return new Set(names.map((item) => normalizeText(item).toLowerCase()).filter(Boolean))
+}
+
 function buildTagList(video) {
   const tags = []
-  tags.push(...splitCommaTags(video?.tags))
+  const baseTags = Array.isArray(video?.tags) ? video.tags : splitCommaTags(video?.tags)
+  tags.push(...baseTags)
 
   const grade = normalizeText(video?.grade)
   if (grade) tags.push(`등급: ${grade}`)
@@ -73,19 +88,23 @@ function buildTagList(video) {
     tags.push(`액트픽커 평점: ${ratingLabel}/5`)
   }
 
-  tags.push(...parseJsonArray(video?.ai_tags))
+  const aiTags = Array.isArray(video?.aiTags) ? video.aiTags : parseJsonArray(video?.ai_tags)
+  tags.push(...aiTags)
+
+  const actorNameSet = buildActorNameSet(video)
 
   const seen = new Set()
   return tags.filter((tag) => {
     const normalized = normalizeText(tag)
-    if (!normalized || seen.has(normalized)) return false
-    seen.add(normalized)
+    const lower = normalized.toLowerCase()
+    if (!normalized || seen.has(lower) || actorNameSet.has(lower)) return false
+    seen.add(lower)
     return true
   })
 }
 
 function buildPlotText(video) {
-  const plot = normalizeText(video?.ai_plot)
+  const plot = normalizeText(video?.aiPlot ?? video?.ai_plot)
   if (plot) return plot
 
   const memo = normalizeText(video?.memo)
@@ -95,7 +114,7 @@ function buildPlotText(video) {
 }
 
 function buildOutlineText(video) {
-  return normalizeText(video?.ai_outline)
+  return normalizeText(video?.aiOutline ?? video?.ai_outline)
 }
 
 function buildMovieNfo(video, actors = []) {
@@ -300,8 +319,8 @@ function buildExportSnapshot(db, options = {}) {
     if (video.status !== 'normal') exclusionReasons.push(`상태: ${video.status}`)
     if (!fileExists) exclusionReasons.push('영상 파일 없음')
 
-    const tags = buildTagList(video)
     const actorNames = actors.map((actor) => actor.name).filter(Boolean)
+    const tags = buildTagList({ ...video, actorNames, actors })
 
     items.push({
       id: video.id,
