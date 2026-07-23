@@ -4,12 +4,18 @@ import { Alert, Button, Card, Input, Modal, Progress, Select, Space, Table, Tag,
 const FILTER_OPTIONS = [
   { value: 'all', label: '전체' },
   { value: 'subtitleAvailable', label: '자막 있음' },
-  { value: 'notAnalyzed', label: '분석 전' },
+  { value: 'notAnalyzed', label: '분석 필요(자막 있음)' },
   { value: 'generated', label: '생성됨' },
   { value: 'approved', label: '승인됨' },
   { value: 'failed', label: '실패' },
   { value: 'stale', label: '재분석 필요' },
 ]
+
+function isAnalysisNeeded(item) {
+  if (item?.subtitleStatus !== 'available') return false
+  const status = String(item?.aiSummaryStatus || 'not_analyzed')
+  return status === 'not_analyzed' || status === 'stale' || status === 'failed'
+}
 
 function formatCount(value) {
   return Number(value || 0).toLocaleString()
@@ -54,7 +60,7 @@ function buildAnalysisCounts(items) {
   for (const item of items) {
     if (item.subtitleStatus === 'available') counts.subtitleAvailable += 1
     const status = String(item.aiSummaryStatus || 'not_analyzed')
-    if (status === 'not_analyzed') counts.notAnalyzed += 1
+    if (isAnalysisNeeded(item)) counts.notAnalyzed += 1
     else if (status === 'generated') counts.generated += 1
     else if (status === 'approved') counts.approved += 1
     else if (status === 'failed') counts.failed += 1
@@ -67,7 +73,7 @@ function buildAnalysisFilterPredicate(filterKey) {
   return (item) => {
     switch (filterKey) {
       case 'subtitleAvailable': return item.subtitleStatus === 'available'
-      case 'notAnalyzed': return item.aiSummaryStatus === 'not_analyzed'
+      case 'notAnalyzed': return isAnalysisNeeded(item)
       case 'generated': return item.aiSummaryStatus === 'generated'
       case 'approved': return item.aiSummaryStatus === 'approved'
       case 'failed': return item.aiSummaryStatus === 'failed'
@@ -212,18 +218,9 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
   const [selectedRowKeys, setSelectedRowKeys] = useState([])
   const [analysisProgress, setAnalysisProgress] = useState(null)
   const [result, setResult] = useState(null)
-  const [analysisStats, setAnalysisStats] = useState(null)
   const [editingItem, setEditingItem] = useState(null)
   const [saving, setSaving] = useState(false)
   const [currentRequestId, setCurrentRequestId] = useState('')
-
-  useEffect(() => {
-    let mounted = true
-    window.api.getJellyfinAnalysisStats?.().then((response) => {
-      if (mounted && response?.success) setAnalysisStats(response.stats || null)
-    }).catch(() => {})
-    return () => { mounted = false }
-  }, [])
 
   useEffect(() => {
     const off = window.api.onJellyfinAnalysisProgress?.((payload) => {
@@ -232,11 +229,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
     return () => off?.()
   }, [])
 
-  const counts = useMemo(() => ({
-    ...buildAnalysisCounts(items || []),
-    ...(analysisStats || {}),
-    all: (items || []).length,
-  }), [analysisStats, items])
+  const counts = useMemo(() => buildAnalysisCounts(items || []), [items])
   const visibleItems = useMemo(() => (items || []).filter(buildAnalysisFilterPredicate(filterKey)), [items, filterKey])
   const selectedItems = useMemo(() => {
     const keySet = new Set(selectedRowKeys.map((value) => Number(value)))
@@ -245,8 +238,6 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
 
   const refreshAfterAction = useCallback(async () => {
     await onReload?.()
-    const response = await window.api.getJellyfinAnalysisStats?.()
-    if (response?.success) setAnalysisStats(response.stats || null)
   }, [onReload])
 
   const startAnalyze = useCallback(async (force = false, targetItems = selectedItems) => {
