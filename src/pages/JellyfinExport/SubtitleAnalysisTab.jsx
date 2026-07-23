@@ -262,24 +262,6 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
     }
   }, [refreshAfterAction, selectedItems])
 
-  const startTestAnalyze = useCallback(async () => {
-    const requestId = `analysis-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    setCurrentRequestId(requestId)
-    setLoading(true)
-    setAnalysisProgress(null)
-    try {
-      const response = await window.api.analyzeTestJellyfinMetadata({ requestId })
-      setResult(response)
-      await refreshAfterAction()
-      message.success('테스트 3개 분석이 완료되었습니다.')
-    } catch (error) {
-      message.error(`분석 실패: ${error.message}`)
-    } finally {
-      setLoading(false)
-      setCurrentRequestId('')
-    }
-  }, [refreshAfterAction])
-
   const cancelAnalyze = useCallback(async () => {
     if (!currentRequestId) {
       message.info('실행 중인 분석이 없습니다.')
@@ -362,12 +344,6 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
     if (!selectedItems.length) return
     await window.api.exportSelectedJellyfinNfo({ itemIds: selectedItems.map((item) => item.id), nfoMode: 'overwrite-generated-only' })
     message.success('선택 작품 NFO 다시 생성 요청을 보냈습니다.')
-  }, [selectedItems])
-
-  const forceRegenerateSelectedNfoWithBackup = useCallback(async () => {
-    if (!selectedItems.length) return
-    await window.api.exportSelectedJellyfinNfo({ itemIds: selectedItems.map((item) => item.id), nfoMode: 'backup-and-overwrite' })
-    message.success('외부 NFO 포함 강제 재생성을 완료했습니다. (.bak 백업 생성)')
   }, [selectedItems])
 
   const columns = useMemo(() => [
@@ -491,14 +467,12 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
 
       <div className="jellyfin-analysis-actions">
         <Button type="primary" onClick={() => startAnalyze(false)} loading={loading} disabled={selectedItems.length === 0}>선택 작품 분석</Button>
-        <Button onClick={startTestAnalyze} loading={loading}>테스트 3개 분석</Button>
         <Button onClick={() => startAnalyze(true)} loading={loading} disabled={selectedItems.length === 0}>선택 작품 강제 재분석</Button>
         <Button onClick={cancelAnalyze} disabled={!currentRequestId}>분석 취소</Button>
         <Button onClick={() => openReview(selectedItems[0])} disabled={selectedItems.length === 0}>결과 검수</Button>
         <Button onClick={approveSelected} disabled={selectedItems.length === 0} loading={saving}>승인</Button>
         <Button onClick={unapproveSelected} disabled={selectedItems.length === 0} loading={saving}>승인 취소</Button>
         <Button onClick={regenerateSelectedNfo} disabled={selectedItems.length === 0}>선택 작품 NFO 다시 생성</Button>
-        <Button danger onClick={forceRegenerateSelectedNfoWithBackup} disabled={selectedItems.length === 0}>외부 NFO 포함 강제 재생성</Button>
       </div>
 
       <Card className="jellyfin-table-card" size="small">
