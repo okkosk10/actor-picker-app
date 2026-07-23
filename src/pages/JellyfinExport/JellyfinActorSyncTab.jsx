@@ -180,13 +180,26 @@ export default function JellyfinActorSyncTab() {
       if (response?.success === false && response?.error) {
         message.warning(response.error)
       } else {
-        const failed = Array.isArray(response?.results)
-          ? response.results.filter((item) => item.success === false && !item.cancelled).length
-          : 0
-        const skipped = Array.isArray(response?.results)
-          ? response.results.filter((item) => item.skipped).length
-          : 0
-        message.success(`동기화 완료: 처리 ${response?.processed || 0} / ${response?.total || 0}, 실패 ${failed}, 건너뜀 ${skipped}`)
+        const results = Array.isArray(response?.results) ? response.results : []
+        const failed = results.filter((item) => item.success === false && !item.cancelled && item.status !== 'not_found' && item.status !== 'needs_review').length
+        const notFound = results.filter((item) => item.status === 'not_found').length
+        const needsReview = results.filter((item) => item.status === 'needs_review').length
+        const imageMissing = results.filter((item) => item.status === 'image_missing').length
+        const skipped = results.filter((item) => item.skipped).length
+
+        const parts = [
+          `동기화 완료: 처리 ${response?.processed || 0} / ${response?.total || 0}`,
+          `실패 ${failed}`,
+          `Person 없음 ${notFound}`,
+          `검수 필요 ${needsReview}`,
+          `이미지 없음 ${imageMissing}`,
+          `건너뜀 ${skipped}`,
+        ]
+        message.success(parts.join(', '))
+
+        if (notFound > 0 && failed === 0) {
+          message.info('일부 배우는 Jellyfin Person이 아직 없어 보류되었습니다. 라이브러리 메타데이터 새로고침 후 다시 시도하세요.')
+        }
       }
       await loadItems({ refreshChanged: true })
     } catch (error) {
