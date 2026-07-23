@@ -2,18 +2,23 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 16px;
+  padding: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 34%),
+    radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 28%),
+    linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
 }
 
 .jellyfin-hero {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  padding: 20px 24px;
+  padding: 22px 24px;
   border-radius: 20px;
-  background: linear-gradient(135deg, rgba(18, 25, 48, 0.95), rgba(34, 46, 71, 0.92));
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #334155 100%);
   color: #f8fafc;
-  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.28);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
 }
 
 .jellyfin-hero__eyebrow {
@@ -28,12 +33,14 @@
   margin: 0;
   font-size: 28px;
   font-weight: 700;
+  color: #f8fafc;
+  text-shadow: 0 1px 0 rgba(15, 23, 42, 0.2);
 }
 
 .jellyfin-hero__desc {
   margin: 10px 0 0;
   max-width: 820px;
-  color: rgba(226, 232, 240, 0.86);
+  color: rgba(226, 232, 240, 0.94);
   line-height: 1.65;
 }
 
@@ -51,28 +58,34 @@
   justify-content: space-between;
   padding: 14px 18px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
 }
 
 .jellyfin-toolbar__label {
   font-size: 13px;
-  color: #334155;
+  color: #0f172a;
+  font-weight: 600;
 }
 
 .jellyfin-progress-card {
   border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
 }
 
 .jellyfin-progress-card__title {
   font-weight: 700;
   margin-bottom: 8px;
+  color: #0f172a;
 }
 
 .jellyfin-progress-card__desc {
   margin-top: 8px;
-  color: #64748b;
+  color: #475569;
   font-size: 13px;
 }
 
@@ -84,22 +97,66 @@
 
 .jellyfin-stat-card {
   border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
 }
 
 .jellyfin-stat-card__label {
-  color: #64748b;
+  color: #475569;
   font-size: 12px;
   margin-bottom: 8px;
+  font-weight: 600;
 }
 
 .jellyfin-stat-card__value {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 700;
   color: #0f172a;
 }
 
 .jellyfin-table-card {
   border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+}
+
+.jellyfin-page :where(.ant-card) {
+  color: #0f172a;
+}
+
+.jellyfin-page :where(.ant-card-body) {
+  color: inherit;
+}
+
+.jellyfin-page :where(.ant-table) {
+  color: #0f172a;
+  background: transparent;
+}
+
+.jellyfin-page :where(.ant-table-container) {
+  background: #fff;
+  border-radius: 12px;
+}
+
+.jellyfin-page :where(.ant-table-thead > tr > th) {
+  background: #eef2ff !important;
+  color: #0f172a !important;
+  font-weight: 700;
+  border-bottom-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+.jellyfin-page :where(.ant-table-tbody > tr > td) {
+  border-bottom-color: rgba(226, 232, 240, 0.9) !important;
+}
+
+.jellyfin-page :where(.ant-table-row:hover > td) {
+  background: rgba(239, 246, 255, 0.7) !important;
+}
+
+.jellyfin-page :where(.ant-tag) {
+  font-weight: 600;
 }
 
 .jellyfin-result__summary,
@@ -121,8 +178,9 @@
   gap: 16px;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
 }
 
 .jellyfin-preview-item__left,
@@ -137,14 +195,14 @@
 }
 
 .jellyfin-preview-item__left span {
-  color: #64748b;
+  color: #475569;
   font-size: 13px;
 }
 
 .jellyfin-preview-empty {
   padding: 16px;
   text-align: center;
-  color: #64748b;
+  color: #475569;
 }
 
 @media (max-width: 1200px) {
