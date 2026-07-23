@@ -281,7 +281,7 @@ async function findPersonCandidates(actor, api, options = {}) {
     type: 'not_found',
     method: 'not_found',
     candidates: allCandidates,
-    reason: '일치하는 Person을 찾지 못했습니다. 먼저 해당 배우가 포함된 작품 NFO를 Jellyfin에서 새로고침해 Person 항목을 생성하세요.',
+    reason: '일치하는 Person을 찾지 못했습니다. Jellyfin 라이브러리 메타데이터 새로고침(또는 작품 NFO 반영)으로 Person 항목을 먼저 생성한 뒤 다시 동기화하세요.',
   }
 }
 

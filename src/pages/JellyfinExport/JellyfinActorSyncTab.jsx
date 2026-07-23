@@ -304,7 +304,7 @@ export default function JellyfinActorSyncTab() {
       <Alert
         type="info"
         showIcon
-        message="Person이 보이지 않으면 먼저 배우가 포함된 작품 NFO를 Jellyfin에서 새로고침해 Person 항목을 생성하세요."
+        message="Person이 보이지 않으면 Jellyfin 라이브러리 메타데이터를 먼저 새로고침하세요. 작품 NFO 반영도 Person 생성에 도움이 됩니다."
       />
 
       <Card size="small" className="jellyfin-actor-sync-settings">
