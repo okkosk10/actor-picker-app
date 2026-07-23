@@ -70,6 +70,24 @@ test('배열 응답에서 첫 사용자 UUID를 탐색한다', async () => {
   assert.equal(await api.resolveUserId(), '2f4b4e5f-1111-4444-8888-1234567890ab')
 })
 
+test('객체 응답(Items)에서도 첫 사용자 ID를 탐색한다', async () => {
+  const fetchImpl = buildFetchWithRoutes({
+    'GET /Users': async () => createJsonResponse(200, {
+      Items: [
+        { Id: '6d4bf7ea71b540d1aa0a01304e31e37f', Name: 'legacy-user' },
+      ],
+    }),
+  }, [])
+
+  const api = createJellyfinApiService({
+    serverUrl: 'http://localhost:8096',
+    apiKey: 'test-key',
+    fetchImpl,
+  })
+
+  assert.equal(await api.resolveUserId(), '6d4bf7ea71b540d1aa0a01304e31e37f')
+})
+
 test('활성 사용자 배열이 비어 있으면 명확한 오류를 던진다', async () => {
   const fetchImpl = buildFetchWithRoutes({
     'GET /Users': async () => createJsonResponse(200, []),
@@ -114,7 +132,7 @@ test('사용자 이름 문자열을 UUID로 오인하지 않는다', async () =>
     },
   })
 
-  await assert.rejects(() => api.resolveUserId(), /UUID 형식/)
+  await assert.rejects(() => api.resolveUserId(), /형식이 올바르지 않습니다/)
 })
 
 test('연결 테스트 결과는 serverName/version/userId/userName을 반환한다', async () => {
@@ -144,6 +162,7 @@ test('연결 테스트 결과는 serverName/version/userId/userName을 반환한
   const listCall = calls.find((entry) => new URL(entry.url).pathname === '/Users')
   assert.ok(listCall)
   assert.equal(new URL(listCall.url).searchParams.get('isDisabled'), 'false')
+  assert.equal(new URL(listCall.url).searchParams.get('IsDisabled'), 'false')
 })
 
 test('API 오류 메시지에 endpoint와 Jellyfin 메시지를 포함한다', async () => {

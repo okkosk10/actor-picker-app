@@ -33,6 +33,13 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim())
 }
 
+function isJellyfinUserId(value) {
+  const text = String(value || '').trim()
+  if (!text) return true
+  const isHex32 = /^[0-9a-f]{32}$/i.test(text)
+  return isUuid(text) || isHex32
+}
+
 export default function JellyfinActorSyncTab() {
   const [form] = Form.useForm()
   const [items, setItems] = useState([])
@@ -316,19 +323,19 @@ export default function JellyfinActorSyncTab() {
                 {
                   validator: (_rule, value) => {
                     const text = String(value || '').trim()
-                    if (!text || isUuid(text)) return Promise.resolve()
-                    return Promise.reject(new Error('User ID는 UUID 형식이어야 합니다.'))
+                    if (isJellyfinUserId(text)) return Promise.resolve()
+                    return Promise.reject(new Error('User ID는 UUID 또는 32자리 hex 형식이어야 합니다.'))
                   },
                 },
               ]}
             >
-              <Input placeholder="UUID (비우면 자동 탐색)" style={{ width: 260 }} />
+              <Input placeholder="User ID (비우면 자동 탐색)" style={{ width: 260 }} />
             </Form.Item>
           </Space>
           <Typography.Text type="secondary">
             {resolvedUserName
-              ? `연결된 사용자명: ${resolvedUserName} (User ID에는 UUID만 저장됩니다)`
-              : 'User ID는 UUID만 입력하세요. 사용자명은 입력하지 않습니다.'}
+              ? `연결된 사용자명: ${resolvedUserName} (User ID만 저장됩니다)`
+              : 'User ID는 UUID 또는 32자리 hex 형식을 사용하세요. 사용자명은 입력하지 않습니다.'}
           </Typography.Text>
           <Space wrap size={12}>
             <Form.Item name="overwriteOverview" valuePropName="checked" style={{ marginBottom: 0 }}>

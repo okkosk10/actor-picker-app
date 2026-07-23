@@ -3,6 +3,7 @@
 const DEFAULT_TIMEOUT_MS = 12000
 const MAX_RETRY_COUNT = 2
 const UUID_V4_OR_V5_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const HEX32_RE = /^[0-9a-f]{32}$/i
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -15,6 +16,11 @@ function sanitizeBaseUrl(url) {
 
 function isValidUuid(value) {
   return UUID_V4_OR_V5_RE.test(String(value || '').trim())
+}
+
+function isValidJellyfinUserId(value) {
+  const text = String(value || '').trim()
+  return Boolean(text) && (isValidUuid(text) || HEX32_RE.test(text))
 }
 
 function isRetryableStatus(status) {
@@ -175,8 +181,8 @@ function createJellyfinApiService(options = {}) {
 
   async function resolveUserIdentity(signal) {
     if (cachedUserId) {
-      if (!isValidUuid(cachedUserId)) {
-        throw new Error('Jellyfin User ID는 UUID 형식이어야 합니다.')
+      if (!isValidJellyfinUserId(cachedUserId)) {
+        throw new Error('Jellyfin User ID 형식이 올바르지 않습니다. (UUID 또는 32자리 hex)')
       }
 
       if (!cachedUserName) {
@@ -193,14 +199,18 @@ function createJellyfinApiService(options = {}) {
 
     const result = await request('/Users', {
       method: 'GET',
-      query: { isDisabled: false },
+      query: { isDisabled: false, IsDisabled: false },
       signal,
     })
 
-    const users = Array.isArray(result) ? result : []
-    const first = users.find((user) => isValidUuid(user?.Id)) || null
+    const users = Array.isArray(result)
+      ? result
+      : Array.isArray(result?.Items)
+        ? result.Items
+        : []
+    const first = users.find((user) => isValidJellyfinUserId(user?.Id)) || null
     if (!first) {
-      throw new Error('활성 Jellyfin 사용자를 찾을 수 없습니다. User ID(UUID)를 직접 입력해 주세요.')
+      throw new Error('활성 Jellyfin 사용자를 찾을 수 없습니다. User ID를 직접 입력해 주세요.')
     }
 
     cachedUserId = String(first.Id)
@@ -294,4 +304,5 @@ module.exports = {
   createJellyfinApiService,
   sanitizeBaseUrl,
   isValidUuid,
+  isValidJellyfinUserId,
 }
