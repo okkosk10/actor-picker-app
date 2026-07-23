@@ -214,6 +214,7 @@ function resolveAiSummaryStatus(videoRow, subtitleStatus, primarySubtitleHash) {
   const currentStatus = String(videoRow?.ai_summary_status || 'not_analyzed')
   if (subtitleStatus === 'error') return 'failed'
   if (subtitleStatus === 'missing' || subtitleStatus === 'file_missing') return 'not_available'
+  if (currentStatus === 'not_available') return 'not_analyzed'
 
   if (videoRow?.ai_summary_source_hash && primarySubtitleHash && videoRow.ai_summary_source_hash !== primarySubtitleHash) {
     return 'stale'

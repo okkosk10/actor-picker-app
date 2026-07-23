@@ -11,9 +11,15 @@ const FILTER_OPTIONS = [
   { value: 'stale', label: '재분석 필요' },
 ]
 
+function getEffectiveAiSummaryStatus(item) {
+  const status = String(item?.aiSummaryStatus || 'not_analyzed')
+  if (item?.subtitleStatus === 'available' && status === 'not_available') return 'not_analyzed'
+  return status
+}
+
 function isAnalysisNeeded(item) {
   if (item?.subtitleStatus !== 'available') return false
-  const status = String(item?.aiSummaryStatus || 'not_analyzed')
+  const status = getEffectiveAiSummaryStatus(item)
   return status === 'not_analyzed' || status === 'stale' || status === 'failed'
 }
 
@@ -59,25 +65,26 @@ function buildAnalysisCounts(items) {
   const counts = { all: items.length, subtitleAvailable: 0, notAnalyzed: 0, generated: 0, approved: 0, failed: 0, stale: 0 }
   for (const item of items) {
     if (item.subtitleStatus === 'available') counts.subtitleAvailable += 1
-    const status = String(item.aiSummaryStatus || 'not_analyzed')
-    if (isAnalysisNeeded(item)) counts.notAnalyzed += 1
-    else if (status === 'generated') counts.generated += 1
+    const status = getEffectiveAiSummaryStatus(item)
+    if (status === 'generated') counts.generated += 1
     else if (status === 'approved') counts.approved += 1
     else if (status === 'failed') counts.failed += 1
     else if (status === 'stale') counts.stale += 1
+    if (isAnalysisNeeded(item)) counts.notAnalyzed += 1
   }
   return counts
 }
 
 function buildAnalysisFilterPredicate(filterKey) {
   return (item) => {
+    const status = getEffectiveAiSummaryStatus(item)
     switch (filterKey) {
       case 'subtitleAvailable': return item.subtitleStatus === 'available'
       case 'notAnalyzed': return isAnalysisNeeded(item)
-      case 'generated': return item.aiSummaryStatus === 'generated'
-      case 'approved': return item.aiSummaryStatus === 'approved'
-      case 'failed': return item.aiSummaryStatus === 'failed'
-      case 'stale': return item.aiSummaryStatus === 'stale'
+      case 'generated': return status === 'generated'
+      case 'approved': return status === 'approved'
+      case 'failed': return status === 'failed'
+      case 'stale': return status === 'stale'
       default: return true
     }
   }
@@ -386,8 +393,8 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
       title: 'AI 분석 상태',
       dataIndex: 'aiSummaryStatus',
       width: 120,
-      render: (value) => statusTag(
-        value,
+      render: (value, record) => statusTag(
+        getEffectiveAiSummaryStatus({ ...record, aiSummaryStatus: value }),
         { not_analyzed: '분석 전', pending: '대기', generated: '생성됨', approved: '승인됨', failed: '실패', stale: '재분석 필요', not_available: '자막 없음' },
         { not_analyzed: 'geekblue', pending: 'blue', generated: 'green', approved: 'cyan', failed: 'red', stale: 'gold', not_available: 'orange' },
       ),

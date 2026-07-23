@@ -306,6 +306,7 @@ function buildExportSnapshot(db, options = {}) {
 
       if (subtitleStatus === 'error') return 'failed'
       if (subtitleStatus === 'missing' || subtitleStatus === 'file_missing') return 'not_available'
+      if (current === 'not_available') return 'not_analyzed'
       if (video.ai_summary_source_hash && video.primary_subtitle_hash && video.ai_summary_source_hash !== video.primary_subtitle_hash) {
         return 'stale'
       }
