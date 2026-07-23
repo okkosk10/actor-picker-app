@@ -236,14 +236,17 @@ function isRetriableOpenAiError(error) {
 }
 
 async function callOpenAIJson(client, payload) {
-  const response = await client.responses.create({
+  const requestBody = {
     model: payload.model || DEFAULT_MODEL,
     temperature: payload.temperature ?? 0.2,
     instructions: payload.instructions,
     input: payload.input,
     text: { format: { type: 'json_object' } },
-    signal: payload.signal,
-  })
+  }
+
+  const response = payload.signal
+    ? await client.responses.create(requestBody, { signal: payload.signal })
+    : await client.responses.create(requestBody)
 
   const raw = response.output_text?.trim() ?? ''
   const parsed = parseMaybeJson(raw)

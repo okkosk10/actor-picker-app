@@ -3,6 +3,7 @@
   flex-direction: column;
   gap: 16px;
   padding: 18px;
+  color: #0f172a;
   background:
     radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 34%),
     radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 28%),
@@ -11,6 +12,7 @@
 
   .jellyfin-tabs {
     padding: 18px;
+    color: #0f172a;
     background:
       radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 34%),
       radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 28%),
@@ -23,6 +25,18 @@
 
   .jellyfin-tabs :where(.ant-tabs-tab) {
     font-weight: 700;
+  }
+
+  .jellyfin-tabs :where(.ant-tabs-tab-btn) {
+    color: #475569;
+  }
+
+  .jellyfin-tabs :where(.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn) {
+    color: #2563eb;
+  }
+
+  .jellyfin-tabs :where(.ant-tabs-ink-bar) {
+    background: #2563eb;
   }
 
   .jellyfin-analysis-tab {
@@ -124,6 +138,64 @@
   font-size: 13px;
   color: #0f172a;
   font-weight: 600;
+}
+
+.jellyfin-tabs :where(.ant-select-selector) {
+  background: #ffffff !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
+  color: #0f172a !important;
+}
+
+.jellyfin-tabs :where(.ant-select-selection-item),
+.jellyfin-tabs :where(.ant-select-selection-placeholder),
+.jellyfin-tabs :where(.ant-select-arrow) {
+  color: #0f172a !important;
+}
+
+.jellyfin-tabs :where(.ant-btn) {
+  color: #0f172a;
+  border-color: rgba(71, 85, 105, 0.52);
+  background: #ffffff;
+}
+
+.jellyfin-tabs :where(.ant-btn:hover),
+.jellyfin-tabs :where(.ant-btn:focus-visible) {
+  color: #1d4ed8;
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.jellyfin-tabs :where(.ant-btn-primary) {
+  color: #f8fafc;
+  border-color: #1d4ed8;
+  background: #2563eb;
+}
+
+.jellyfin-tabs :where(.ant-btn-primary:hover),
+.jellyfin-tabs :where(.ant-btn-primary:focus-visible) {
+  color: #ffffff;
+  border-color: #1e40af;
+  background: #1d4ed8;
+}
+
+.jellyfin-tabs :where(.ant-btn-dangerous) {
+  color: #f8fafc;
+  border-color: #dc2626;
+  background: #dc2626;
+}
+
+.jellyfin-tabs :where(.ant-btn-dangerous:hover),
+.jellyfin-tabs :where(.ant-btn-dangerous:focus-visible) {
+  color: #ffffff;
+  border-color: #b91c1c;
+  background: #b91c1c;
+}
+
+.jellyfin-tabs :where(.ant-btn[disabled]),
+.jellyfin-tabs :where(.ant-btn:disabled) {
+  color: #94a3b8 !important;
+  background: #f8fafc !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
 }
 
 .jellyfin-progress-card {
