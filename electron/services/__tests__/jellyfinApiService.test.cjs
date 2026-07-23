@@ -236,4 +236,13 @@ test('Primary 이미지 업로드 500 시 fallback 엔드포인트로 재시도�
   const fallbackCall = calls.find((entry) => new URL(entry.url).pathname === '/Items/person-1/Images')
   assert.ok(fallbackCall)
   assert.equal(new URL(fallbackCall.url).searchParams.get('Type'), 'Primary')
+
+  const firstUploadCall = calls.find((entry) => new URL(entry.url).pathname === '/Items/person-1/Images/Primary')
+  assert.ok(firstUploadCall)
+  assert.equal(typeof firstUploadCall.options.body, 'string')
+  assert.equal(firstUploadCall.options.body, Buffer.from([0xff, 0xd8, 0xff, 0xdb]).toString('base64'))
+  assert.equal(
+    firstUploadCall.options.headers['Content-Length'],
+    String(Buffer.byteLength(firstUploadCall.options.body, 'utf8')),
+  )
 })

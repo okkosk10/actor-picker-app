@@ -314,9 +314,11 @@ function createJellyfinApiService(options = {}) {
 
   async function uploadPrimaryImage(personId, image, options = {}) {
     const encodedId = encodeURIComponent(personId)
+    const imageBuffer = Buffer.isBuffer(image?.buffer) ? image.buffer : Buffer.from(image?.buffer || [])
+    const base64Body = imageBuffer.toString('base64')
     const baseHeaders = {
       'Content-Type': image.contentType,
-      'Content-Length': String(image?.buffer?.length || 0),
+      'Content-Length': String(Buffer.byteLength(base64Body, 'utf8')),
     }
     const noLengthHeaders = {
       'Content-Type': image.contentType,
@@ -336,7 +338,7 @@ function createJellyfinApiService(options = {}) {
       await request(`/Items/${encodedId}/Images/Primary`, {
         method: 'POST',
         headers: baseHeaders,
-        body: image.buffer,
+        body: base64Body,
         signal: options.signal,
         expect: 'empty',
       })
@@ -349,7 +351,7 @@ function createJellyfinApiService(options = {}) {
           method: 'POST',
           headers: baseHeaders,
           query: { Type: 'Primary', ImageType: 'Primary' },
-          body: image.buffer,
+          body: base64Body,
           signal: options.signal,
           expect: 'empty',
         })
@@ -363,7 +365,7 @@ function createJellyfinApiService(options = {}) {
             method: 'POST',
             headers: noLengthHeaders,
             query: { Type: 'Primary' },
-            body: image.buffer,
+            body: base64Body,
             signal: options.signal,
             expect: 'empty',
           })
