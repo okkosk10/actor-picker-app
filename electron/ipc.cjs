@@ -54,7 +54,7 @@ const {
   listJellyfinExportItems,
   exportJellyfinNfo,
 } = require('./services/jellyfinNfoService.cjs')
-const { createJellyfinApiService } = require('./services/jellyfinApiService.cjs')
+const { createJellyfinApiService, isValidUuid } = require('./services/jellyfinApiService.cjs')
 const {
   SYNC_STATUS,
   listActorSyncItems,
@@ -122,11 +122,16 @@ function readJellyfinSyncSettings() {
 
 function writeJellyfinSyncSettings(patch = {}) {
   const current = readJellyfinSyncSettings()
+  const nextUserId = String(patch.userId !== undefined ? patch.userId : current.userId || '').trim()
+  if (nextUserId && !isValidUuid(nextUserId)) {
+    throw new Error('Jellyfin User ID는 UUID 형식이어야 합니다.')
+  }
+
   const next = {
     ...current,
     ...patch,
     serverUrl: String(patch.serverUrl !== undefined ? patch.serverUrl : current.serverUrl || '').trim(),
-    userId: String(patch.userId !== undefined ? patch.userId : current.userId || '').trim(),
+    userId: nextUserId,
   }
 
   if (patch.apiKey !== undefined) {

@@ -29,6 +29,10 @@ function shortPersonId(value) {
   return `${text.slice(0, 6)}...${text.slice(-4)}`
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim())
+}
+
 export default function JellyfinActorSyncTab() {
   const [form] = Form.useForm()
   const [items, setItems] = useState([])
@@ -44,9 +48,11 @@ export default function JellyfinActorSyncTab() {
   const [matchLoading, setMatchLoading] = useState(false)
   const [matchActor, setMatchActor] = useState(null)
   const [matchResult, setMatchResult] = useState(null)
+  const [resolvedUserName, setResolvedUserName] = useState('')
 
   const loadSettings = useCallback(async () => {
     const settings = await window.api.getJellyfinSyncSettings()
+    setResolvedUserName('')
     form.setFieldsValue({
       serverUrl: settings.serverUrl || '',
       apiKey: '',
@@ -143,8 +149,10 @@ export default function JellyfinActorSyncTab() {
       const result = await window.api.testJellyfinConnection(payload)
       message.success(`연결 성공: ${result.serverName || 'Jellyfin'} (${result.version || 'unknown'})`)
       if (result.userId) form.setFieldValue('userId', result.userId)
+      setResolvedUserName(String(result.userName || '').trim())
     } catch (error) {
       message.error(`연결 실패: ${error.message}`)
+      setResolvedUserName('')
     }
   }, [form])
 
@@ -301,10 +309,27 @@ export default function JellyfinActorSyncTab() {
             <Form.Item label="API Key" name="apiKey" tooltip="비워두면 기존 저장값 유지">
               <Input.Password placeholder="Jellyfin API Key" style={{ width: 260 }} />
             </Form.Item>
-            <Form.Item label="User ID" name="userId">
-              <Input placeholder="선택 (비우면 자동 탐색)" style={{ width: 260 }} />
+            <Form.Item
+              label="User ID"
+              name="userId"
+              rules={[
+                {
+                  validator: (_rule, value) => {
+                    const text = String(value || '').trim()
+                    if (!text || isUuid(text)) return Promise.resolve()
+                    return Promise.reject(new Error('User ID는 UUID 형식이어야 합니다.'))
+                  },
+                },
+              ]}
+            >
+              <Input placeholder="UUID (비우면 자동 탐색)" style={{ width: 260 }} />
             </Form.Item>
           </Space>
+          <Typography.Text type="secondary">
+            {resolvedUserName
+              ? `연결된 사용자명: ${resolvedUserName} (User ID에는 UUID만 저장됩니다)`
+              : 'User ID는 UUID만 입력하세요. 사용자명은 입력하지 않습니다.'}
+          </Typography.Text>
           <Space wrap size={12}>
             <Form.Item name="overwriteOverview" valuePropName="checked" style={{ marginBottom: 0 }}>
               <Checkbox>Overview 덮어쓰기</Checkbox>

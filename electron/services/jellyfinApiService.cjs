@@ -2,6 +2,7 @@
 
 const DEFAULT_TIMEOUT_MS = 12000
 const MAX_RETRY_COUNT = 2
+const UUID_V4_OR_V5_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -10,6 +11,10 @@ function delay(ms) {
 function sanitizeBaseUrl(url) {
   const normalized = String(url || '').trim().replace(/\/+$/, '')
   return normalized
+}
+
+function isValidUuid(value) {
+  return UUID_V4_OR_V5_RE.test(String(value || '').trim())
 }
 
 function isRetryableStatus(status) {
@@ -70,6 +75,26 @@ async function parseResponseBody(response) {
   return response.text()
 }
 
+function extractJellyfinErrorMessage(payload) {
+  if (typeof payload === 'string') return payload.trim().slice(0, 500)
+  if (!payload || typeof payload !== 'object') return ''
+
+  const candidates = [
+    payload.Message,
+    payload.ErrorMessage,
+    payload.message,
+    payload.error,
+    payload.details,
+  ]
+
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim()
+    if (text) return text.slice(0, 500)
+  }
+
+  return ''
+}
+
 function createJellyfinApiService(options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch
   if (typeof fetchImpl !== 'function') {
@@ -85,6 +110,7 @@ function createJellyfinApiService(options = {}) {
   if (!apiKey) throw new Error('Jellyfin API Key가 설정되지 않았습니다.')
 
   let cachedUserId = configuredUserId || ''
+  let cachedUserName = ''
 
   async function request(pathname, requestOptions = {}) {
     const method = requestOptions.method || 'GET'
@@ -110,9 +136,17 @@ function createJellyfinApiService(options = {}) {
 
         if (!response.ok) {
           const payload = await parseResponseBody(response)
-          const err = new Error(`Jellyfin API 오류 (${response.status})`)
+          const jellyfinMessage = extractJellyfinErrorMessage(payload)
+          const endpoint = `${method.toUpperCase()} ${pathname}`
+          const err = new Error(
+            jellyfinMessage
+              ? `Jellyfin API 오류 (${response.status}) ${endpoint}: ${jellyfinMessage}`
+              : `Jellyfin API 오류 (${response.status}) ${endpoint}`,
+          )
           err.status = response.status
           err.path = pathname
+          err.endpoint = endpoint
+          err.jellyfinMessage = jellyfinMessage
           err.payload = payload
           throw err
         }
@@ -132,33 +166,62 @@ function createJellyfinApiService(options = {}) {
     }
   }
 
-  async function resolveUserId(signal) {
-    if (cachedUserId) return cachedUserId
-
-    const result = await request('/Users/Query', {
+  async function getUserById(userId, signal) {
+    return request(`/Users/${encodeURIComponent(userId)}`, {
       method: 'GET',
-      query: { IsDisabled: false, Limit: 5 },
+      signal,
+    })
+  }
+
+  async function resolveUserIdentity(signal) {
+    if (cachedUserId) {
+      if (!isValidUuid(cachedUserId)) {
+        throw new Error('Jellyfin User ID는 UUID 형식이어야 합니다.')
+      }
+
+      if (!cachedUserName) {
+        try {
+          const user = await getUserById(cachedUserId, signal)
+          cachedUserName = String(user?.Name || '').trim()
+        } catch {
+          cachedUserName = ''
+        }
+      }
+
+      return { userId: cachedUserId, userName: cachedUserName }
+    }
+
+    const result = await request('/Users', {
+      method: 'GET',
+      query: { isDisabled: false },
       signal,
     })
 
-    const users = Array.isArray(result?.Items) ? result.Items : []
-    const first = users.find((user) => user?.Id) || null
+    const users = Array.isArray(result) ? result : []
+    const first = users.find((user) => isValidUuid(user?.Id)) || null
     if (!first) {
-      throw new Error('Jellyfin 사용자 정보를 찾을 수 없습니다. userId를 설정해 주세요.')
+      throw new Error('활성 Jellyfin 사용자를 찾을 수 없습니다. User ID(UUID)를 직접 입력해 주세요.')
     }
 
     cachedUserId = String(first.Id)
-    return cachedUserId
+    cachedUserName = String(first.Name || '').trim()
+    return { userId: cachedUserId, userName: cachedUserName }
+  }
+
+  async function resolveUserId(signal) {
+    const identity = await resolveUserIdentity(signal)
+    return identity.userId
   }
 
   async function testConnection(signal) {
     const info = await request('/System/Info/Public', { signal })
-    const userId = await resolveUserId(signal)
+    const identity = await resolveUserIdentity(signal)
     return {
       success: true,
       serverName: info?.ServerName || '',
       version: info?.Version || '',
-      userId,
+      userId: identity.userId,
+      userName: identity.userName || '',
     }
   }
 
@@ -230,4 +293,5 @@ function createJellyfinApiService(options = {}) {
 module.exports = {
   createJellyfinApiService,
   sanitizeBaseUrl,
+  isValidUuid,
 }
