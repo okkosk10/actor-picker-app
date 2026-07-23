@@ -312,6 +312,9 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
       if (response?.success === false) {
         message.error(response.error || '저장 실패')
       } else {
+        if (approve) {
+          await window.api.exportSelectedJellyfinNfo({ itemIds: [payload.videoId], nfoMode: 'overwrite-generated-only' })
+        }
         message.success(approve ? '저장 후 승인 완료' : '저장 완료')
         setEditingItem(null)
         await refreshAfterAction()
@@ -330,6 +333,10 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
       for (const item of selectedItems) {
         await window.api.approveJellyfinAnalysis({ videoId: item.id })
       }
+      await window.api.exportSelectedJellyfinNfo({
+        itemIds: selectedItems.map((item) => item.id),
+        nfoMode: 'overwrite-generated-only',
+      })
       await refreshAfterAction()
       message.success('선택 작품을 승인했습니다.')
     } finally {
@@ -353,7 +360,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
 
   const regenerateSelectedNfo = useCallback(async () => {
     if (!selectedItems.length) return
-    await window.api.exportSelectedJellyfinNfo({ itemIds: selectedItems.map((item) => item.id), nfoMode: 'skip' })
+    await window.api.exportSelectedJellyfinNfo({ itemIds: selectedItems.map((item) => item.id), nfoMode: 'overwrite-generated-only' })
     message.success('선택 작품 NFO 다시 생성 요청을 보냈습니다.')
   }, [selectedItems])
 
