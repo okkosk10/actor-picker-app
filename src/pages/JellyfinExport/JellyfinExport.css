@@ -11,12 +11,22 @@
 }
 
   .jellyfin-tabs {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
     padding: 18px;
     color: #0f172a;
     background:
       radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 34%),
       radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 28%),
       linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  }
+
+  .jellyfin-tabs :where(.ant-tabs-content-holder) {
+    min-height: 0;
+    overflow: hidden;
   }
 
   .jellyfin-tabs :where(.ant-tabs-nav) {
@@ -258,48 +268,91 @@
   color: inherit;
 }
 
-.jellyfin-page :where(.ant-table) {
+.jellyfin-actor-sync-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.jellyfin-actor-sync-settings,
+.jellyfin-actor-sync-controls {
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.jellyfin-page :where(.ant-form-item-label > label),
+.jellyfin-tabs :where(.ant-form-item-label > label),
+.jellyfin-page :where(.ant-form-item-label > label .ant-form-item-required-mark),
+.jellyfin-tabs :where(.ant-form-item-label > label .ant-form-item-required-mark),
+.jellyfin-page :where(.ant-form-item-tooltip),
+.jellyfin-tabs :where(.ant-form-item-tooltip),
+.jellyfin-page :where(.ant-checkbox-wrapper),
+.jellyfin-tabs :where(.ant-checkbox-wrapper),
+.jellyfin-page :where(.ant-checkbox + span),
+.jellyfin-tabs :where(.ant-checkbox + span) {
+  color: #0f172a !important;
+}
+
+.jellyfin-page :where(.ant-form-item-explain-error),
+.jellyfin-tabs :where(.ant-form-item-explain-error) {
+  color: #dc2626 !important;
+}
+
+.jellyfin-page :where(.ant-table),
+.jellyfin-tabs :where(.ant-table) {
   color: #0f172a;
   background: transparent;
 }
 
-.jellyfin-page :where(.ant-table-container) {
+.jellyfin-page :where(.ant-table-container),
+.jellyfin-tabs :where(.ant-table-container) {
   background: #fff;
   border-radius: 12px;
 }
 
-.jellyfin-page :where(.ant-table-thead > tr > th) {
+.jellyfin-page :where(.ant-table-thead > tr > th),
+.jellyfin-tabs :where(.ant-table-thead > tr > th) {
   background: #eef2ff !important;
   color: #0f172a !important;
   font-weight: 700;
   border-bottom-color: rgba(148, 163, 184, 0.28) !important;
 }
 
-.jellyfin-page :where(.ant-table-tbody > tr > td) {
+.jellyfin-page :where(.ant-table-tbody > tr > td),
+.jellyfin-tabs :where(.ant-table-tbody > tr > td) {
   color: #0f172a !important;
   background: #ffffff !important;
   border-bottom-color: rgba(226, 232, 240, 0.9) !important;
 }
 
-.jellyfin-page :where(.ant-table-tbody > tr:nth-child(even) > td) {
+.jellyfin-page :where(.ant-table-tbody > tr:nth-child(even) > td),
+.jellyfin-tabs :where(.ant-table-tbody > tr:nth-child(even) > td) {
   background: #f8fafc !important;
 }
 
-.jellyfin-page :where(.ant-table-row:hover > td) {
+.jellyfin-page :where(.ant-table-row:hover > td),
+.jellyfin-tabs :where(.ant-table-row:hover > td) {
   background: rgba(239, 246, 255, 0.7) !important;
 }
 
-.jellyfin-page :where(.ant-table-cell) {
+.jellyfin-page :where(.ant-table-cell),
+.jellyfin-tabs :where(.ant-table-cell) {
   color: #0f172a !important;
 }
 
 .jellyfin-page :where(.ant-table-cell .ant-typography),
+.jellyfin-tabs :where(.ant-table-cell .ant-typography),
 .jellyfin-page :where(.ant-table-cell span),
-.jellyfin-page :where(.ant-table-cell a) {
+.jellyfin-tabs :where(.ant-table-cell span),
+.jellyfin-page :where(.ant-table-cell a),
+.jellyfin-tabs :where(.ant-table-cell a) {
   color: inherit;
 }
 
-.jellyfin-page :where(.ant-tag) {
+.jellyfin-page :where(.ant-tag),
+.jellyfin-tabs :where(.ant-tag) {
   font-weight: 600;
 }
 

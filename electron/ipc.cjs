@@ -54,11 +54,24 @@ const {
   listJellyfinExportItems,
   exportJellyfinNfo,
 } = require('./services/jellyfinNfoService.cjs')
+const { createJellyfinApiService } = require('./services/jellyfinApiService.cjs')
+const {
+  SYNC_STATUS,
+  listActorSyncItems,
+  syncActorsBatch,
+  findPersonCandidates,
+  linkActorToPerson,
+  unlinkActorPerson,
+  getUnsyncedActorIds,
+  getChangedActorIds,
+} = require('./services/jellyfinPersonSyncService.cjs')
 
 const subtitleAnalysisJobs = new Map()
+const jellyfinActorSyncJobs = new Map()
 
 const SUBTITLE_ARCHIVE_DIR = 'subtitle-archive'
 const SUBTITLE_ARCHIVE_SETTINGS_FILE = 'subtitle-archive.json'
+const JELLYFIN_PERSON_SYNC_SETTINGS_FILE = 'jellyfin-person-sync.json'
 
 function getSubtitleArchiveDefaultPath() {
   return path.join(app.getPath('userData'), SUBTITLE_ARCHIVE_DIR)
@@ -66,6 +79,94 @@ function getSubtitleArchiveDefaultPath() {
 
 function getSubtitleArchiveSettingsPath() {
   return path.join(app.getPath('userData'), SUBTITLE_ARCHIVE_SETTINGS_FILE)
+}
+
+function getJellyfinSyncSettingsPath() {
+  return path.join(app.getPath('userData'), JELLYFIN_PERSON_SYNC_SETTINGS_FILE)
+}
+
+function getDefaultJellyfinSyncSettings() {
+  return {
+    serverUrl: '',
+    apiKey: '',
+    userId: '',
+    timeoutMs: 12000,
+    overwriteOverview: true,
+    replacePrimaryImage: true,
+    forceNameUpdate: false,
+    includeArchived: false,
+  }
+}
+
+function readJellyfinSyncSettings() {
+  const fallback = getDefaultJellyfinSyncSettings()
+  try {
+    const raw = fs.readFileSync(getJellyfinSyncSettingsPath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    return {
+      ...fallback,
+      ...parsed,
+      serverUrl: String(parsed?.serverUrl || '').trim(),
+      apiKey: String(parsed?.apiKey || '').trim(),
+      userId: String(parsed?.userId || '').trim(),
+      timeoutMs: Number.isFinite(parsed?.timeoutMs) ? Number(parsed.timeoutMs) : fallback.timeoutMs,
+      overwriteOverview: parsed?.overwriteOverview !== false,
+      replacePrimaryImage: parsed?.replacePrimaryImage !== false,
+      forceNameUpdate: Boolean(parsed?.forceNameUpdate),
+      includeArchived: Boolean(parsed?.includeArchived),
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function writeJellyfinSyncSettings(patch = {}) {
+  const current = readJellyfinSyncSettings()
+  const next = {
+    ...current,
+    ...patch,
+    serverUrl: String(patch.serverUrl !== undefined ? patch.serverUrl : current.serverUrl || '').trim(),
+    userId: String(patch.userId !== undefined ? patch.userId : current.userId || '').trim(),
+  }
+
+  if (patch.apiKey !== undefined) {
+    next.apiKey = String(patch.apiKey || '').trim()
+  }
+
+  const settingsPath = getJellyfinSyncSettingsPath()
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+  fs.writeFileSync(settingsPath, JSON.stringify(next, null, 2), 'utf8')
+  return next
+}
+
+function toRendererJellyfinSettings(settings) {
+  return {
+    serverUrl: settings.serverUrl || '',
+    userId: settings.userId || '',
+    timeoutMs: Number(settings.timeoutMs || 12000),
+    overwriteOverview: settings.overwriteOverview !== false,
+    replacePrimaryImage: settings.replacePrimaryImage !== false,
+    forceNameUpdate: Boolean(settings.forceNameUpdate),
+    includeArchived: Boolean(settings.includeArchived),
+    hasApiKey: Boolean(String(settings.apiKey || '').trim()),
+  }
+}
+
+function createJellyfinApiFromSettings(overrides = {}) {
+  const settings = readJellyfinSyncSettings()
+  const merged = {
+    ...settings,
+    ...overrides,
+  }
+
+  if (!merged.serverUrl) {
+    throw new Error('Jellyfin 서버 URL이 설정되지 않았습니다.')
+  }
+  if (!merged.apiKey) {
+    throw new Error('Jellyfin API Key가 설정되지 않았습니다.')
+  }
+
+  return createJellyfinApiService(merged)
 }
 
 function readSubtitleArchiveConfig() {
@@ -4199,6 +4300,241 @@ function registerIpcHandlers() {
         }
       },
     })
+  })
+
+  ipcMain.handle('jellyfin:get-sync-settings', async () => {
+    return toRendererJellyfinSettings(readJellyfinSyncSettings())
+  })
+
+  ipcMain.handle('jellyfin:set-sync-settings', async (_event, payload = {}) => {
+    const next = writeJellyfinSyncSettings(payload)
+    return { success: true, settings: toRendererJellyfinSettings(next) }
+  })
+
+  ipcMain.handle('jellyfin:test-connection', async (_event, payload = {}) => {
+    const api = createJellyfinApiFromSettings(payload || {})
+    const result = await api.testConnection()
+    return { success: true, ...result }
+  })
+
+  ipcMain.handle('jellyfin:list-actor-sync-items', async (_event, options = {}) => {
+    const db = getDb()
+
+    if (options.refreshChanged === true) {
+      const changedIds = await getChangedActorIds(db, {
+        includeArchived: options.includeArchived === true,
+        imageBaseDir: path.join(app.getPath('userData'), 'actors'),
+      })
+      if (changedIds.length > 0) {
+        const placeholders = changedIds.map(() => '?').join(',')
+        db.prepare(`
+          UPDATE actors
+          SET jellyfin_sync_status = ?,
+              jellyfin_sync_error = '',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id IN (${placeholders})
+        `).run(SYNC_STATUS.CHANGED, ...changedIds)
+      }
+    }
+
+    return { success: true, items: listActorSyncItems(db, options) }
+  })
+
+  async function runActorSyncBatch(event, payload = {}, actorIds = []) {
+    const requestId = String(payload.requestId || crypto.randomUUID())
+    const controller = new AbortController()
+    jellyfinActorSyncJobs.set(requestId, { controller })
+
+    const db = getDb()
+    const settings = readJellyfinSyncSettings()
+    const api = createJellyfinApiFromSettings()
+
+    try {
+      const result = await syncActorsBatch(db, api, actorIds, {
+        force: Boolean(payload.force),
+        signal: controller.signal,
+        overwriteOverview: settings.overwriteOverview !== false,
+        replacePrimaryImage: settings.replacePrimaryImage !== false,
+        forceNameUpdate: Boolean(settings.forceNameUpdate),
+        imageBaseDir: path.join(app.getPath('userData'), 'actors'),
+        onProgress: (progressPayload) => {
+          try {
+            event.sender.send('jellyfin:actor-sync-progress', {
+              requestId,
+              ...progressPayload,
+            })
+          } catch {
+            // ignore
+          }
+        },
+      })
+
+      return {
+        success: true,
+        requestId,
+        ...result,
+      }
+    } finally {
+      jellyfinActorSyncJobs.delete(requestId)
+    }
+  }
+
+  ipcMain.handle('jellyfin:sync-actor', async (event, payload = {}) => {
+    const actorId = Number(payload.actorId)
+    if (!Number.isInteger(actorId) || actorId <= 0) {
+      throw new Error('유효한 actorId가 필요합니다.')
+    }
+    return runActorSyncBatch(event, payload, [actorId])
+  })
+
+  ipcMain.handle('jellyfin:sync-selected-actors', async (event, payload = {}) => {
+    const ids = Array.isArray(payload.actorIds)
+      ? payload.actorIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+      : []
+    if (ids.length === 0) {
+      return { success: true, total: 0, processed: 0, results: [] }
+    }
+    return runActorSyncBatch(event, payload, ids)
+  })
+
+  ipcMain.handle('jellyfin:sync-unsynced-actors', async (event, payload = {}) => {
+    const db = getDb()
+    const settings = readJellyfinSyncSettings()
+    const ids = await getUnsyncedActorIds(db, {
+      includeArchived: settings.includeArchived === true,
+    })
+    return runActorSyncBatch(event, payload, ids)
+  })
+
+  ipcMain.handle('jellyfin:sync-changed-actors', async (event, payload = {}) => {
+    const db = getDb()
+    const settings = readJellyfinSyncSettings()
+    const ids = await getChangedActorIds(db, {
+      includeArchived: settings.includeArchived === true,
+      imageBaseDir: path.join(app.getPath('userData'), 'actors'),
+    })
+    return runActorSyncBatch(event, payload, ids)
+  })
+
+  ipcMain.handle('jellyfin:force-sync-actors', async (event, payload = {}) => {
+    const db = getDb()
+    const settings = readJellyfinSyncSettings()
+    const ids = Array.isArray(payload.actorIds) && payload.actorIds.length > 0
+      ? payload.actorIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+      : listActorSyncItems(db, { includeArchived: settings.includeArchived === true }).map((row) => row.id)
+
+    return runActorSyncBatch(event, { ...payload, force: true }, ids)
+  })
+
+  ipcMain.handle('jellyfin:sync-test-actor', async (event, payload = {}) => {
+    const db = getDb()
+    const settings = readJellyfinSyncSettings()
+
+    const explicitActorId = Number(payload.actorId)
+    if (Number.isInteger(explicitActorId) && explicitActorId > 0) {
+      return runActorSyncBatch(event, payload, [explicitActorId])
+    }
+
+    const rows = db.prepare(`
+      SELECT a.*
+      FROM actors a
+      WHERE (${settings.includeArchived === true ? '1=1' : 'a.is_archived = 0'})
+        AND EXISTS (SELECT 1 FROM video_actors va WHERE va.actor_id = a.id)
+      ORDER BY
+        CASE
+          WHEN a.jellyfin_sync_status = 'not_synced' THEN 0
+          WHEN a.jellyfin_sync_status = 'changed' THEN 1
+          WHEN a.jellyfin_sync_status = 'failed' THEN 2
+          ELSE 3
+        END,
+        a.name ASC
+      LIMIT 20
+    `).all()
+
+    if (rows.length === 0) {
+      return { success: false, error: '테스트 가능한 배우가 없습니다.' }
+    }
+
+    const api = createJellyfinApiFromSettings()
+    let selected = null
+    for (const actor of rows) {
+      const actorStatus = String(actor.jellyfin_sync_status || '')
+      if (actorStatus === 'synced') continue
+      if (!String(actor.image_path || '').trim()) continue
+      if (!fs.existsSync(String(actor.image_path || '').trim())) continue
+
+      const match = await findPersonCandidates(actor, api)
+      if (match.type === 'matched') {
+        selected = actor
+        break
+      }
+    }
+
+    if (!selected) {
+      return {
+        success: false,
+        error: '자동 매칭 가능한 배우가 없습니다. 수동 매칭 후 다시 시도해 주세요.',
+      }
+    }
+
+    return runActorSyncBatch(event, payload, [selected.id])
+  })
+
+  ipcMain.handle('jellyfin:search-person-candidates', async (_event, payload = {}) => {
+    const db = getDb()
+    const actorId = Number(payload.actorId)
+    if (!Number.isInteger(actorId) || actorId <= 0) {
+      throw new Error('유효한 actorId가 필요합니다.')
+    }
+
+    const actor = db.prepare('SELECT * FROM actors WHERE id = ?').get(actorId)
+    if (!actor) throw new Error('배우를 찾을 수 없습니다.')
+
+    const api = createJellyfinApiFromSettings()
+    const match = await findPersonCandidates(actor, api)
+    return {
+      success: true,
+      actorId,
+      type: match.type,
+      method: match.method,
+      reason: match.reason || '',
+      person: match.person || null,
+      candidates: Array.isArray(match.candidates) ? match.candidates : [],
+    }
+  })
+
+  ipcMain.handle('jellyfin:link-actor-person', async (_event, payload = {}) => {
+    const db = getDb()
+    const actorId = Number(payload.actorId)
+    const personId = String(payload.personId || '').trim()
+    const personName = String(payload.personName || '').trim()
+
+    if (!Number.isInteger(actorId) || actorId <= 0) throw new Error('유효한 actorId가 필요합니다.')
+    if (!personId) throw new Error('personId가 필요합니다.')
+
+    const updated = linkActorToPerson(db, actorId, personId, personName)
+    return { success: true, actor: updated }
+  })
+
+  ipcMain.handle('jellyfin:unlink-actor-person', async (_event, payload = {}) => {
+    const db = getDb()
+    const actorId = Number(payload.actorId)
+    if (!Number.isInteger(actorId) || actorId <= 0) throw new Error('유효한 actorId가 필요합니다.')
+    const updated = unlinkActorPerson(db, actorId)
+    return { success: true, actor: updated }
+  })
+
+  ipcMain.handle('jellyfin:cancel-actor-sync', async (_event, payload = {}) => {
+    const requestId = String(payload.requestId || '')
+    if (requestId && jellyfinActorSyncJobs.has(requestId)) {
+      jellyfinActorSyncJobs.get(requestId).controller.abort()
+      return { success: true, cancelled: true, requestId }
+    }
+
+    for (const job of jellyfinActorSyncJobs.values()) {
+      job.controller.abort()
+    }
+    return { success: true, cancelled: true, requestId: requestId || null }
   })
 
   // ══════════════════════════════════════════════════════════════

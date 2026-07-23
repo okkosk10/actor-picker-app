@@ -1051,6 +1051,32 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: '027_add_actor_jellyfin_sync_fields',
+    description: 'actors 테이블에 Jellyfin Person 동기화 컬럼 추가',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(actors)').all().map((c) => c.name)
+      const additions = [
+        { name: 'jellyfin_person_id', def: "TEXT DEFAULT ''" },
+        { name: 'jellyfin_sync_status', def: "TEXT DEFAULT 'not_synced'" },
+        { name: 'jellyfin_sync_hash', def: "TEXT DEFAULT ''" },
+        { name: 'jellyfin_synced_at', def: 'TEXT' },
+        { name: 'jellyfin_sync_error', def: "TEXT DEFAULT ''" },
+        { name: 'jellyfin_matched_name', def: "TEXT DEFAULT ''" },
+        { name: 'jellyfin_match_method', def: "TEXT DEFAULT ''" },
+        { name: 'jellyfin_image_synced_at', def: 'TEXT' },
+      ]
+
+      for (const col of additions) {
+        if (!cols.includes(col.name)) {
+          db.exec(`ALTER TABLE actors ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_actors_jellyfin_sync_status ON actors (jellyfin_sync_status)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_actors_jellyfin_person_id ON actors (jellyfin_person_id)`)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

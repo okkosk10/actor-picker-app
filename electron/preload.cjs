@@ -79,6 +79,48 @@ contextBridge.exposeInMainWorld('api', {
   exportAllJellyfinNfo: (payload) =>
     ipcRenderer.invoke('jellyfin:export-all', payload),
 
+  getJellyfinSyncSettings: () =>
+    ipcRenderer.invoke('jellyfin:get-sync-settings'),
+
+  setJellyfinSyncSettings: (payload) =>
+    ipcRenderer.invoke('jellyfin:set-sync-settings', payload),
+
+  testJellyfinConnection: (payload) =>
+    ipcRenderer.invoke('jellyfin:test-connection', payload),
+
+  listJellyfinActorSyncItems: (options) =>
+    ipcRenderer.invoke('jellyfin:list-actor-sync-items', options),
+
+  syncJellyfinActor: (payload) =>
+    ipcRenderer.invoke('jellyfin:sync-actor', payload),
+
+  syncSelectedJellyfinActors: (payload) =>
+    ipcRenderer.invoke('jellyfin:sync-selected-actors', payload),
+
+  syncUnsyncedJellyfinActors: (payload) =>
+    ipcRenderer.invoke('jellyfin:sync-unsynced-actors', payload),
+
+  syncChangedJellyfinActors: (payload) =>
+    ipcRenderer.invoke('jellyfin:sync-changed-actors', payload),
+
+  forceSyncJellyfinActors: (payload) =>
+    ipcRenderer.invoke('jellyfin:force-sync-actors', payload),
+
+  syncTestJellyfinActor: (payload) =>
+    ipcRenderer.invoke('jellyfin:sync-test-actor', payload),
+
+  searchJellyfinPersonCandidates: (payload) =>
+    ipcRenderer.invoke('jellyfin:search-person-candidates', payload),
+
+  linkJellyfinActorPerson: (payload) =>
+    ipcRenderer.invoke('jellyfin:link-actor-person', payload),
+
+  unlinkJellyfinActorPerson: (payload) =>
+    ipcRenderer.invoke('jellyfin:unlink-actor-person', payload),
+
+  cancelJellyfinActorSync: (payload) =>
+    ipcRenderer.invoke('jellyfin:cancel-actor-sync', payload),
+
   onJellyfinScanProgress: (callback) => {
     const listener = (_event, payload) => callback(payload)
     ipcRenderer.on('jellyfin:scan-progress', listener)
@@ -95,6 +137,12 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_event, payload) => callback(payload)
     ipcRenderer.on('jellyfin:analysis-progress', listener)
     return () => ipcRenderer.removeListener('jellyfin:analysis-progress', listener)
+  },
+
+  onJellyfinActorSyncProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('jellyfin:actor-sync-progress', listener)
+    return () => ipcRenderer.removeListener('jellyfin:actor-sync-progress', listener)
   },
 
   // ── 폴더 스캔 및 DB 저장 ─────────────────────────────────────
