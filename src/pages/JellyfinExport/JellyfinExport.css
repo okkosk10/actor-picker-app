@@ -9,6 +9,62 @@
     linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
 }
 
+  .jellyfin-tabs {
+    padding: 18px;
+    background:
+      radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 34%),
+      radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 28%),
+      linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  }
+
+  .jellyfin-tabs :where(.ant-tabs-nav) {
+    margin: 0 0 12px;
+  }
+
+  .jellyfin-tabs :where(.ant-tabs-tab) {
+    font-weight: 700;
+  }
+
+  .jellyfin-analysis-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 0;
+  }
+
+  .jellyfin-analysis-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .jellyfin-analysis-modal {
+    max-height: 70vh;
+    overflow: auto;
+    padding-right: 4px;
+  }
+
+  .jellyfin-analysis-modal__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .jellyfin-analysis-modal__grid--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .jellyfin-analysis-modal__grid--2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jellyfin-analysis-modal__label {
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #334155;
+  }
+
 .jellyfin-hero {
   display: flex;
   justify-content: space-between;

@@ -1024,6 +1024,33 @@ const MIGRATIONS = [
       `)
     },
   },
+  {
+    version: '026_add_subtitle_ai_analysis_fields',
+    description: '영상 테이블에 자막 AI 분석 상세 필드 추가',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+
+      const additions = [
+        { name: 'ai_relationship', def: "TEXT DEFAULT '[]'" },
+        { name: 'ai_tone', def: "TEXT DEFAULT '[]'" },
+        { name: 'ai_confidence', def: 'REAL DEFAULT 0' },
+        { name: 'ai_warnings', def: "TEXT DEFAULT '[]'" },
+        { name: 'ai_raw_response', def: "TEXT DEFAULT ''" },
+        { name: 'ai_model', def: "TEXT DEFAULT ''" },
+        { name: 'ai_prompt_version', def: "TEXT DEFAULT ''" },
+        { name: 'ai_error', def: "TEXT DEFAULT ''" },
+        { name: 'ai_input_tokens', def: 'INTEGER DEFAULT 0' },
+        { name: 'ai_output_tokens', def: 'INTEGER DEFAULT 0' },
+        { name: 'ai_api_calls', def: 'INTEGER DEFAULT 0' },
+      ]
+
+      for (const col of additions) {
+        if (!cols.includes(col.name)) {
+          db.exec(`ALTER TABLE videos ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

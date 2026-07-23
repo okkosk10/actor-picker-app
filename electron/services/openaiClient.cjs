@@ -13,11 +13,12 @@
 
 const path = require('path')
 const { app } = require('electron')
+const isPackaged = Boolean(app?.isPackaged)
 
 // 패키징 여부에 따라 .env 경로를 다르게 지정한다.
 // - 개발:    프로젝트 루트 (.env)
 // - 패키징:  resources/.env  (extraResources로 자동 복사됨)
-if (app.isPackaged) {
+if (isPackaged) {
   require('dotenv').config({ path: path.join(process.resourcesPath, '.env') })
 } else {
   require('dotenv').config({ path: path.join(__dirname, '../../.env') })

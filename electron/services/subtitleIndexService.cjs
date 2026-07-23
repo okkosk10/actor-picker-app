@@ -223,7 +223,10 @@ function resolveAiSummaryStatus(videoRow, subtitleStatus, primarySubtitleHash) {
     String(videoRow?.ai_outline || '').trim()
     || String(videoRow?.ai_plot || '').trim()
     || String(videoRow?.ai_story_structure || '').trim()
+    || String(videoRow?.ai_relationship || '').trim()
+    || String(videoRow?.ai_tone || '').trim()
     || parseAiTagList(videoRow?.ai_tags).length > 0
+    || parseAiTagList(videoRow?.ai_warnings).length > 0
     || String(videoRow?.ai_summary_source_path || '').trim()
     || String(videoRow?.ai_summary_source_hash || '').trim()
   )
@@ -284,6 +287,9 @@ async function refreshSubtitleIndex(db, options = {}) {
       v.subtitle_size, v.subtitle_added_at, v.primary_subtitle_path,
       v.primary_subtitle_hash, v.subtitle_status,
       v.ai_outline, v.ai_plot, v.ai_tags, v.ai_story_structure,
+      v.ai_relationship, v.ai_tone, v.ai_confidence, v.ai_warnings,
+      v.ai_raw_response, v.ai_model, v.ai_prompt_version, v.ai_error,
+      v.ai_input_tokens, v.ai_output_tokens, v.ai_api_calls,
       v.ai_summary_status, v.ai_summary_source_path, v.ai_summary_source_hash, v.ai_summary_updated_at
     FROM videos v
     ${whereClause}

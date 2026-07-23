@@ -43,6 +43,30 @@ contextBridge.exposeInMainWorld('api', {
   listJellyfinExportItems: (options) =>
     ipcRenderer.invoke('jellyfin:list-items', options),
 
+  getJellyfinAnalysisStats: () =>
+    ipcRenderer.invoke('jellyfin:get-analysis-stats'),
+
+  getJellyfinAnalysis: (payload) =>
+    ipcRenderer.invoke('jellyfin:get-analysis', payload),
+
+  analyzeSelectedJellyfinMetadata: (payload) =>
+    ipcRenderer.invoke('jellyfin:analyze-selected', payload),
+
+  analyzeTestJellyfinMetadata: (payload) =>
+    ipcRenderer.invoke('jellyfin:analyze-test', payload),
+
+  updateJellyfinAnalysis: (payload) =>
+    ipcRenderer.invoke('jellyfin:update-analysis', payload),
+
+  approveJellyfinAnalysis: (payload) =>
+    ipcRenderer.invoke('jellyfin:approve-analysis', payload),
+
+  unapproveJellyfinAnalysis: (payload) =>
+    ipcRenderer.invoke('jellyfin:unapprove-analysis', payload),
+
+  cancelJellyfinAnalysis: (payload) =>
+    ipcRenderer.invoke('jellyfin:cancel-analysis', payload),
+
   scanJellyfinSubtitles: (options) =>
     ipcRenderer.invoke('jellyfin:scan-subtitles', options),
 
@@ -65,6 +89,12 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_event, payload) => callback(payload)
     ipcRenderer.on('jellyfin:export-progress', listener)
     return () => ipcRenderer.removeListener('jellyfin:export-progress', listener)
+  },
+
+  onJellyfinAnalysisProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('jellyfin:analysis-progress', listener)
+    return () => ipcRenderer.removeListener('jellyfin:analysis-progress', listener)
   },
 
   // ── 폴더 스캔 및 DB 저장 ─────────────────────────────────────

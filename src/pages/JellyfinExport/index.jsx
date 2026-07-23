@@ -3,8 +3,9 @@
  * Jellyfin 호환 메타데이터 내보내기 페이지
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Modal, Progress, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Modal, Progress, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
 import './JellyfinExport.css'
+import SubtitleAnalysisTab from './SubtitleAnalysisTab.jsx'
 
 const FILTER_OPTIONS = [
   { value: 'all', label: '전체 작품' },
@@ -336,7 +337,7 @@ export default function JellyfinExportPage() {
     onChange: (keys) => setSelectedRowKeys(keys),
   }
 
-  return (
+  const exportTabContent = (
     <div className="jellyfin-page">
       <div className="jellyfin-hero">
         <div>
@@ -485,5 +486,16 @@ export default function JellyfinExportPage() {
         </div>
       </Modal>
     </div>
+  )
+
+  return (
+    <Tabs
+      className="jellyfin-tabs"
+      defaultActiveKey="export"
+      items={[
+        { key: 'export', label: 'NFO 내보내기', children: exportTabContent },
+        { key: 'analysis', label: '자막 AI 분석', children: <SubtitleAnalysisTab items={items} onReload={load} /> },
+      ]}
+    />
   )
 }

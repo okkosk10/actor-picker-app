@@ -222,6 +222,9 @@ function buildExportSnapshot(db, options = {}) {
       v.subtitle_paths, v.subtitle_files, v.subtitle_exts, v.subtitle_count, v.subtitle_size,
       v.subtitle_added_at, v.primary_subtitle_path, v.primary_subtitle_hash, v.subtitle_status,
       v.ai_outline, v.ai_plot, v.ai_tags, v.ai_story_structure,
+      v.ai_relationship, v.ai_tone, v.ai_confidence, v.ai_warnings,
+      v.ai_raw_response, v.ai_model, v.ai_prompt_version, v.ai_error,
+      v.ai_input_tokens, v.ai_output_tokens, v.ai_api_calls,
       v.ai_summary_status, v.ai_summary_source_path, v.ai_summary_source_hash, v.ai_summary_updated_at,
       va.is_main, va.order_index,
       a.id AS actor_id, a.name AS actor_name_joined, a.rating AS actor_rating, a.aliases
@@ -274,7 +277,10 @@ function buildExportSnapshot(db, options = {}) {
         String(video.ai_outline || '').trim()
         || String(video.ai_plot || '').trim()
         || String(video.ai_story_structure || '').trim()
+        || String(video.ai_relationship || '').trim()
+        || String(video.ai_tone || '').trim()
         || parseJsonArray(video.ai_tags).length > 0
+        || parseJsonArray(video.ai_warnings).length > 0
         || String(video.ai_summary_source_path || '').trim()
         || String(video.ai_summary_source_hash || '').trim()
       )
@@ -321,6 +327,17 @@ function buildExportSnapshot(db, options = {}) {
       aiPlot: video.ai_plot || '',
       aiTags: parseJsonArray(video.ai_tags),
       aiStoryStructure: video.ai_story_structure || '',
+      aiRelationship: parseJsonArray(video.ai_relationship),
+      aiTone: parseJsonArray(video.ai_tone),
+      aiConfidence: Number(video.ai_confidence || 0) || 0,
+      aiWarnings: parseJsonArray(video.ai_warnings),
+      aiRawResponse: video.ai_raw_response || '',
+      aiModel: video.ai_model || '',
+      aiPromptVersion: video.ai_prompt_version || '',
+      aiError: video.ai_error || '',
+      aiInputTokens: Number(video.ai_input_tokens || 0) || 0,
+      aiOutputTokens: Number(video.ai_output_tokens || 0) || 0,
+      aiApiCalls: Number(video.ai_api_calls || 0) || 0,
       aiSummarySourcePath: video.ai_summary_source_path || '',
       aiSummarySourceHash: video.ai_summary_source_hash || '',
       aiSummaryUpdatedAt: video.ai_summary_updated_at || null,

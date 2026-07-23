@@ -39,12 +39,23 @@ const { handleChatRequest }      = require('./services/chat/chatOrchestrator.cjs
 const { analyzeActor, getAiAnalysis } = require('./services/aiActorAnalysisService.cjs')
 const { searchAvdbsActors, fetchAvdbsActorDetail, downloadImageToUserData, buildSuggestedTags } = require('./services/avdbsScraper.cjs')
 const { parseSubtitlePaths } = require('./subtitles.cjs')
-const { refreshSubtitleIndex, analyzeSubtitleForMetadata } = require('./services/subtitleIndexService.cjs')
+const { refreshSubtitleIndex } = require('./services/subtitleIndexService.cjs')
+const {
+  SUBTITLE_METADATA_PROMPT_VERSION,
+  analyzeSubtitleBatch,
+  getSubtitleAnalysisRecord,
+  updateSubtitleAnalysis,
+  approveSubtitleAnalysis,
+  unapproveSubtitleAnalysis,
+  getSubtitleAnalysisStats,
+} = require('./services/subtitleAiAnalysisService.cjs')
 const {
   getJellyfinExportStats,
   listJellyfinExportItems,
   exportJellyfinNfo,
 } = require('./services/jellyfinNfoService.cjs')
+
+const subtitleAnalysisJobs = new Map()
 
 const SUBTITLE_ARCHIVE_DIR = 'subtitle-archive'
 const SUBTITLE_ARCHIVE_SETTINGS_FILE = 'subtitle-archive.json'
@@ -4028,6 +4039,122 @@ function registerIpcHandlers() {
         }
       },
     })
+  })
+
+  ipcMain.handle('jellyfin:get-analysis-stats', async () => {
+    const db = getDb()
+    return { success: true, stats: getSubtitleAnalysisStats(db), promptVersion: SUBTITLE_METADATA_PROMPT_VERSION }
+  })
+
+  ipcMain.handle('jellyfin:get-analysis', async (_event, payload = {}) => {
+    const db = getDb()
+    const videoId = Number(payload.videoId)
+    if (!Number.isInteger(videoId) || videoId <= 0) {
+      return { success: false, error: '영상 ID가 올바르지 않습니다.' }
+    }
+    const record = getSubtitleAnalysisRecord(db, videoId)
+    if (!record) return { success: false, error: '영상 정보 없음' }
+    return { success: true, record }
+  })
+
+  ipcMain.handle('jellyfin:analyze-selected', async (event, payload = {}) => {
+    const db = getDb()
+    const videoIds = Array.isArray(payload.videoIds) ? payload.videoIds : Array.isArray(payload.itemIds) ? payload.itemIds : []
+    const force = Boolean(payload.force)
+    const requestId = String(payload.requestId || crypto.randomUUID())
+    const controller = new AbortController()
+    subtitleAnalysisJobs.set(requestId, { controller })
+
+    try {
+      const result = await analyzeSubtitleBatch(db, {
+        videoIds,
+        force,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          try {
+            event.sender.send('jellyfin:analysis-progress', { requestId, ...progress })
+          } catch {
+            // ignore closed renderer
+          }
+        },
+      })
+      return { ...result, requestId }
+    } finally {
+      subtitleAnalysisJobs.delete(requestId)
+    }
+  })
+
+  ipcMain.handle('jellyfin:analyze-test', async (event, payload = {}) => {
+    const db = getDb()
+    const requestId = String(payload.requestId || crypto.randomUUID())
+    const controller = new AbortController()
+    subtitleAnalysisJobs.set(requestId, { controller })
+
+    try {
+      const snapshot = listJellyfinExportItems(db, { limit: 50 })
+      const videoIds = (snapshot.items || [])
+        .filter((item) => item.exportEligible && item.subtitleStatus !== 'missing' && item.subtitleStatus !== 'file_missing')
+        .slice(0, 3)
+        .map((item) => item.id)
+
+      const result = await analyzeSubtitleBatch(db, {
+        videoIds,
+        force: Boolean(payload.force),
+        signal: controller.signal,
+        onProgress: (progress) => {
+          try {
+            event.sender.send('jellyfin:analysis-progress', { requestId, ...progress })
+          } catch {
+            // ignore closed renderer
+          }
+        },
+      })
+      return { ...result, requestId }
+    } finally {
+      subtitleAnalysisJobs.delete(requestId)
+    }
+  })
+
+  ipcMain.handle('jellyfin:update-analysis', async (_event, payload = {}) => {
+    const db = getDb()
+    const videoId = Number(payload.videoId)
+    if (!Number.isInteger(videoId) || videoId <= 0) {
+      return { success: false, error: '영상 ID가 올바르지 않습니다.' }
+    }
+    return updateSubtitleAnalysis(db, videoId, payload)
+  })
+
+  ipcMain.handle('jellyfin:approve-analysis', async (_event, payload = {}) => {
+    const db = getDb()
+    const videoId = Number(payload.videoId)
+    if (!Number.isInteger(videoId) || videoId <= 0) {
+      return { success: false, error: '영상 ID가 올바르지 않습니다.' }
+    }
+    return approveSubtitleAnalysis(db, videoId)
+  })
+
+  ipcMain.handle('jellyfin:unapprove-analysis', async (_event, payload = {}) => {
+    const db = getDb()
+    const videoId = Number(payload.videoId)
+    if (!Number.isInteger(videoId) || videoId <= 0) {
+      return { success: false, error: '영상 ID가 올바르지 않습니다.' }
+    }
+    return unapproveSubtitleAnalysis(db, videoId)
+  })
+
+  ipcMain.handle('jellyfin:cancel-analysis', async (_event, payload = {}) => {
+    const requestId = String(payload.requestId || '')
+    if (requestId && subtitleAnalysisJobs.has(requestId)) {
+      subtitleAnalysisJobs.get(requestId).controller.abort()
+      subtitleAnalysisJobs.delete(requestId)
+      return { success: true, cancelled: true, requestId }
+    }
+
+    for (const [activeRequestId, job] of subtitleAnalysisJobs.entries()) {
+      job.controller.abort()
+      subtitleAnalysisJobs.delete(activeRequestId)
+    }
+    return { success: true, cancelled: true, requestId: requestId || null }
   })
 
   ipcMain.handle('jellyfin:export-selected', async (event, payload = {}) => {
