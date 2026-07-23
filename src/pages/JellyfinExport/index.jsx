@@ -28,7 +28,17 @@ function formatCount(value) {
 }
 
 function statusTag(status, labels, colors) {
-  return <Tag color={colors[status] || 'default'}>{labels[status] || status || '—'}</Tag>
+  const color = colors[status] || 'default'
+  return (
+    <Tag color={color} style={{ color: color === 'default' ? '#0f172a' : undefined }}>
+      {labels[status] || status || '—'}
+    </Tag>
+  )
+}
+
+function statusBadge(status, labels, classNameMap) {
+  const className = classNameMap[status] || classNameMap.default || ''
+  return <Tag className={`jellyfin-status-badge ${className}`.trim()}>{labels[status] || status || '—'}</Tag>
 }
 
 function buildFilterPredicate(filterKey) {
@@ -242,7 +252,7 @@ export default function JellyfinExportPage() {
       title: '자막 상태',
       dataIndex: 'subtitleStatus',
       width: 130,
-      render: (value) => statusTag(
+      render: (value) => statusBadge(
         value,
         {
           available: '있음',
@@ -252,11 +262,11 @@ export default function JellyfinExportPage() {
           unknown: '미확인',
         },
         {
-          available: 'green',
-          missing: 'default',
-          file_missing: 'gold',
-          error: 'red',
-          unknown: 'default',
+          available: 'jellyfin-status-badge--good',
+          missing: 'jellyfin-status-badge--neutral',
+          file_missing: 'jellyfin-status-badge--warning',
+          error: 'jellyfin-status-badge--danger',
+          unknown: 'jellyfin-status-badge--neutral',
         },
       ),
     },
@@ -271,7 +281,7 @@ export default function JellyfinExportPage() {
       title: 'AI 요약 상태',
       dataIndex: 'aiSummaryStatus',
       width: 130,
-      render: (value) => statusTag(
+      render: (value) => statusBadge(
         value,
         {
           not_analyzed: '분석 전',
@@ -283,13 +293,13 @@ export default function JellyfinExportPage() {
           not_available: '자막 없음',
         },
         {
-          not_analyzed: 'default',
-          pending: 'blue',
-          generated: 'green',
-          approved: 'cyan',
-          failed: 'red',
-          stale: 'gold',
-          not_available: 'default',
+          not_analyzed: 'jellyfin-status-badge--neutral',
+          pending: 'jellyfin-status-badge--info',
+          generated: 'jellyfin-status-badge--good',
+          approved: 'jellyfin-status-badge--success',
+          failed: 'jellyfin-status-badge--danger',
+          stale: 'jellyfin-status-badge--warning',
+          not_available: 'jellyfin-status-badge--neutral',
         },
       ),
     },

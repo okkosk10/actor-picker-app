@@ -148,15 +148,70 @@
 }
 
 .jellyfin-page :where(.ant-table-tbody > tr > td) {
+  color: #0f172a !important;
+  background: #ffffff !important;
   border-bottom-color: rgba(226, 232, 240, 0.9) !important;
+}
+
+.jellyfin-page :where(.ant-table-tbody > tr:nth-child(even) > td) {
+  background: #f8fafc !important;
 }
 
 .jellyfin-page :where(.ant-table-row:hover > td) {
   background: rgba(239, 246, 255, 0.7) !important;
 }
 
+.jellyfin-page :where(.ant-table-cell) {
+  color: #0f172a !important;
+}
+
+.jellyfin-page :where(.ant-table-cell .ant-typography),
+.jellyfin-page :where(.ant-table-cell span),
+.jellyfin-page :where(.ant-table-cell a) {
+  color: inherit;
+}
+
 .jellyfin-page :where(.ant-tag) {
   font-weight: 600;
+}
+
+.jellyfin-status-badge {
+  border: none;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: #fff;
+}
+
+.jellyfin-status-badge--good {
+  background: #16a34a;
+  color: #f8fafc;
+}
+
+.jellyfin-status-badge--success {
+  background: #0f766e;
+  color: #f8fafc;
+}
+
+.jellyfin-status-badge--info {
+  background: #2563eb;
+  color: #f8fafc;
+}
+
+.jellyfin-status-badge--warning {
+  background: #d97706;
+  color: #fff7ed;
+}
+
+.jellyfin-status-badge--danger {
+  background: #dc2626;
+  color: #fff1f2;
+}
+
+.jellyfin-status-badge--neutral {
+  background: #334155;
+  color: #f8fafc;
 }
 
 .jellyfin-result__summary,
