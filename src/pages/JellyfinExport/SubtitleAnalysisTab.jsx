@@ -430,6 +430,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
 
   const rowSelection = {
     selectedRowKeys,
+    preserveSelectedRowKeys: true,
     onChange: (keys) => setSelectedRowKeys(keys),
   }
 
@@ -520,7 +521,14 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
           dataSource={visibleItems}
           columns={columns}
           loading={loading}
-          pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 30, 50] }}
+          pagination={{
+            defaultPageSize: 100,
+            showSizeChanger: true,
+            pageSizeOptions: [20, 50, 100, 200],
+            showQuickJumper: true,
+            showTotal: (total, range) => `${range[0]}-${range[1]} / 총 ${formatCount(total)}개`,
+            position: ['topRight', 'bottomRight'],
+          }}
           scroll={{ x: 1380, y: 620 }}
           size="middle"
         />
