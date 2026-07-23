@@ -227,6 +227,41 @@
   font-size: 13px;
 }
 
+.jellyfin-progress-card__row {
+  margin-bottom: 8px;
+}
+
+.jellyfin-progress-card__meta {
+  margin-bottom: 6px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.jellyfin-analysis-filter-select.ant-select .ant-select-selector {
+  background: #ffffff !important;
+  border-color: rgba(148, 163, 184, 0.45) !important;
+}
+
+.jellyfin-analysis-filter-select.ant-select .ant-select-selection-item,
+.jellyfin-analysis-filter-select.ant-select .ant-select-selection-placeholder,
+.jellyfin-analysis-filter-select.ant-select .ant-select-arrow {
+  color: #0f172a !important;
+}
+
+.jellyfin-analysis-filter-dropdown.ant-select-dropdown {
+  background: #ffffff !important;
+}
+
+.jellyfin-analysis-filter-dropdown .ant-select-item-option-content {
+  color: #0f172a !important;
+}
+
+.jellyfin-analysis-filter-dropdown .ant-select-item-option-selected .ant-select-item-option-content {
+  color: #1d4ed8 !important;
+  font-weight: 700;
+}
+
 .jellyfin-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

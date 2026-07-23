@@ -21,7 +21,21 @@ function formatConfidence(value) {
 }
 
 function statusTag(status, labels, colors) {
-  return <Tag color={colors[status] || 'default'}>{labels[status] || status || '—'}</Tag>
+  const color = colors[status] || 'default'
+  const fallbackStyle = color === 'default'
+    ? {
+        background: '#e2e8f0',
+        borderColor: '#94a3b8',
+        color: '#0f172a',
+        fontWeight: 700,
+      }
+    : undefined
+
+  return (
+    <Tag color={color} style={fallbackStyle}>
+      {labels[status] || status || '—'}
+    </Tag>
+  )
 }
 
 function parseList(value) {
@@ -374,7 +388,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
       render: (value) => statusTag(
         value,
         { available: '있음', missing: '없음', file_missing: '파일 없음', error: '오류', unknown: '미확인' },
-        { available: 'green', missing: 'default', file_missing: 'gold', error: 'red', unknown: 'default' },
+        { available: 'green', missing: 'orange', file_missing: 'gold', error: 'red', unknown: 'geekblue' },
       ),
     },
     {
@@ -384,7 +398,7 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
       render: (value) => statusTag(
         value,
         { not_analyzed: '분석 전', pending: '대기', generated: '생성됨', approved: '승인됨', failed: '실패', stale: '재분석 필요', not_available: '자막 없음' },
-        { not_analyzed: 'default', pending: 'blue', generated: 'green', approved: 'cyan', failed: 'red', stale: 'gold', not_available: 'default' },
+        { not_analyzed: 'geekblue', pending: 'blue', generated: 'green', approved: 'cyan', failed: 'red', stale: 'gold', not_available: 'orange' },
       ),
     },
     {
@@ -419,12 +433,34 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
     onChange: (keys) => setSelectedRowKeys(keys),
   }
 
+  const batchCurrent = Number(analysisProgress?.batchIndex || 0)
+  const batchTotal = Number(analysisProgress?.batchTotal || 0)
+  const chunkCurrent = Number(analysisProgress?.chunkIndex || 0)
+  const chunkTotal = Number(analysisProgress?.chunkCount || 0)
+  const batchPercent = batchTotal > 0
+    ? Math.round((Math.min(batchCurrent, batchTotal) / batchTotal) * 100)
+    : 0
+  const chunkPercent = chunkTotal > 0
+    ? Math.round((Math.min(chunkCurrent, chunkTotal) / chunkTotal) * 100)
+    : 0
+
   return (
     <div className="jellyfin-analysis-tab">
       {analysisProgress && (
         <Card className="jellyfin-progress-card" size="small">
           <div className="jellyfin-progress-card__title">AI 분석 진행</div>
-          <Progress percent={Math.round(((analysisProgress.chunkIndex || 0) / Math.max(analysisProgress.chunkCount || 1, 1)) * 100)} status="active" />
+          {batchTotal > 0 ? (
+            <div className="jellyfin-progress-card__row">
+              <div className="jellyfin-progress-card__meta">작품 진행 {batchCurrent}/{batchTotal}</div>
+              <Progress percent={batchPercent} status="active" />
+            </div>
+          ) : null}
+          {chunkTotal > 0 ? (
+            <div className="jellyfin-progress-card__row">
+              <div className="jellyfin-progress-card__meta">구간 진행 {chunkCurrent}/{chunkTotal}</div>
+              <Progress percent={chunkPercent} status="active" />
+            </div>
+          ) : null}
           <div className="jellyfin-progress-card__desc">{analysisProgress.message || '처리 중'}</div>
         </Card>
       )}
@@ -453,6 +489,8 @@ export default function SubtitleAnalysisTab({ items, onReload }) {
         <Space wrap align="center" size={12}>
           <span className="jellyfin-toolbar__label">필터</span>
           <Select
+            className="jellyfin-analysis-filter-select"
+            popupClassName="jellyfin-analysis-filter-dropdown"
             value={filterKey}
             onChange={setFilterKey}
             options={FILTER_OPTIONS.map((option) => ({

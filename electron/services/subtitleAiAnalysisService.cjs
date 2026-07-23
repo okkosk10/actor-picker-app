@@ -737,14 +737,46 @@ async function analyzeSubtitleBatch(db, options = {}) {
     }
 
     const videoId = targets[index]
+
+    if (typeof options.onProgress === 'function') {
+      options.onProgress({
+        videoId,
+        stage: 'video-start',
+        batchIndex: index + 1,
+        batchTotal: targets.length,
+        chunkIndex: 0,
+        chunkCount: 0,
+        message: `작품 ${index + 1}/${targets.length} 준비 중`,
+      })
+    }
+
     const result = await analyzeSubtitleForMetadata({
       db,
       videoId,
       force,
-      onProgress: options.onProgress,
+      onProgress: (progress) => {
+        if (typeof options.onProgress !== 'function') return
+        options.onProgress({
+          ...progress,
+          batchIndex: index + 1,
+          batchTotal: targets.length,
+        })
+      },
       signal: options.signal,
       client: options.client,
     })
+
+    if (typeof options.onProgress === 'function') {
+      options.onProgress({
+        videoId,
+        stage: result?.cancelled ? 'video-cancelled' : 'video-complete',
+        batchIndex: index + 1,
+        batchTotal: targets.length,
+        chunkIndex: 0,
+        chunkCount: 0,
+        message: result?.cancelled ? `작품 ${index + 1}/${targets.length} 취소` : `작품 ${index + 1}/${targets.length} 완료`,
+      })
+    }
 
     summary.processed += 1
     if (result?.status === 'generated' || result?.success) summary.generated += 1
