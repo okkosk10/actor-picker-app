@@ -3,7 +3,7 @@
  * Jellyfin 호환 메타데이터 내보내기 페이지
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Modal, Progress, Radio, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Modal, Progress, Select, Space, Table, Tag, Typography, message } from 'antd'
 import './JellyfinExport.css'
 
 const FILTER_OPTIONS = [
@@ -83,7 +83,10 @@ export default function JellyfinExportPage() {
   }, [])
 
   useEffect(() => {
-    load()
+    const timer = setTimeout(() => {
+      load()
+    }, 0)
+    return () => clearTimeout(timer)
   }, [load])
 
   useEffect(() => {
@@ -229,7 +232,7 @@ export default function JellyfinExportPage() {
       title: '영상 상태',
       dataIndex: 'videoFileExists',
       width: 110,
-      render: (value, record) => statusTag(
+      render: (value) => statusTag(
         value ? 'exists' : 'missing',
         { exists: '존재', missing: '없음' },
         { exists: 'green', missing: 'red' },

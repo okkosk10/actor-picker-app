@@ -54,8 +54,8 @@ test('빈 필드는 NFO에서 생략된다', () => {
 
   assert.ok(xml.includes('<title>SONE-123</title>'))
   assert.ok(!xml.includes('<plot>'))
-  assert.ok(!xml.includes('<outline>'))
-  assert.ok(!xml.includes('<userrating>'))
+  assert.ok(!xml.includes('<tagline>'))
+  assert.ok(!xml.includes('<rating>'))
 })
 
 test('단일 배우 NFO 생성과 주연 role 처리', () => {
@@ -75,7 +75,9 @@ test('단일 배우 NFO 생성과 주연 role 처리', () => {
 
   assert.ok(xml.includes('<name>배우A</name>'))
   assert.ok(xml.includes('<role>주연</role>'))
-  assert.ok(xml.includes('<userrating>8</userrating>'))
+  assert.ok(xml.includes('<rating>8</rating>'))
+  assert.ok(xml.includes('<tagline>한 줄 설명</tagline>'))
+  assert.ok(xml.includes('액트픽커 평점: 4/5'))
 })
 
 test('다중 배우는 대표 배우를 먼저 정렬한다', () => {
@@ -250,4 +252,110 @@ test('제한된 스냅샷은 영상 기준으로 자른다', () => {
   const snapshot = buildExportSnapshot(fakeDb, { limit: 1 })
   assert.equal(snapshot.items.length, 1)
   assert.equal(snapshot.items[0].id, 1)
+})
+
+test('export summary는 missingVideo를 제외 항목으로 집계한다', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'actor-picker-export-'))
+  const videoPath = path.join(tempDir, 'SONE-130.mp4')
+  fs.writeFileSync(videoPath, 'video', 'utf8')
+
+  const fakeDb = {
+    prepare(sql) {
+      if (sql.includes('SELECT v.id') && sql.includes('FROM videos v')) {
+        return {
+          all() {
+            return [{ id: 1 }, { id: 2 }]
+          },
+        }
+      }
+
+      return {
+        all() {
+          return [
+            {
+              id: 1,
+              file_name: 'SONE-130.mp4',
+              file_path: videoPath,
+              folder_path: tempDir,
+              code: 'SONE-130',
+              actor_name: '',
+              tags: '',
+              memo: '',
+              rating: 4,
+              favorite: 0,
+              grade: '보관',
+              status: 'normal',
+              size: 0,
+              subtitle_paths: '[]',
+              subtitle_files: '[]',
+              subtitle_exts: '',
+              subtitle_count: 0,
+              subtitle_size: 0,
+              subtitle_added_at: null,
+              primary_subtitle_path: '',
+              primary_subtitle_hash: '',
+              subtitle_status: 'missing',
+              ai_outline: '',
+              ai_plot: '',
+              ai_tags: '[]',
+              ai_story_structure: '',
+              ai_summary_status: 'not_analyzed',
+              ai_summary_source_path: '',
+              ai_summary_source_hash: '',
+              ai_summary_updated_at: null,
+              is_main: 0,
+              order_index: 0,
+              actor_id: 1,
+              actor_name_joined: '배우A',
+              actor_rating: 0,
+              aliases: '',
+            },
+            {
+              id: 2,
+              file_name: 'SONE-131.mp4',
+              file_path: path.join(tempDir, 'SONE-131.mp4'),
+              folder_path: tempDir,
+              code: 'SONE-131',
+              actor_name: '',
+              tags: '',
+              memo: '',
+              rating: 0,
+              favorite: 0,
+              grade: '보관',
+              status: 'normal',
+              size: 0,
+              subtitle_paths: '[]',
+              subtitle_files: '[]',
+              subtitle_exts: '',
+              subtitle_count: 0,
+              subtitle_size: 0,
+              subtitle_added_at: null,
+              primary_subtitle_path: '',
+              primary_subtitle_hash: '',
+              subtitle_status: 'missing',
+              ai_outline: '',
+              ai_plot: '',
+              ai_tags: '[]',
+              ai_story_structure: '',
+              ai_summary_status: 'not_analyzed',
+              ai_summary_source_path: '',
+              ai_summary_source_hash: '',
+              ai_summary_updated_at: null,
+              is_main: 0,
+              order_index: 0,
+              actor_id: null,
+              actor_name_joined: null,
+              actor_rating: 0,
+              aliases: '',
+            },
+          ]
+        },
+      }
+    },
+  }
+
+  const { summary, items } = await require('../jellyfinNfoService.cjs').exportJellyfinNfo(fakeDb, { limitEligibleOnly: true, limit: 10 })
+  assert.equal(summary.missingVideo, 1)
+  assert.equal(summary.excludedMissingVideo, 1)
+  assert.equal(items.filter((item) => item.exportEligible).length, 1)
 })

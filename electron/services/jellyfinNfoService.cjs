@@ -67,6 +67,12 @@ function buildTagList(video) {
 
   if (Number(video?.favorite) === 1) tags.push('즐겨찾기')
 
+  const rawRating = Number(video?.rating)
+  if (Number.isFinite(rawRating) && rawRating > 0) {
+    const ratingLabel = Number.isInteger(rawRating) ? rawRating : Number(rawRating.toFixed(1))
+    tags.push(`액트픽커 평점: ${ratingLabel}/5`)
+  }
+
   tags.push(...parseJsonArray(video?.ai_tags))
 
   const seen = new Set()
@@ -110,13 +116,13 @@ function buildMovieNfo(video, actors = []) {
   ]
 
   if (outline) {
-    lines.push(`  <outline>${escapeXml(outline)}</outline>`)
+    lines.push(`  <tagline>${escapeXml(outline)}</tagline>`)
   }
   if (plot) {
     lines.push(`  <plot>${escapeXml(plot)}</plot>`)
   }
   if (rating !== null) {
-    lines.push(`  <userrating>${rating}</userrating>`)
+    lines.push(`  <rating>${rating}</rating>`)
   }
 
   for (const tag of tags) {
@@ -438,7 +444,7 @@ async function exportJellyfinNfo(db, options = {}) {
 
   const snapshot = buildExportSnapshot(db, {
     itemIds: options.itemIds,
-    limit: options.limit,
+    limit: options.limitEligibleOnly ? null : options.limit,
   })
 
   const itemIdSet = new Set(Array.isArray(options.itemIds) ? options.itemIds.map((value) => Number(value)) : [])
@@ -456,11 +462,13 @@ async function exportJellyfinNfo(db, options = {}) {
     created: 0,
     overwritten: 0,
     skipped: 0,
-    missingVideo: 0,
+    missingVideo: snapshot.stats.videoFileMissing,
+    excludedMissingVideo: snapshot.stats.videoFileMissing,
     missingActorLinks: 0,
     errors: 0,
     errorItems: [],
     excluded: snapshot.stats.exportExcluded,
+    excludedReasons: snapshot.stats.exportExclusionReasons,
     sampleTargets: eligibleTargets.slice(0, 10).map((item) => ({
       id: item.id,
       title: item.title,
@@ -480,7 +488,6 @@ async function exportJellyfinNfo(db, options = {}) {
       else if (writeResult.action === 'overwritten') summary.overwritten += 1
       else summary.skipped += 1
 
-      if (!item.videoFileExists) summary.missingVideo += 1
       if (!item.hasActorLinks) summary.missingActorLinks += 1
 
       results.push({

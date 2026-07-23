@@ -9,6 +9,7 @@
     "electron": "wait-on http://localhost:5173 && electron .",
     "start": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
+    "test": "node --test electron/services/**/*.test.cjs",
     "dist": "vite build && electron-builder",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "lint": "eslint .",
