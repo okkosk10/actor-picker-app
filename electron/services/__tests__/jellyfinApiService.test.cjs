@@ -181,3 +181,59 @@ test('API 오류 메시지에 endpoint와 Jellyfin 메시지를 포함한다', a
     /GET \/Users: Bad request from Jellyfin/,
   )
 })
+
+test('Person 검색은 /Persons와 /Users/{id}/Items 결과를 병합한다', async () => {
+  const fetchImpl = buildFetchWithRoutes({
+    'GET /Users': async () => createJsonResponse(200, [
+      { Id: 'e5d8fb55-c6f0-4b01-bf8d-2e34b4b6e7f8', Name: 'jelly-admin' },
+    ]),
+    'GET /Persons': async () => createJsonResponse(200, {
+      Items: [
+        { Id: 'p-1', Name: 'Actor A' },
+      ],
+    }),
+    'GET /Users/e5d8fb55-c6f0-4b01-bf8d-2e34b4b6e7f8/Items': async () => createJsonResponse(200, {
+      Items: [
+        { Id: 'p-2', Name: 'Actor B' },
+      ],
+    }),
+  }, [])
+
+  const api = createJellyfinApiService({
+    serverUrl: 'http://localhost:8096',
+    apiKey: 'test-key',
+    fetchImpl,
+  })
+
+  const people = await api.searchPersonsByName('Actor')
+  assert.equal(Array.isArray(people), true)
+  assert.equal(people.length, 2)
+  assert.equal(people.some((p) => p.Id === 'p-1'), true)
+  assert.equal(people.some((p) => p.Id === 'p-2'), true)
+})
+
+test('Primary 이미지 업로드 500 시 fallback 엔드포인트로 재시도한다', async () => {
+  const calls = []
+  const fetchImpl = buildFetchWithRoutes({
+    'GET /Users': async () => createJsonResponse(200, [
+      { Id: 'e5d8fb55-c6f0-4b01-bf8d-2e34b4b6e7f8', Name: 'jelly-admin' },
+    ]),
+    'POST /Items/person-1/Images/Primary': async () => createJsonResponse(500, { Message: 'Error processing request.' }),
+    'POST /Items/person-1/Images': async () => createJsonResponse(204, {}),
+  }, calls)
+
+  const api = createJellyfinApiService({
+    serverUrl: 'http://localhost:8096',
+    apiKey: 'test-key',
+    fetchImpl,
+  })
+
+  await api.uploadPrimaryImage('person-1', {
+    contentType: 'image/jpeg',
+    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xdb]),
+  })
+
+  const fallbackCall = calls.find((entry) => new URL(entry.url).pathname === '/Items/person-1/Images')
+  assert.ok(fallbackCall)
+  assert.equal(new URL(fallbackCall.url).searchParams.get('Type'), 'Primary')
+})

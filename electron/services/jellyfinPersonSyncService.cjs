@@ -13,6 +13,45 @@ const IMAGE_MIME_BY_EXT = {
   '.webp': 'image/webp',
 }
 
+function detectMimeFromBuffer(buffer) {
+  if (!buffer || buffer.length < 12) return ''
+
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg'
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89
+    && buffer[1] === 0x50
+    && buffer[2] === 0x4e
+    && buffer[3] === 0x47
+    && buffer[4] === 0x0d
+    && buffer[5] === 0x0a
+    && buffer[6] === 0x1a
+    && buffer[7] === 0x0a
+  ) {
+    return 'image/png'
+  }
+
+  // WEBP: 'RIFF'....'WEBP'
+  if (
+    buffer[0] === 0x52
+    && buffer[1] === 0x49
+    && buffer[2] === 0x46
+    && buffer[3] === 0x46
+    && buffer[8] === 0x57
+    && buffer[9] === 0x45
+    && buffer[10] === 0x42
+    && buffer[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+
+  return ''
+}
+
 const SYNC_STATUS = {
   NOT_SYNCED: 'not_synced',
   PENDING: 'pending',
@@ -127,8 +166,9 @@ async function resolveActorImage(actor, options = {}) {
     return { ok: false, reason: 'UNSUPPORTED_IMAGE', message: `지원하지 않는 이미지 형식입니다: ${ext || '(none)'}` }
   }
 
-  const contentType = IMAGE_MIME_BY_EXT[ext]
   const buffer = await fs.promises.readFile(resolvedPath)
+  const detectedContentType = detectMimeFromBuffer(buffer)
+  const contentType = detectedContentType || IMAGE_MIME_BY_EXT[ext]
   const sha256 = await hashFile(resolvedPath)
 
   return {
@@ -241,7 +281,7 @@ async function findPersonCandidates(actor, api, options = {}) {
     type: 'not_found',
     method: 'not_found',
     candidates: allCandidates,
-    reason: '일치하는 Person을 찾지 못했습니다.',
+    reason: '일치하는 Person을 찾지 못했습니다. 먼저 해당 배우가 포함된 작품 NFO를 Jellyfin에서 새로고침해 Person 항목을 생성하세요.',
   }
 }
 

@@ -101,6 +101,12 @@ function extractJellyfinErrorMessage(payload) {
   return ''
 }
 
+function toItemsArray(result) {
+  if (Array.isArray(result)) return result
+  if (Array.isArray(result?.Items)) return result.Items
+  return []
+}
+
 function createJellyfinApiService(options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch
   if (typeof fetchImpl !== 'function') {
@@ -237,20 +243,49 @@ function createJellyfinApiService(options = {}) {
 
   async function searchPersonsByName(name, options = {}) {
     const userId = await resolveUserId(options.signal)
+    const term = String(name || '').trim()
     const query = {
       IncludeItemTypes: 'Person',
       Recursive: true,
-      SearchTerm: String(name || '').trim(),
+      SearchTerm: term,
       Limit: Number.isFinite(options.limit) ? options.limit : 50,
       Fields: 'PrimaryImageAspectRatio,Overview',
     }
+    const merged = new Map()
+
+    // 1) Person 전용 엔드포인트 우선 시도 (서버별로 지원 차이가 있어 실패해도 fallback)
+    try {
+      const personResult = await request('/Persons', {
+        method: 'GET',
+        query: {
+          SearchTerm: term,
+          NameContains: term,
+          Recursive: true,
+          Limit: Number.isFinite(options.limit) ? options.limit : 50,
+          Fields: 'PrimaryImageAspectRatio,Overview',
+        },
+        signal: options.signal,
+      })
+      for (const item of toItemsArray(personResult)) {
+        if (item?.Id) merged.set(String(item.Id), item)
+      }
+    } catch (error) {
+      if (Number(error?.status) !== 404 && Number(error?.status) !== 400) {
+        throw error
+      }
+    }
+
+    // 2) 사용자 아이템 엔드포인트 fallback/보강
     const result = await request(`/Users/${encodeURIComponent(userId)}/Items`, {
       method: 'GET',
       query,
       signal: options.signal,
     })
+    for (const item of toItemsArray(result)) {
+      if (item?.Id) merged.set(String(item.Id), item)
+    }
 
-    return Array.isArray(result?.Items) ? result.Items : []
+    return Array.from(merged.values())
   }
 
   async function getPersonById(personId, options = {}) {
@@ -278,15 +313,40 @@ function createJellyfinApiService(options = {}) {
   }
 
   async function uploadPrimaryImage(personId, image, options = {}) {
-    await request(`/Items/${encodeURIComponent(personId)}/Images/Primary`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': image.contentType,
-      },
-      body: image.buffer,
-      signal: options.signal,
-      expect: 'empty',
-    })
+    const encodedId = encodeURIComponent(personId)
+    const baseHeaders = {
+      'Content-Type': image.contentType,
+      'Content-Length': String(image?.buffer?.length || 0),
+    }
+
+    try {
+      await request(`/Items/${encodedId}/Images/Primary`, {
+        method: 'POST',
+        headers: baseHeaders,
+        body: image.buffer,
+        signal: options.signal,
+        expect: 'empty',
+      })
+    } catch (primaryError) {
+      const status = Number(primaryError?.status || 0)
+      const canFallback = status === 500 || status === 415 || status === 404 || status === 400
+      if (!canFallback) throw primaryError
+
+      try {
+        await request(`/Items/${encodedId}/Images`, {
+          method: 'POST',
+          headers: baseHeaders,
+          query: { Type: 'Primary', ImageType: 'Primary' },
+          body: image.buffer,
+          signal: options.signal,
+          expect: 'empty',
+        })
+      } catch (fallbackError) {
+        const fallbackMessage = String(fallbackError?.message || 'fallback upload failed')
+        throw new Error(`${primaryError.message} (fallback 실패: ${fallbackMessage})`)
+      }
+    }
+
     return { success: true }
   }
 
