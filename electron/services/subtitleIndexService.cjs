@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const { hashFile } = require('./fileHashService.cjs')
 
-const SUPPORTED_SUBTITLE_EXTS = new Set(['.srt', '.ass', '.ssa', '.vtt'])
+const SUPPORTED_SUBTITLE_EXTS = new Set(['.srt', '.ass', '.ssa', '.vtt', '.smi'])
 
 function normalizeText(value) {
   return String(value ?? '')
