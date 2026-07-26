@@ -2,8 +2,16 @@
 
 const fs = require('fs')
 const path = require('path')
+const { TextDecoder } = require('util')
 
-const SUPPORTED_SUBTITLE_EXTS = new Set(['.srt', '.ass', '.ssa', '.vtt'])
+let iconvLite = null
+try {
+  iconvLite = require('iconv-lite')
+} catch {
+  iconvLite = null
+}
+
+const SUPPORTED_SUBTITLE_EXTS = new Set(['.srt', '.ass', '.ssa', '.vtt', '.smi'])
 
 function normalizeLineEndings(value) {
   return String(value ?? '')
@@ -50,13 +58,27 @@ function parseAssTimestampToMs(value) {
 }
 
 function stripMarkup(text) {
-  return String(text ?? '')
+  const cleaned = String(text ?? '')
     .replace(/\{\\[^}]*\}/g, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n')
+    .replace(/<p\b[^>]*>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
     .replace(/\\N/g, '\n')
     .replace(/\\n/g, '\n')
     .replace(/\\h/g, ' ')
+    .replace(/\uFEFF/g, '')
+  return decodeHtmlEntities(cleaned)
+}
+
+function decodeHtmlEntities(value) {
+  return String(value ?? '')
+    .replace(/&#39;|&#x27;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
 }
 
 function normalizeCueText(text) {
@@ -208,6 +230,127 @@ function parseAssContent(content) {
   return cues
 }
 
+function parseSmiContent(content) {
+  const source = normalizeLineEndings(content)
+  const syncRegex = /<sync\b[^>]*\bstart\s*=\s*(?:"(\d+)"|'(\d+)'|(\d+))[^>]*>/gi
+  const syncBlocks = []
+
+  let match
+  while ((match = syncRegex.exec(source)) !== null) {
+    const startMs = Number(match[1] || match[2] || match[3])
+    if (!Number.isFinite(startMs)) continue
+    syncBlocks.push({
+      startMs: Math.max(0, Math.floor(startMs)),
+      startIndex: match.index,
+      contentStartIndex: syncRegex.lastIndex,
+    })
+  }
+
+  if (syncBlocks.length === 0) return []
+
+  const cues = []
+  for (let index = 0; index < syncBlocks.length; index += 1) {
+    const current = syncBlocks[index]
+    const next = syncBlocks[index + 1] || null
+    const rawText = source.slice(current.contentStartIndex, next ? next.startIndex : source.length)
+    if (!normalizeCueText(rawText)) continue
+
+    const endMs = next
+      ? Math.max(current.startMs, next.startMs)
+      : current.startMs + 3000
+
+    cues.push({
+      startMs: current.startMs,
+      endMs,
+      startTime: formatCueTime(current.startMs),
+      endTime: formatCueTime(endMs),
+      text: rawText,
+    })
+  }
+
+  return cues
+}
+
+function decodeUtf16BeBuffer(buffer) {
+  const evenLength = buffer.length - (buffer.length % 2)
+  const swapped = Buffer.allocUnsafe(evenLength)
+  for (let index = 0; index < evenLength; index += 2) {
+    swapped[index] = buffer[index + 1]
+    swapped[index + 1] = buffer[index]
+  }
+  return swapped.toString('utf16le')
+}
+
+function detectUtf16WithoutBom(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return null
+
+  const sampleSize = Math.min(buffer.length - (buffer.length % 2), 4096)
+  if (sampleSize < 4) return null
+
+  let zeroEven = 0
+  let zeroOdd = 0
+  let evenCount = 0
+  let oddCount = 0
+
+  for (let index = 0; index < sampleSize; index += 1) {
+    if (index % 2 === 0) {
+      evenCount += 1
+      if (buffer[index] === 0x00) zeroEven += 1
+    } else {
+      oddCount += 1
+      if (buffer[index] === 0x00) zeroOdd += 1
+    }
+  }
+
+  const evenRatio = evenCount > 0 ? zeroEven / evenCount : 0
+  const oddRatio = oddCount > 0 ? zeroOdd / oddCount : 0
+
+  if (oddRatio >= 0.25 && evenRatio <= 0.1) return 'utf16le'
+  if (evenRatio >= 0.25 && oddRatio <= 0.1) return 'utf16be'
+  return null
+}
+
+function decodeUtf8Strict(buffer) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+  } catch {
+    return null
+  }
+}
+
+function decodeSubtitleBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer)) return ''
+
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return buffer.slice(3).toString('utf8')
+  }
+
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.slice(2).toString('utf16le')
+  }
+
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return decodeUtf16BeBuffer(buffer.slice(2))
+  }
+
+  const utf16Kind = detectUtf16WithoutBom(buffer)
+  if (utf16Kind === 'utf16le') return buffer.toString('utf16le')
+  if (utf16Kind === 'utf16be') return decodeUtf16BeBuffer(buffer)
+
+  const utf8Text = decodeUtf8Strict(buffer)
+  if (utf8Text != null) return utf8Text
+
+  if (iconvLite && typeof iconvLite.decode === 'function') {
+    try {
+      return iconvLite.decode(buffer, 'cp949')
+    } catch {
+      // cp949 디코딩 실패 시 마지막으로 utf8 관용 디코딩을 시도한다.
+    }
+  }
+
+  return buffer.toString('utf8')
+}
+
 function sanitizeSubtitleCues(cues) {
   const cleaned = []
   let removedAdLines = 0
@@ -270,7 +413,8 @@ function sanitizeSubtitleCues(cues) {
 }
 
 async function readSubtitleFile(filePath) {
-  return fs.promises.readFile(filePath, 'utf8')
+  const buffer = await fs.promises.readFile(filePath)
+  return decodeSubtitleBuffer(buffer)
 }
 
 function parseSubtitleContent({ filePath, content }) {
@@ -280,6 +424,7 @@ function parseSubtitleContent({ filePath, content }) {
   if (ext === '.srt') cues = parseSrtContent(content)
   else if (ext === '.vtt') cues = parseVttContent(content)
   else if (ext === '.ass' || ext === '.ssa') cues = parseAssContent(content)
+  else if (ext === '.smi') cues = parseSmiContent(content)
   else throw new Error('지원하지 않는 자막 형식입니다.')
 
   return sanitizeSubtitleCues(cues)
@@ -297,6 +442,7 @@ module.exports = {
   parseSrtContent,
   parseVttContent,
   parseAssContent,
+  parseSmiContent,
   sanitizeSubtitleCues,
   parseSubtitleContent,
   readSubtitleFile,

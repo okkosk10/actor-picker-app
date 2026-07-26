@@ -521,20 +521,8 @@ async function analyzeSubtitleForMetadata({ db, videoId, force = false, onProgre
   const previousSnapshot = getAnalysisStateSnapshot(video)
   savePendingState(db, videoId)
 
-  const client = injectedClient || getOpenAIClient()
-  const subtitleContent = await readSubtitleFile(subtitlePath)
-  const parsed = parseSubtitleContent({ filePath: subtitlePath, content: subtitleContent })
-
-  if (!parsed.cues.length) {
-    saveFailedState(db, videoId, '자막 내용 없음')
-    return { success: false, error: '자막 내용 없음' }
-  }
-
-  const chunked = chunkSubtitleCues(parsed.cues, {
-    maxChars: DEFAULT_MAX_CHARS_PER_CHUNK,
-    minTailChars: DEFAULT_MIN_TAIL_CHARS,
-  })
-  const chunks = chunked.chunks
+  let chunks = []
+  let parsed = null
   const chunkAnalyses = []
   let inputTokens = 0
   let outputTokens = 0
@@ -542,6 +530,21 @@ async function analyzeSubtitleForMetadata({ db, videoId, force = false, onProgre
   let lastRawResponse = ''
 
   try {
+    const client = injectedClient || getOpenAIClient()
+    const subtitleContent = await readSubtitleFile(subtitlePath)
+    parsed = parseSubtitleContent({ filePath: subtitlePath, content: subtitleContent })
+
+    if (!parsed.cues.length) {
+      saveFailedState(db, videoId, '자막 내용 없음')
+      return { success: false, error: '자막 내용 없음' }
+    }
+
+    const chunked = chunkSubtitleCues(parsed.cues, {
+      maxChars: DEFAULT_MAX_CHARS_PER_CHUNK,
+      minTailChars: DEFAULT_MIN_TAIL_CHARS,
+    })
+    chunks = chunked.chunks
+
     if (signal?.aborted) {
       const abortError = new Error('사용자 취소')
       abortError.name = 'AbortError'
