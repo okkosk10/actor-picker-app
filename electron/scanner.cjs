@@ -5,7 +5,7 @@
  * 폴더 재귀 스캔 모듈
  *
  * - fs.promises.readdir({ withFileTypes: true }) 를 사용해 async 방식으로 탐색
- * - 지원 확장자: mp4, mkv, avi, mov
+ * - 지원 확장자: mp4, mkv, avi, mov, wmv
  * - 접근 권한이 없는 폴더는 에러 없이 무시
  * - 각 파일에서 파일명 파싱(parser.cjs)을 통해 code, actor_name 추출
  */
@@ -16,7 +16,7 @@ const { parseFileName } = require('./parser.cjs')
 const { findSubtitleFiles, serializeSubtitlePaths, serializeSubtitleFiles } = require('./subtitles.cjs')
 
 /** 스캔 대상 동영상 확장자 (소문자, 점 포함) */
-const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov'])
+const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.wmv'])
 
 /**
  * 지정된 폴더를 재귀적으로 스캔하여 동영상 파일 메타데이터 목록을 반환한다.
