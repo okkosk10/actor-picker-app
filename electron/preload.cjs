@@ -147,9 +147,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── 폴더 스캔 및 DB 저장 ─────────────────────────────────────
   // @param folderPath {string}
+  // @param options {{ parserProfile?: 'default'|'uncensored-fc2' }}
   // 반환: { totalFiles, missingCount, scannedFolder }
-  scanFolder: (folderPath) =>
-    ipcRenderer.invoke('scan-folder', folderPath),
+  scanFolder: (folderPath, options = {}) =>
+    ipcRenderer.invoke('scan-folder', folderPath, options),
 
   // ── 동영상 검색 ───────────────────────────────────────────────
   // @param query   {string}
@@ -572,6 +573,12 @@ contextBridge.exposeInMainWorld('api', {
   // 반환: { success: true, isActive: boolean } | { success: false, error }
   toggleFolderActive: (folderPath) =>
     ipcRenderer.invoke('toggle-folder-active', folderPath),
+
+  setFolderParserProfile: (folderPath, parserProfile) =>
+    ipcRenderer.invoke('set-folder-parser-profile', folderPath, parserProfile),
+
+  rollbackImportBatch: (importBatchId) =>
+    ipcRenderer.invoke('rollback-import-batch', importBatchId),
 
   // ── 드라이브 연결 끊김 이벤트 구독 ──────────────────────────
   // callback: (payload) => void

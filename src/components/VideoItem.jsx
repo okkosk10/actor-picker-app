@@ -68,6 +68,7 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
     }
     return actors.map((name, idx) => ({ key: `name-${name}-${idx}`, name, tier: null }))
   }, [video.actorsList, actors])
+  const hideMissingActor = video.parser_profile === 'uncensored-fc2' && actorTokens.length === 0
 
   return (
     <div
@@ -101,26 +102,28 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
             ? <span className="code-badge">{video.code}</span>
             : <span className="code-badge code-badge--empty">-</span>
           }
-          <span className="actor-name">
-            {actorTokens.length === 0
-              ? '(배우 미상)'
-              : <>
-                  {actorTokens.slice(0, 3).map((token, idx) => (
-                    <span key={token.key} className="actor-name__token">
-                      <ActorTierBadge tier={token.tier} size="sm" compact className="actor-name__tier" />
-                      <span className={idx === 0 ? 'actor-primary' : 'actor-secondary'}>{token.name}</span>
-                      {Array.isArray(video.actorsList) && video.actorsList[idx]?.badges?.length > 0 && (
-                        <ActorBadgeSnippet badges={video.actorsList[idx].badges} compact />
-                      )}
-                      {idx < Math.min(actorTokens.length, 3) - 1 && <span className="actor-secondary">, </span>}
-                    </span>
-                  ))}
-                  {actorTokens.length > 3 && (
-                    <span className="actor-secondary"> +{actorTokens.length - 3}</span>
-                  )}
-                </>
-            }
-          </span>
+          {!hideMissingActor && (
+            <span className="actor-name">
+              {actorTokens.length === 0
+                ? '(배우 미상)'
+                : <>
+                    {actorTokens.slice(0, 3).map((token, idx) => (
+                      <span key={token.key} className="actor-name__token">
+                        <ActorTierBadge tier={token.tier} size="sm" compact className="actor-name__tier" />
+                        <span className={idx === 0 ? 'actor-primary' : 'actor-secondary'}>{token.name}</span>
+                        {Array.isArray(video.actorsList) && video.actorsList[idx]?.badges?.length > 0 && (
+                          <ActorBadgeSnippet badges={video.actorsList[idx].badges} compact />
+                        )}
+                        {idx < Math.min(actorTokens.length, 3) - 1 && <span className="actor-secondary">, </span>}
+                      </span>
+                    ))}
+                    {actorTokens.length > 3 && (
+                      <span className="actor-secondary"> +{actorTokens.length - 3}</span>
+                    )}
+                  </>
+              }
+            </span>
+          )}
         </div>
       </div>
 
@@ -131,6 +134,9 @@ const VideoItem = memo(function VideoItem({ video, selected, onClick, checked, o
           <Tag color="green" style={{ fontWeight: 700, letterSpacing: 1 }}>NEW</Tag>
         )}
 
+        {video.actor_resolution_status === 'review' && (
+          <Tag color="orange">배우 검토</Tag>
+        )}
         {/* 추천작 배지 — recommended=1 일 때만 */}
         {Boolean(video.recommended) && (
           <Tag color="warning" style={{ fontWeight: 600 }}>⭐ 추천</Tag>

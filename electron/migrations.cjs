@@ -1077,6 +1077,42 @@ const MIGRATIONS = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_actors_jellyfin_person_id ON actors (jellyfin_person_id)`)
     },
   },
+  {
+    version: '028_add_parser_profiles_and_import_tracking',
+    description: '폴더별 파서 프로필과 영상 등록 배치/배우 판정 상태 추적',
+    up(db) {
+      const rootCols = db.prepare('PRAGMA table_info(scanned_roots)').all().map((c) => c.name)
+      if (!rootCols.includes('parser_profile')) {
+        db.exec(`ALTER TABLE scanned_roots ADD COLUMN parser_profile TEXT DEFAULT 'default'`)
+      }
+
+      const videoCols = db.prepare('PRAGMA table_info(videos)').all().map((c) => c.name)
+      const additions = [
+        { name: 'parser_profile', def: "TEXT DEFAULT 'default'" },
+        { name: 'parser_version', def: 'INTEGER DEFAULT 1' },
+        { name: 'import_batch_id', def: "TEXT DEFAULT ''" },
+        { name: 'actor_resolution_status', def: "TEXT DEFAULT 'unknown'" },
+        { name: 'parser_reference_id', def: "TEXT DEFAULT ''" },
+      ]
+
+      for (const col of additions) {
+        if (!videoCols.includes(col.name)) {
+          db.exec(`ALTER TABLE videos ADD COLUMN ${col.name} ${col.def}`)
+        }
+      }
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_scanned_roots_parser_profile
+          ON scanned_roots (parser_profile);
+        CREATE INDEX IF NOT EXISTS idx_videos_parser_profile
+          ON videos (parser_profile);
+        CREATE INDEX IF NOT EXISTS idx_videos_import_batch_id
+          ON videos (import_batch_id);
+        CREATE INDEX IF NOT EXISTS idx_videos_actor_resolution_status
+          ON videos (actor_resolution_status);
+      `)
+    },
+  },
 ]
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────────

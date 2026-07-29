@@ -12,7 +12,7 @@
 
 const fs = require('fs')
 const path = require('path')
-const { parseFileName } = require('./parser.cjs')
+const { parseFileName, normalizeParserProfile } = require('./parser.cjs')
 const { findSubtitleFiles, serializeSubtitlePaths, serializeSubtitleFiles } = require('./subtitles.cjs')
 
 /** 스캔 대상 동영상 확장자 (소문자, 점 포함) */
@@ -34,9 +34,10 @@ const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.wmv'])
  * @property {string|null} code        - 품번 (파싱 성공 시)
  * @property {string|null} actor_name  - 배우명 (파싱 성공 시)
  */
-async function scanFolder(folderPath) {
+async function scanFolder(folderPath, options = {}) {
   const results = []
-  await scanRecursive(folderPath, results)
+  const parserProfile = normalizeParserProfile(options.parserProfile)
+  await scanRecursive(folderPath, results, parserProfile)
   return results
 }
 
@@ -46,7 +47,7 @@ async function scanFolder(folderPath) {
  * @param {string} dirPath - 현재 탐색 중인 디렉토리 경로
  * @param {VideoFileMeta[]} results - 결과를 누적할 배열 (참조 전달)
  */
-async function scanRecursive(dirPath, results) {
+async function scanRecursive(dirPath, results, parserProfile) {
   let entries
   try {
     // withFileTypes: true → Dirent 객체 반환 (isDirectory/isFile 사용 가능)
@@ -61,7 +62,7 @@ async function scanRecursive(dirPath, results) {
 
     if (entry.isDirectory()) {
       // 하위 폴더 재귀 탐색
-      await scanRecursive(fullPath, results)
+      await scanRecursive(fullPath, results, parserProfile)
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name).toLowerCase()
       if (!VIDEO_EXTS.has(ext)) continue
@@ -76,7 +77,7 @@ async function scanRecursive(dirPath, results) {
       }
 
       // 파일명 파싱: 품번(code), 배우명(actor_name) 추출
-      const parsed = parseFileName(entry.name)
+      const parsed = parseFileName(entry.name, parserProfile)
       const subtitles = await findSubtitleFiles(dirPath, entry.name)
       const subtitleLatestMtime = subtitles.files.reduce((latest, file) => {
         if (!latest) return file.modified_at
@@ -92,6 +93,11 @@ async function scanRecursive(dirPath, results) {
         modified_at: stat.mtime.toISOString(),
         code:        parsed.code,
         actor_name:  parsed.actor_name,
+        actor_candidates: parsed.actor_candidates,
+        actor_resolution_status: parsed.actor_resolution_status,
+        parser_profile: parsed.parser_profile,
+        parser_version: parsed.parser_version,
+        reference_id: parsed.reference_id,
         subtitle_paths: serializeSubtitlePaths(subtitles.paths),
         subtitle_exts:  subtitles.exts.join(','),
         subtitle_count: subtitles.paths.length,

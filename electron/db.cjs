@@ -476,10 +476,28 @@ function getDashboardStats() {
 function getScannedRoots() {
   const database = getDb()
   return database.prepare(`
-    SELECT root_path, scanned_at, COALESCE(is_active, 1) AS is_active
+    SELECT root_path, scanned_at, COALESCE(is_active, 1) AS is_active,
+           COALESCE(parser_profile, 'default') AS parser_profile
     FROM scanned_roots
     ORDER BY scanned_at DESC
   `).all()
+}
+
+/**
+ * 특정 루트 폴더에 사용할 파일명 파서 프로필을 저장한다.
+ *
+ * @param {string} folderPath
+ * @param {'default'|'uncensored-fc2'} parserProfile
+ * @returns {boolean}
+ */
+function setFolderParserProfile(folderPath, parserProfile) {
+  const database = getDb()
+  const result = database.prepare(`
+    UPDATE scanned_roots
+    SET parser_profile = ?
+    WHERE root_path = ?
+  `).run(parserProfile, folderPath)
+  return result.changes === 1
 }
 
 /**
@@ -519,4 +537,13 @@ function getActiveFolderPaths() {
   `).all().map(r => r.root_path)
 }
 
-module.exports = { getDb, closeDb, recordVideoActivity, getDashboardStats, getScannedRoots, toggleFolderActive, getActiveFolderPaths }
+module.exports = {
+  getDb,
+  closeDb,
+  recordVideoActivity,
+  getDashboardStats,
+  getScannedRoots,
+  setFolderParserProfile,
+  toggleFolderActive,
+  getActiveFolderPaths,
+}

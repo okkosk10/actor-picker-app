@@ -118,6 +118,9 @@ export default function FolderPanel({ currentFolder, onSelectFolder, onToggleFol
                 </span>
                 <span className="folder-item-stats">
                   <span className="stat-total">{folder.total}개</span>
+                  {folder.parser_profile === 'uncensored-fc2' && (
+                    <span className="stat-profile">FC2</span>
+                  )}
                   {folder.recommended_count > 0 && (
                     <span className="stat-rec">★{folder.recommended_count}</span>
                   )}

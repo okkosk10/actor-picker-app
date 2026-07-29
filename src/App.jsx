@@ -57,6 +57,8 @@ export default function App() {
 
   // ── 로컬 UI 상태 ──────────────────────────────────────────────
   const [folderPath,        setFolderPath]        = useState(null)
+  const [parserProfile,     setParserProfile]     = useState('default')
+  const [pendingFolderRegistration, setPendingFolderRegistration] = useState(null)
   const [selectedVideo,     setSelectedVideo]     = useState(null)
   const [scanning,          setScanning]          = useState(false)
   const [scanInfo,          setScanInfo]          = useState(null)
@@ -229,8 +231,42 @@ export default function App() {
   const handleSelectFolder = async () => {
     try {
       const selected = await window.api.selectFolder()
-      if (selected) { setFolderPath(selected); setScanInfo(null); setError(null) }
+      if (selected) {
+        const selectedName = selected.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || ''
+        const suggestedProfile = /노모|uncensored|fc2/i.test(selectedName)
+          ? 'uncensored-fc2'
+          : 'default'
+        try {
+          const { folders } = await window.api.getFolderList()
+          const normalizedSelected = selected.replace(/[\\/]+$/, '').toLocaleLowerCase()
+          const saved = folders?.find((folder) =>
+            String(folder.root_path || '')
+              .replace(/[\\/]+$/, '')
+              .toLocaleLowerCase() === normalizedSelected
+          )
+          if (saved) {
+            setFolderPath(selected)
+            setParserProfile(saved.parser_profile || 'default')
+            setScanInfo(null)
+            setError(null)
+            return
+          }
+        } catch { /* 신규 폴더는 이름 기반 권장값 사용 */ }
+        setPendingFolderRegistration({
+          path: selected,
+          parserProfile: suggestedProfile,
+        })
+      }
     } catch (e) { setError('폴더 선택 실패: ' + e.message) }
+  }
+
+  const handleConfirmFolderRegistration = () => {
+    if (!pendingFolderRegistration) return
+    setFolderPath(pendingFolderRegistration.path)
+    setParserProfile(pendingFolderRegistration.parserProfile)
+    setPendingFolderRegistration(null)
+    setScanInfo(null)
+    setError(null)
   }
 
   // ── 폴더 스캔 ─────────────────────────────────────────────────
@@ -266,7 +302,7 @@ export default function App() {
     }
     try {
       const { count: prevNew } = await window.api.getNewCount()
-      const result = await window.api.scanFolder(folderPath)
+      const result = await window.api.scanFolder(folderPath, { parserProfile })
       await refresh()
       const { count: nextNew } = await window.api.getNewCount()
       setNewCount(nextNew)
@@ -276,6 +312,32 @@ export default function App() {
       setScanInfo({ ...result, newAdded: Math.max(0, nextNew - prevNew) })
     } catch (e) { setError('스캔 중 오류: ' + e.message) }
     finally { setScanning(false) }
+  }
+
+  const handleRollbackImportBatch = async () => {
+    const batchId = scanInfo?.importBatchId
+    if (!batchId) return
+    const confirmed = window.confirm(
+      '이번 스캔에서 새로 등록된 영상과 배우 연결만 되돌릴까요?\n실제 영상 파일은 삭제되지 않습니다.'
+    )
+    if (!confirmed) return
+
+    try {
+      const result = await window.api.rollbackImportBatch(batchId)
+      if (!result?.success) throw new Error(result?.error || '롤백 실패')
+      await refresh()
+      await refreshNewCount()
+      await refreshNewActorCount()
+      setFolderRefreshKey((key) => key + 1)
+      setScanInfo({
+        scannedFolder: '등록 배치 롤백',
+        totalFiles: result.deletedVideos,
+        missingCount: 0,
+        rolledBack: true,
+      })
+    } catch (e) {
+      setError('등록 배치 롤백 실패: ' + e.message)
+    }
   }
 
   // ── 랜덤 추천 ─────────────────────────────────────────────────
@@ -614,6 +676,7 @@ export default function App() {
                 <>
                   {scanInfo.scannedFolder === '전체 라이브러리' ? '전체 라이브러리 스캔 완료'
                     : scanInfo.scannedFolder === '배우-영상 동기화' ? '배우-영상 동기화 완료'
+                    : scanInfo.rolledBack ? '등록 배치 롤백 완료'
                     : '스캔 완료'}
                   {' — '}<strong>{scanInfo.totalFiles}</strong>개 처리
                   {(scanInfo.newAdded ?? 0) > 0 && (
@@ -626,6 +689,16 @@ export default function App() {
                       · 새 배우 <strong>{scanInfo.newActors}</strong>명 발견
                     </span>
                   )}
+                  {(scanInfo.reviewActorCount ?? 0) > 0 && (
+                    <span style={{ color: '#f59e0b', marginLeft: 8 }}>
+                      · 배우 검토 <strong>{scanInfo.reviewActorCount}</strong>개
+                    </span>
+                  )}
+                  {(scanInfo.duplicateCount ?? 0) > 0 && (
+                    <span style={{ color: '#f59e0b', marginLeft: 8 }}>
+                      · 중복 보호 <strong>{scanInfo.duplicateCount}</strong>개
+                    </span>
+                  )}
                   {(scanInfo.newAdded ?? 0) === 0 && scanInfo.scannedFolder !== '배우-영상 동기화' && (
                     <span style={{ color: '#6b7280', marginLeft: 8 }}>· 신규 없음</span>
                   )}
@@ -633,6 +706,15 @@ export default function App() {
                     <span style={{ color: '#ef4444', marginLeft: 8 }}>
                       · 삭제됨 <strong>{scanInfo.missingCount}</strong>개 감지
                     </span>
+                  )}
+                  {scanInfo.importBatchId && (scanInfo.insertedCount ?? 0) > 0 && (
+                    <button
+                      type="button"
+                      className="scan-rollback-btn"
+                      onClick={handleRollbackImportBatch}
+                    >
+                      이번 등록 되돌리기
+                    </button>
                   )}
                 </>
               }
@@ -717,6 +799,61 @@ export default function App() {
           </div>
         </>
         )}
+
+        <Modal
+          open={Boolean(pendingFolderRegistration)}
+          title="새 폴더 등록"
+          okText="선택 완료"
+          cancelText="취소"
+          centered
+          width={520}
+          onOk={handleConfirmFolderRegistration}
+          onCancel={() => setPendingFolderRegistration(null)}
+        >
+          <p className="folder-registration-help">
+            이 폴더를 스캔할 때 사용할 파일명 규칙을 선택하세요. 등록 후에는 저장된 규칙이 자동으로 적용됩니다.
+          </p>
+          <div className="folder-registration-path" title={pendingFolderRegistration?.path}>
+            {pendingFolderRegistration?.path}
+          </div>
+          <div className="folder-profile-options">
+            {[
+              {
+                value: 'default',
+                title: '기본 룰셋',
+                description: '일반 품번과 배우명이 들어간 기존 폴더',
+              },
+              {
+                value: 'uncensored-fc2',
+                title: '노모 · FC2 룰셋',
+                description: 'FC2, 숫자형 품번, 아마추어·배우 미상 파일',
+              },
+            ].map((option) => {
+              const selected = pendingFolderRegistration?.parserProfile === option.value
+              return (
+                <label
+                  key={option.value}
+                  className={`folder-profile-option ${selected ? 'folder-profile-option--selected' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="folder-parser-profile"
+                    value={option.value}
+                    checked={selected}
+                    onChange={() => setPendingFolderRegistration((previous) => ({
+                      ...previous,
+                      parserProfile: option.value,
+                    }))}
+                  />
+                  <span>
+                    <strong>{option.title}</strong>
+                    <small>{option.description}</small>
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        </Modal>
 
       {/* 랜덤 추천 모달 */}
         {randomResult && (

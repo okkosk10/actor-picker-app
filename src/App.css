@@ -505,6 +505,83 @@
   transition: color 0.15s, background 0.15s;
   border-radius: 3px;
 }
+
+.scan-rollback-btn {
+  margin-left: 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 5px;
+  background: transparent;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.stat-profile {
+  color: #f59e0b;
+  font-weight: 700;
+}
+
+.folder-registration-help {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.folder-registration-path {
+  margin-bottom: 16px;
+  padding: 9px 11px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-profile-options {
+  display: grid;
+  gap: 10px;
+}
+
+.folder-profile-option {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.folder-profile-option:hover,
+.folder-profile-option--selected {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.folder-profile-option input {
+  margin-top: 3px;
+}
+
+.folder-profile-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.folder-profile-option strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.folder-profile-option small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .folder-toggle-btn:hover:not(:disabled) {
   color: var(--accent);
   background: rgba(99, 102, 241, 0.08);

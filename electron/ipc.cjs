@@ -26,9 +26,16 @@ const path = require('path')
 const fs   = require('fs')
 const crypto = require('crypto')
 const { ipcMain, dialog, shell, BrowserWindow, app } = require('electron')
-const { getDb, recordVideoActivity, getDashboardStats, toggleFolderActive, getScannedRoots } = require('./db.cjs')
+const {
+  getDb,
+  recordVideoActivity,
+  getDashboardStats,
+  setFolderParserProfile,
+  toggleFolderActive,
+  getScannedRoots,
+} = require('./db.cjs')
 const { scanFolder }          = require('./scanner.cjs')
-const { parseFileName }       = require('./parser.cjs')
+const { PARSER_PROFILES, normalizeParserProfile, parseFileName } = require('./parser.cjs')
 const { copyFilesToClipboard, createMtpSession, createMtpBulkSession, createMtpThemeBulkSession, calcTimeoutSec } = require('./clipboardHelper.cjs')
 const { testOpenAIConnection }   = require('./services/openaiClient.cjs')
 const { generateAiThemeFolders } = require('./services/aiThemeFolderService.cjs')
@@ -1368,10 +1375,15 @@ function buildFolderFilter(currentFolder) {
  * scanId: 현재 스캔 세션 식별자 (타임스탬프 문자열)
  * 반환: { newActorIds: number[] } — 이번 스캔에서 새로 생성된 배우 ID 목록
  */
-function syncVideoActors(db, videoId, actorName, scanId) {
+function syncVideoActors(db, videoId, actorName, scanId, options = {}) {
   const raw   = actorName.replace(/^\(|\)$/g, '').trim()
   const names = raw.split(',').map((n) => n.trim()).filter((n) => n.length > 0)
-  if (names.length === 0) return { newActorIds: [] }
+  if (names.length === 0) {
+    return { newActorIds: [], linkedNames: [], unmatchedNames: [] }
+  }
+
+  const createMissing = options.createMissing !== false
+  const matchAliases = options.matchAliases === true
 
   // 신규 배우: is_new=1, first_seen_scan_id=scanId 설정
   // 기존 배우: last_seen_scan_id만 갱신 (is_new 상태 보존 — 이미 0이면 0 유지)
@@ -1380,7 +1392,8 @@ function syncVideoActors(db, videoId, actorName, scanId) {
     VALUES (?, 1, ?, ?)
     ON CONFLICT(name) DO UPDATE SET last_seen_scan_id = excluded.last_seen_scan_id
   `)
-  const findActor   = db.prepare('SELECT id FROM actors WHERE name = ?')
+  const findActor   = db.prepare('SELECT id, name FROM actors WHERE name = ?')
+  const updateLastSeen = db.prepare('UPDATE actors SET last_seen_scan_id = ? WHERE id = ?')
   const deleteLinks = db.prepare('DELETE FROM video_actors WHERE video_id = ?')
   const insertLink  = db.prepare(`
     INSERT INTO video_actors (video_id, actor_id, is_main, order_index)
@@ -1388,16 +1401,46 @@ function syncVideoActors(db, videoId, actorName, scanId) {
   `)
 
   const newActorIds = []
+  const linkedNames = []
+  const unmatchedNames = []
+  const aliasRows = matchAliases
+    ? db.prepare(`SELECT id, name, aliases FROM actors WHERE trim(COALESCE(aliases, '')) != ''`).all()
+    : []
+
+  function findByAlias(name) {
+    const target = name.toLocaleLowerCase()
+    return aliasRows.find((row) =>
+      String(row.aliases || '')
+        .split(',')
+        .map((alias) => alias.trim().toLocaleLowerCase())
+        .filter(Boolean)
+        .includes(target)
+    ) || null
+  }
+
   deleteLinks.run(videoId)
-  names.forEach((name, idx) => {
-    const before = findActor.get(name)          // INSERT 전 존재 여부 확인
-    upsertActor.run(name, scanId, scanId)
-    const actor = findActor.get(name)
-    if (!actor) return
-    if (!before) newActorIds.push(actor.id)     // 이번 스캔에서 새로 생성됨
-    insertLink.run(videoId, actor.id, idx === 0 ? 1 : 0, idx)
+  names.forEach((name) => {
+    const before = findActor.get(name)
+    let actor = before || (matchAliases ? findByAlias(name) : null)
+
+    if (!actor && createMissing) {
+      upsertActor.run(name, scanId || '', scanId || '')
+      actor = findActor.get(name)
+      if (actor) newActorIds.push(actor.id)
+    } else if (actor && scanId) {
+      updateLastSeen.run(scanId, actor.id)
+    }
+
+    if (!actor) {
+      unmatchedNames.push(name)
+      return
+    }
+
+    const linkIndex = linkedNames.length
+    linkedNames.push(actor.name)
+    insertLink.run(videoId, actor.id, linkIndex === 0 ? 1 : 0, linkIndex)
   })
-  return { newActorIds }
+  return { newActorIds, linkedNames, unmatchedNames }
 }
 
 /**
@@ -1595,15 +1638,36 @@ function registerIpcHandlers() {
   //
   // 반환: { totalFiles, missingCount, scannedFolder }
   // ══════════════════════════════════════════════════════════════
-  ipcMain.handle('scan-folder', async (_event, folderPath) => {
-    const db    = getDb()
-    const files = await scanFolder(folderPath)
+  ipcMain.handle('scan-folder', async (_event, folderPath, options = {}) => {
+    const db = getDb()
+    const savedRoot = db.prepare(`
+      SELECT COALESCE(parser_profile, 'default') AS parser_profile
+      FROM scanned_roots
+      WHERE root_path = ?
+    `).get(folderPath)
+    const parserProfile = normalizeParserProfile(
+      options?.parserProfile || savedRoot?.parser_profile || PARSER_PROFILES.DEFAULT
+    )
+    const importBatchId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+    const files = await scanFolder(folderPath, { parserProfile })
 
     /** 신규 INSERT 시 기본 tags 생성 (폴더명 + 배우명) */
     function createDefaultTags(video) {
       const folderName = path.basename(video.folder_path || '')
       const actorName  = video.actor_name || ''
-      return Array.from(new Set([folderName, actorName].filter(Boolean))).join(', ')
+      const isFc2 = String(video.code || '').startsWith('FC2')
+      const isUnidentifiedAmateur = !actorName
+      const profileTags = video.parser_profile === PARSER_PROFILES.UNCENSORED_FC2
+        ? [
+            '노모',
+            ...(isFc2 ? ['FC2'] : []),
+            ...(isFc2 || isUnidentifiedAmateur ? ['아마추어'] : []),
+          ]
+        : []
+      const defaultTags = video.parser_profile === PARSER_PROFILES.UNCENSORED_FC2
+        ? [folderName, ...profileTags]
+        : [folderName, actorName]
+      return Array.from(new Set(defaultTags.filter(Boolean))).join(', ')
     }
 
     /**
@@ -1618,11 +1682,11 @@ function registerIpcHandlers() {
 
     // ── Prepared statements ────────────────────────────────────
     const findByPath = db.prepare(
-      `SELECT id FROM videos WHERE file_path = ?`
+      `SELECT id, status FROM videos WHERE file_path = ?`
     )
     // file_identity로 조회: deleted/duplicate 제외, normal 우선, 최신 updated_at 순
     const findByIdentity = db.prepare(`
-      SELECT id FROM videos
+      SELECT id, file_path FROM videos
       WHERE file_identity = ? AND status NOT IN ('deleted', 'duplicate')
       ORDER BY
         CASE WHEN status = 'normal' THEN 0 ELSE 1 END ASC,
@@ -1641,6 +1705,13 @@ function registerIpcHandlers() {
         modified_at   = @modified_at,
         code          = @code,
         actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
+        actor_resolution_status = CASE
+          WHEN is_actor_manual = 1 THEN actor_resolution_status
+          ELSE @actor_resolution_status
+        END,
+        parser_profile = @parser_profile,
+        parser_version = @parser_version,
+        parser_reference_id = COALESCE(@reference_id, ''),
         subtitle_paths = @subtitle_paths,
         subtitle_exts  = @subtitle_exts,
         subtitle_count = @subtitle_count,
@@ -1664,6 +1735,13 @@ function registerIpcHandlers() {
         modified_at   = @modified_at,
         code          = @code,
         actor_name    = CASE WHEN is_actor_manual = 1 THEN actor_name ELSE @actor_name END,
+        actor_resolution_status = CASE
+          WHEN is_actor_manual = 1 THEN actor_resolution_status
+          ELSE @actor_resolution_status
+        END,
+        parser_profile = @parser_profile,
+        parser_version = @parser_version,
+        parser_reference_id = COALESCE(@reference_id, ''),
         subtitle_paths = @subtitle_paths,
         subtitle_exts  = @subtitle_exts,
         subtitle_count = @subtitle_count,
@@ -1675,20 +1753,25 @@ function registerIpcHandlers() {
         updated_at    = CURRENT_TIMESTAMP
       WHERE id = @id
     `)
-    // 신규 파일 INSERT
-    const insertNew = db.prepare(`
+    const insertTracked = db.prepare(`
       INSERT INTO videos
         (file_name, file_path, folder_path, extension, size, file_size, modified_at,
          code, actor_name, subtitle_paths, subtitle_exts, subtitle_count, subtitle_size,
-         subtitle_files, subtitle_added_at, file_identity, tags, is_new, updated_at)
+         subtitle_files, subtitle_added_at, file_identity, tags, is_new, status,
+         parser_profile, parser_version, import_batch_id, actor_resolution_status,
+         parser_reference_id, updated_at)
       VALUES
         (@file_name, @file_path, @folder_path, @extension, @size, @size, @modified_at,
          @code, @actor_name, @subtitle_paths, @subtitle_exts, @subtitle_count, @subtitle_size,
-         @subtitle_files, @subtitle_added_at,
-         @file_identity, @tags, 1, CURRENT_TIMESTAMP)
+         @subtitle_files, @subtitle_added_at, @file_identity, @tags, 1, @status,
+         @parser_profile, @parser_version, @import_batch_id, @actor_resolution_status,
+         COALESCE(@reference_id, ''), CURRENT_TIMESTAMP)
     `)
 
     // ① 파일별 upsert (file_path → file_identity → INSERT 순)
+    let insertedCount = 0
+    let duplicateCount = 0
+    const duplicateConflicts = []
     db.transaction((fileList) => {
       for (const file of fileList) {
         const identity = buildFileIdentity(file)
@@ -1702,30 +1785,80 @@ function registerIpcHandlers() {
 
         const byIdentity = findByIdentity.get(identity)
         if (byIdentity) {
-          // 다른 경로에서 같은 파일 발견 → 경로 갱신, 사용자 데이터 유지
-          updateByIdentity.run({ ...file, file_identity: identity, id: byIdentity.id })
+          if (byIdentity.file_path !== file.file_path && fs.existsSync(byIdentity.file_path)) {
+            // 양쪽 경로에 실제 파일이 모두 있으면 기존 경로를 이동시키지 않는다.
+            // 새 경로는 duplicate 상태로 기록해 충돌 사실과 등록 배치를 추적한다.
+            insertTracked.run({
+              ...file,
+              file_identity: identity,
+              tags: createDefaultTags(file),
+              status: 'duplicate',
+              import_batch_id: importBatchId,
+            })
+            duplicateCount++
+            duplicateConflicts.push({
+              filePath: file.file_path,
+              existingPath: byIdentity.file_path,
+              fileIdentity: identity,
+            })
+          } else {
+            // 기존 경로의 파일이 사라졌다면 실제 이동으로 보고 사용자 데이터를 보존한다.
+            updateByIdentity.run({ ...file, file_identity: identity, id: byIdentity.id })
+          }
           continue
         }
 
         // 신규 파일
-        insertNew.run({ ...file, file_identity: identity, tags: createDefaultTags(file) })
+        insertTracked.run({
+          ...file,
+          file_identity: identity,
+          tags: createDefaultTags(file),
+          status: 'normal',
+          import_batch_id: importBatchId,
+        })
+        insertedCount++
       }
     })(files)
 
     // ② actors / video_actors 동기화
     // is_actor_manual = 1인 영상은 수동 수정된 배우명을 유지한다 → 파일명 파싱으로 덮어쓰지 않음
-    const scanId = Date.now().toString()
+    const scanId = importBatchId
     let newActorCount = 0
+    let reviewActorCount = 0
     const filesWithActor = files.filter((f) => f.actor_name && f.actor_name.trim())
     if (filesWithActor.length > 0) {
-      const getVideoRow   = db.prepare('SELECT id, is_actor_manual FROM videos WHERE file_path = ?')
+      const getVideoRow = db.prepare(`
+        SELECT id, is_actor_manual, status
+        FROM videos
+        WHERE file_path = ?
+      `)
+      const updateActorResolution = db.prepare(`
+        UPDATE videos
+        SET actor_resolution_status = ?
+        WHERE id = ?
+      `)
       const newActorIdSet = new Set()
       db.transaction(() => {
         for (const file of filesWithActor) {
           const row = getVideoRow.get(file.file_path)
-          if (row && !row.is_actor_manual) {
-            const { newActorIds } = syncVideoActors(db, row.id, file.actor_name, scanId)
+          if (row && row.status === 'normal' && !row.is_actor_manual) {
+            const matchAliases = file.parser_profile === PARSER_PROFILES.UNCENSORED_FC2
+            const { newActorIds, unmatchedNames } = syncVideoActors(
+              db,
+              row.id,
+              file.actor_name,
+              scanId,
+              {
+                // 노모·FC2 파서는 명확한 이름만 actor_name으로 넘긴다.
+                // 기존 배우/별칭에 없으면 기본 룰셋과 동일하게 새 배우로 등록한다.
+                createMissing: true,
+                matchAliases,
+              },
+            )
             newActorIds.forEach((id) => newActorIdSet.add(id))
+            const resolutionStatus = unmatchedNames.length > 0 ? 'review' : 'confirmed'
+            updateActorResolution.run(resolutionStatus, row.id)
+            if (resolutionStatus === 'review') reviewActorCount++
           }
         }
       })()
@@ -1857,16 +1990,24 @@ function registerIpcHandlers() {
 
     // ⑤ 스캔한 루트 폴더를 scanned_roots 테이블에 기록 (폴더 패널용)
     db.prepare(`
-      INSERT INTO scanned_roots (root_path, scanned_at)
-      VALUES (?, CURRENT_TIMESTAMP)
-      ON CONFLICT(root_path) DO UPDATE SET scanned_at = CURRENT_TIMESTAMP
-    `).run(folderPath)
+      INSERT INTO scanned_roots (root_path, scanned_at, parser_profile)
+      VALUES (?, CURRENT_TIMESTAMP, ?)
+      ON CONFLICT(root_path) DO UPDATE SET
+        scanned_at = CURRENT_TIMESTAMP,
+        parser_profile = excluded.parser_profile
+    `).run(folderPath, parserProfile)
 
     return {
       totalFiles:    files.length,
       missingCount,
       scannedFolder: folderPath,
       newActors:     newActorCount,
+      insertedCount,
+      duplicateCount,
+      duplicateConflicts,
+      reviewActorCount,
+      parserProfile,
+      importBatchId,
     }
   })
 
@@ -1896,9 +2037,10 @@ function registerIpcHandlers() {
       WHERE status = 'normal'
     `).get()
 
-    // 루트 폴더 목록 (scanned_roots 테이블, is_active 포함)
+    // 루트 폴더 목록 (활성 상태와 파일명 파서 프로필 포함)
     const roots = db.prepare(`
-      SELECT root_path, scanned_at, COALESCE(is_active, 1) AS is_active
+      SELECT root_path, scanned_at, COALESCE(is_active, 1) AS is_active,
+             COALESCE(parser_profile, 'default') AS parser_profile
       FROM scanned_roots
       ORDER BY root_path ASC
     `).all()
@@ -1922,6 +2064,7 @@ function registerIpcHandlers() {
           root_path:         row.root_path,
           scanned_at:        row.scanned_at,
           is_active:         row.is_active === 1,
+          parser_profile:    normalizeParserProfile(row.parser_profile),
           total:             stats.total,
           recommended_count: stats.recommended_count,
           delete_count:      stats.delete_count,
@@ -3586,12 +3729,22 @@ function registerIpcHandlers() {
       if (!trimmed) {
         // 배우명 비우기: actor_name NULL, video_actors 연결 삭제
         db.prepare(`
-          UPDATE videos SET actor_name = NULL, is_actor_manual = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          UPDATE videos
+          SET actor_name = NULL,
+              actor_resolution_status = 'not_provided',
+              is_actor_manual = 1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
         `).run(videoId)
         db.prepare('DELETE FROM video_actors WHERE video_id = ?').run(videoId)
       } else {
         db.prepare(`
-          UPDATE videos SET actor_name = ?, is_actor_manual = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          UPDATE videos
+          SET actor_name = ?,
+              actor_resolution_status = 'confirmed',
+              is_actor_manual = 1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
         `).run(trimmed, videoId)
         syncVideoActors(db, videoId, trimmed)
       }
@@ -3611,21 +3764,38 @@ function registerIpcHandlers() {
   // ════════════════════════════════════════════════════════════
   ipcMain.handle('reset-actor-manual', async (_event, videoId) => {
     const db = getDb()
-    const video = db.prepare('SELECT id, file_name FROM videos WHERE id = ?').get(videoId)
+    const video = db.prepare(`
+      SELECT id, file_name, COALESCE(parser_profile, 'default') AS parser_profile
+      FROM videos
+      WHERE id = ?
+    `).get(videoId)
     if (!video) return { success: false, error: 'VIDEO_NOT_FOUND' }
 
-    const parsed       = parseFileName(video.file_name)
+    const parsed       = parseFileName(video.file_name, video.parser_profile)
     const newActorName = parsed.actor_name ?? null
+    let resolutionStatus = parsed.actor_resolution_status
 
     db.transaction(() => {
-      db.prepare(`
-        UPDATE videos SET actor_name = ?, is_actor_manual = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-      `).run(newActorName, videoId)
       db.prepare('DELETE FROM video_actors WHERE video_id = ?').run(videoId)
-      if (newActorName) syncVideoActors(db, videoId, newActorName)
+      if (newActorName) {
+        const matchAliases = video.parser_profile === PARSER_PROFILES.UNCENSORED_FC2
+        const result = syncVideoActors(db, videoId, newActorName, '', {
+          createMissing: true,
+          matchAliases,
+        })
+        resolutionStatus = result.unmatchedNames.length > 0 ? 'review' : 'confirmed'
+      }
+      db.prepare(`
+        UPDATE videos
+        SET actor_name = ?,
+            actor_resolution_status = ?,
+            is_actor_manual = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(newActorName, resolutionStatus, videoId)
     })()
 
-    return { success: true, actor_name: newActorName }
+    return { success: true, actor_name: newActorName, actor_resolution_status: resolutionStatus }
   })
 
   // ════════════════════════════════════════════════════════════
@@ -3667,15 +3837,27 @@ function registerIpcHandlers() {
   ipcMain.handle('sync-actor-videos', async () => {
     const db     = getDb()
     const videos = db.prepare(`
-      SELECT id, actor_name FROM videos
+      SELECT id, actor_name, COALESCE(parser_profile, 'default') AS parser_profile
+      FROM videos
       WHERE actor_name IS NOT NULL AND trim(actor_name) != ''
     `).all()
 
     let synced = 0
+    let review = 0
+    const updateResolution = db.prepare(`
+      UPDATE videos SET actor_resolution_status = ? WHERE id = ?
+    `)
     db.transaction(() => {
       for (const video of videos) {
         try {
-          syncVideoActors(db, video.id, video.actor_name)
+          const matchAliases = video.parser_profile === PARSER_PROFILES.UNCENSORED_FC2
+          const result = syncVideoActors(db, video.id, video.actor_name, '', {
+            createMissing: true,
+            matchAliases,
+          })
+          const resolutionStatus = result.unmatchedNames.length > 0 ? 'review' : 'confirmed'
+          updateResolution.run(resolutionStatus, video.id)
+          if (resolutionStatus === 'review') review++
           synced++
         } catch (e) {
           console.warn(`[sync-actor-videos] video ${video.id} 동기화 실패:`, e.message)
@@ -3683,7 +3865,7 @@ function registerIpcHandlers() {
       }
     })()
 
-    return { success: true, synced }
+    return { success: true, synced, review }
   })
 
   // ══════════════════════════════════════════════════════════════
@@ -5905,6 +6087,72 @@ function registerIpcHandlers() {
         return { success: false, error: '폴더를 찾을 수 없습니다' }
       }
       return { success: true, isActive }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── 폴더별 파일명 파서 프로필 설정 ──────────────────────────────────────────
+  ipcMain.handle('set-folder-parser-profile', async (_event, folderPath, parserProfile) => {
+    try {
+      const normalized = normalizeParserProfile(parserProfile)
+      const updated = setFolderParserProfile(folderPath, normalized)
+      if (!updated) return { success: false, error: '폴더를 찾을 수 없습니다' }
+      return { success: true, parserProfile: normalized }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ── 특정 스캔 등록 배치 롤백 ────────────────────────────────────────────────
+  // 기존 영상의 수정/이동 기록은 건드리지 않고, 해당 배치에서 새로 INSERT된
+  // 영상과 연결만 제거한다.
+  ipcMain.handle('rollback-import-batch', async (_event, importBatchId) => {
+    const batchId = String(importBatchId || '').trim()
+    if (!batchId) return { success: false, error: '등록 배치 ID가 필요합니다.' }
+
+    try {
+      const db = getDb()
+      const rows = db.prepare(`
+        SELECT id, file_name, file_path
+        FROM videos
+        WHERE import_batch_id = ?
+      `).all(batchId)
+      if (rows.length === 0) {
+        return { success: false, error: '해당 등록 배치를 찾을 수 없습니다.' }
+      }
+
+      const ids = rows.map((row) => row.id)
+      const placeholders = ids.map(() => '?').join(',')
+      let deletedActors = []
+
+      db.transaction(() => {
+        db.prepare(`DELETE FROM video_actors WHERE video_id IN (${placeholders})`).run(...ids)
+        db.prepare(`DELETE FROM videos WHERE id IN (${placeholders})`).run(...ids)
+
+        const orphanActors = db.prepare(`
+          SELECT a.id, a.name
+          FROM actors a
+          LEFT JOIN video_actors va ON va.actor_id = a.id
+          WHERE a.first_seen_scan_id = ?
+          GROUP BY a.id
+          HAVING COUNT(va.id) = 0
+        `).all(batchId)
+        if (orphanActors.length > 0) {
+          const actorPlaceholders = orphanActors.map(() => '?').join(',')
+          db.prepare(`DELETE FROM actors WHERE id IN (${actorPlaceholders})`)
+            .run(...orphanActors.map((actor) => actor.id))
+          deletedActors = orphanActors.map((actor) => actor.name)
+        }
+      })()
+
+      return {
+        success: true,
+        importBatchId: batchId,
+        deletedVideos: rows.length,
+        deletedActors,
+        items: rows,
+      }
     } catch (err) {
       return { success: false, error: err.message }
     }

@@ -115,7 +115,12 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
         message.error('배우명 저장 실패: ' + result.error)
         return
       }
-      onUpdate({ ...video, actor_name: actorName.trim() || null, is_actor_manual: 1 })
+      onUpdate({
+        ...video,
+        actor_name: actorName.trim() || null,
+        actor_resolution_status: actorName.trim() ? 'confirmed' : 'not_provided',
+        is_actor_manual: 1,
+      })
       message.success('배우명을 저장했습니다.')
     } catch (e) {
       message.error('배우명 저장 실패: ' + e.message)
@@ -135,7 +140,12 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
       }
       const newName = result.actor_name || ''
       setActorName(newName)
-      onUpdate({ ...video, actor_name: result.actor_name, is_actor_manual: 0 })
+      onUpdate({
+        ...video,
+        actor_name: result.actor_name,
+        actor_resolution_status: result.actor_resolution_status,
+        is_actor_manual: 0,
+      })
       message.success(
         newName
           ? `파일명 기준으로 배우명을 다시 추출했습니다: ${newName}`
@@ -205,6 +215,25 @@ export default function DetailPanel({ video, onUpdate, onOpenVideo, onOpenFolder
           <span className="meta-label">품번</span>
           <span className="meta-value">{video.code || '-'}</span>
         </div>
+        {video.parser_profile === 'uncensored-fc2' && (
+          <div className="meta-row">
+            <span className="meta-label">파일명 룰</span>
+            <span className="meta-value">
+              노모·FC2 v{video.parser_version || 1}
+              {video.parser_reference_id ? ` · 참조 ${video.parser_reference_id}` : ''}
+            </span>
+          </div>
+        )}
+        {video.actor_resolution_status && video.actor_resolution_status !== 'confirmed' && (
+          <div className="meta-row">
+            <span className="meta-label">배우 판정</span>
+            <span className="meta-value">
+              {video.actor_resolution_status === 'review' ? '검토 필요'
+                : video.actor_resolution_status === 'not_provided' ? '정보 미제공'
+                : video.actor_resolution_status}
+            </span>
+          </div>
+        )}
         <div className="meta-row">
           <span className="meta-label">배우</span>
           <span className="meta-value">
