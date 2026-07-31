@@ -1721,9 +1721,12 @@ function registerIpcHandlers() {
         file_identity = @file_identity,
         -- 같은 경로에 실제 파일이 다시 발견되면 누락·삭제 이력을 복구한다.
         -- deleted를 유지하면 재추가한 파일이 영구적으로 작품 수와 배우 연결에서 제외된다.
-        -- 삭제 후 다시 추가된 파일은 복귀 시점을 새 추가일로 기록해 NEW 목록 맨 위에 올린다.
-        is_new       = CASE WHEN status = 'deleted' THEN 1 ELSE is_new END,
-        created_at   = CASE WHEN status = 'deleted' THEN CURRENT_TIMESTAMP ELSE created_at END,
+        -- 누락·삭제 후 다시 발견된 파일은 복귀 시점을 새 추가일로 기록해 NEW 목록 맨 위에 올린다.
+        is_new       = CASE WHEN status IN ('missing', 'deleted') THEN 1 ELSE is_new END,
+        created_at   = CASE
+          WHEN status IN ('missing', 'deleted') THEN CURRENT_TIMESTAMP
+          ELSE created_at
+        END,
         status        = CASE
           WHEN status IN ('missing', 'deleted') THEN 'normal'
           ELSE status
