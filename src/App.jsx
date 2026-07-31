@@ -280,7 +280,7 @@ export default function App() {
           return
         }
         const { count: prevNew } = await window.api.getNewCount()
-        let totalFiles = 0, missingCount = 0
+        let totalFiles = 0, missingCount = 0, recoveredCount = 0
         for (const folder of folders) {
           const scanPath = folder.root_path || folder.path
           if (!scanPath) continue
@@ -288,6 +288,7 @@ export default function App() {
             const r = await window.api.scanFolder(scanPath)
             totalFiles   += r.totalFiles
             missingCount += r.missingCount
+            recoveredCount += r.recoveredCount ?? 0
           } catch (err) { console.error('전체 스캔 실패:', scanPath, err) }
         }
         await refresh()
@@ -295,7 +296,13 @@ export default function App() {
         setNewCount(nextNew)
         await refreshNewActorCount()
         setFolderRefreshKey((k) => k + 1)
-        setScanInfo({ totalFiles, missingCount, scannedFolder: '전체 라이브러리', newAdded: Math.max(0, nextNew - prevNew) })
+        setScanInfo({
+          totalFiles,
+          missingCount,
+          recoveredCount,
+          scannedFolder: '전체 라이브러리',
+          newAdded: Math.max(0, nextNew - prevNew),
+        })
       } catch (e) { setError('전체 스캔 중 오류: ' + e.message) }
       finally { setScanning(false) }
       return
@@ -684,6 +691,11 @@ export default function App() {
                       · NEW <strong>{scanInfo.newAdded}</strong>개 발견
                     </span>
                   )}
+                  {(scanInfo.recoveredCount ?? 0) > 0 && (
+                    <span style={{ color: '#3b82f6', marginLeft: 8 }}>
+                      · 복구 <strong>{scanInfo.recoveredCount}</strong>개
+                    </span>
+                  )}
                   {(scanInfo.newActors ?? 0) > 0 && (
                     <span style={{ color: '#22c55e', marginLeft: 8 }}>
                       · 새 배우 <strong>{scanInfo.newActors}</strong>명 발견
@@ -699,7 +711,9 @@ export default function App() {
                       · 중복 보호 <strong>{scanInfo.duplicateCount}</strong>개
                     </span>
                   )}
-                  {(scanInfo.newAdded ?? 0) === 0 && scanInfo.scannedFolder !== '배우-영상 동기화' && (
+                  {(scanInfo.newAdded ?? 0) === 0
+                    && (scanInfo.recoveredCount ?? 0) === 0
+                    && scanInfo.scannedFolder !== '배우-영상 동기화' && (
                     <span style={{ color: '#6b7280', marginLeft: 8 }}>· 신규 없음</span>
                   )}
                   {(scanInfo.missingCount ?? 0) > 0 && (
